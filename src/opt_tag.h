@@ -4,48 +4,65 @@
 
 // OpenPrintTag CBOR/NDEF encode-decode.
 //
-// Field names and wire layout must match the reference implementation exactly:
-//   prusa3d/OpenPrintTag — utils/record.py, nfc_initialize.py, rec_update.py
-// Read those files before adding or renaming any field below.
+// Wire format uses INTEGER CBOR keys (not strings).
+// Key numbers come from prusa3d/OpenPrintTag:
+//   data/meta_fields.yaml, data/main_fields.yaml, data/aux_fields.yaml
 
-#define OPT_STR_MAX  64
+// ── Meta section (data/meta_fields.yaml) ─────────────────────────────────────
+struct OptMeta {
+    uint16_t main_region_offset;  // key 0 — offset from NDEF payload start, bytes
+    uint16_t main_region_size;    // key 1 — 0 if absent (region extends to next or end)
+    uint16_t aux_region_offset;   // key 2 — 0 if no aux region present
+    uint16_t aux_region_size;     // key 3 — 0 if absent
+};
 
-// ── Main section — static spool identity ──────────────────────
-// Written at onboarding; rewritten when Spoolman filament data changes.
+// ── Main section (data/main_fields.yaml) ─────────────────────────────────────
+// Only the fields this project reads or writes.  Full field table is in the yaml.
 struct OptMain {
-    char    vendor[OPT_STR_MAX];
-    char    material[OPT_STR_MAX];
-    char    color[OPT_STR_MAX];
-    char    gtin[OPT_STR_MAX];
-    char    nfc_id[OPT_STR_MAX];    // tag UID used as Spoolman lookup key
-    float   spool_weight;            // empty spool weight, grams
-    float   filament_weight;         // total filament on new spool, grams
-    float   diameter;                // mm
-    // TODO: verify remaining fields against record.py
-    //       (print temperatures, bed temp, min/max flow rate, etc.)
+    uint8_t  instance_uuid[16];          // key 0  — Spoolman nfc_id lookup key (UUID bytes)
+    char     brand_name[64];             // key 11
+    char     material_name[64];          // key 10
+    char     material_abbreviation[16];  // key 52 — e.g. "PETG", "ASA"
+    uint8_t  primary_color_rgba[4];      // key 19 — R G B A
+    float    nominal_netto_full_weight;  // key 16 — grams (label weight)
+    float    actual_netto_full_weight;   // key 17 — grams (weighed at factory)
+    float    empty_container_weight;     // key 18 — grams (bare spool tare)
+    float    filament_diameter;          // key 30 — mm
+    int16_t  min_print_temperature;      // key 34 — °C
+    int16_t  max_print_temperature;      // key 35 — °C
+    int16_t  min_bed_temperature;        // key 37 — °C
+    int16_t  max_bed_temperature;        // key 38 — °C
+    int8_t   material_class;             // key 8  — enum; see data/material_class_enum.yaml
+    int8_t   material_type;              // key 9  — enum; see data/material_type_enum.yaml
 };
 
-// ── Auxiliary section — dynamic per-weigh data ─────────────────
-// Rewritten on every weigh event.
+// ── Auxiliary section (data/aux_fields.yaml) ──────────────────────────────────
+// remaining_weight is NOT stored on the tag.
+// Calculate it as:  remaining = actual_netto_full_weight - consumed_weight
 struct OptAuxiliary {
-    float    remaining_weight;   // grams
-    float    used_weight;        // grams
-    uint32_t timestamp;          // Unix epoch, seconds
-    // TODO: verify field names against rec_update.py
+    float consumed_weight;  // key 0 — grams used so far; written on every weigh event
 };
 
-// ── API ────────────────────────────────────────────────────────
+// ── NDEF/tag layout constants ─────────────────────────────────────────────────
+#define OPT_CC_SIZE            4       // capability container (first 4 bytes of tag)
+#define OPT_MIME_TYPE          "application/vnd.openprinttag"
+#define OPT_MIME_TYPE_LEN      (sizeof(OPT_MIME_TYPE) - 1)
 
-// True if buf contains no recognisable NDEF/OPT data (blank or erased tag).
-bool optIsBlank(const uint8_t* buf, size_t len);
+// ── API ───────────────────────────────────────────────────────────────────────
 
-// Decode a raw NDEF record payload into Main and Auxiliary structs.
-// Either output pointer may be nullptr if that section isn't needed.
+// True if raw tag bytes contain no recognisable NDEF/OPT record (blank tag).
+bool optIsBlank(const uint8_t* tagBytes, size_t len);
+
+// Decode a raw tag read (full ISO15693 block dump) into structs.
+// Either output pointer may be nullptr if that section is not needed.
 // Returns true on success.
-bool optDecode(const uint8_t* buf, size_t len, OptMain* main, OptAuxiliary* aux);
+bool optDecode(const uint8_t* tagBytes, size_t len,
+               OptMeta* meta, OptMain* main, OptAuxiliary* aux);
 
-// Encode the Main section into buf. Returns bytes written, 0 on error.
+// Encode the Main section CBOR map into buf.
+// Returns bytes written, 0 on error.
 size_t optEncodeMain(const OptMain& main, uint8_t* buf, size_t maxLen);
 
-// Encode the Auxiliary section into buf. Returns bytes written, 0 on error.
+// Encode the Auxiliary section CBOR map into buf.
+// Returns bytes written, 0 on error.
 size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen);
