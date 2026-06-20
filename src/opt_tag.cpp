@@ -356,3 +356,10 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
     cbor_encoder_close_container(&enc, &map);
     return cbor_encoder_get_buffer_size(&enc, buf);
 }
+
+size_t optPayloadOffset(const uint8_t* tagBytes, size_t len) {
+    const uint8_t* payload;
+    size_t payloadLen;
+    if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return SIZE_MAX;
+    return (size_t)(payload - tagBytes);
+}

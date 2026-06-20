@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include "config.h"
 #include "device_state.h"
+#include "opt_tag.h"
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -12,6 +13,17 @@ SemaphoreHandle_t    gStateMutex  = nullptr;
 // Latest weight from scaleTask, consumed by syncTask and displayTask.
 volatile float    gWeightGrams  = 0.0f;
 SemaphoreHandle_t gWeightMutex  = nullptr;
+
+// ── Shared tag data (written by nfcTask, read by syncTask / displayTask) ──────
+uint8_t           gTagUid[8]    = {};
+OptMeta           gTagMeta      = {};
+OptMain           gTagMain      = {};
+OptAuxiliary      gTagAux       = {};
+SemaphoreHandle_t gTagMutex     = nullptr;
+
+// Write-back requests: syncTask sets these flags; nfcTask clears them after writing.
+volatile bool gWriteMainPending = false;
+volatile bool gWriteAuxPending  = false;
 
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);
@@ -26,9 +38,10 @@ void setup() {
 
     gStateMutex = xSemaphoreCreateMutex();
     gWeightMutex = xSemaphoreCreateMutex();
+    gTagMutex = xSemaphoreCreateMutex();
 
     // Core 1: time-sensitive hardware polling
-    xTaskCreatePinnedToCore(nfcTask,     "nfc",     4096, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
     xTaskCreatePinnedToCore(scaleTask,   "scale",   2048, nullptr, 2, nullptr, 1);
 
     // Core 0: I/O — co-located with the WiFi stack

@@ -66,3 +66,7 @@ size_t optEncodeMain(const OptMain& main, uint8_t* buf, size_t maxLen);
 // Encode the Auxiliary section CBOR map into buf.
 // Returns bytes written, 0 on error.
 size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen);
+
+// Returns the byte offset of the NDEF OPT payload within tagBytes, or SIZE_MAX if not found.
+// Add OptMeta.main_region_offset / aux_region_offset to this to get absolute write positions.
+size_t optPayloadOffset(const uint8_t* tagBytes, size_t len);
