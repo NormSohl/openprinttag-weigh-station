@@ -1,0 +1,53 @@
+stateDiagram-v2
+    [*] --> Boot
+
+    Boot --> WiFiSetupMode: no saved WiFi credentials
+    Boot --> Idle: WiFi connects
+
+    WiFiSetupMode --> Idle: provisioning succeeds
+    WiFiSetupMode --> IdleNoWiFi: 120s timeout, no setup completed
+
+    Idle --> TagDetecting: tag presence (1st read)
+    IdleNoWiFi --> TagDetecting: tag presence (1st read)
+    Idle --> IdleNoWiFi: WiFi/Spoolman connection lost
+    IdleNoWiFi --> Idle: WiFi/Spoolman connection restored
+
+    TagDetecting --> Idle: reads don't confirm (false trigger)
+    TagDetecting --> TagReadError: 3 reads, inconsistent/corrupt data
+    TagDetecting --> BlankTagFound: 3 reads confirm, tag is unformatted
+    TagDetecting --> ValidTagFound: 3 reads confirm, valid OPT data found
+
+    TagReadError --> Idle: tag removed
+
+    BlankTagFound --> AwaitingFormatConfirm: prompt shown, 5s countdown starts
+    note right of AwaitingFormatConfirm
+        Confirm-by-inaction: OLED shows live
+        countdown (5...4...3...2...1).
+        LED blinks, accelerating as it counts
+        down (distinct pattern, not reused
+        elsewhere). Removing the tag during
+        the countdown cancels; leaving it in
+        place until 0 confirms.
+    end note
+    AwaitingFormatConfirm --> FormattingAndRegistering: countdown reaches 0, tag still present
+    AwaitingFormatConfirm --> Idle: tag removed during countdown (cancelled)
+    FormattingAndRegistering --> Present: stub Spool created, tag formatted
+
+    ValidTagFound --> ForeignTagFound: nfc_id not in Spoolman (valid data, just not registered yet)
+    ValidTagFound --> WeighingAndSync: nfc_id matches an existing spool
+
+    ForeignTagFound --> RegisteringForeignTag: decode tag's own Main-section data (vendor, material, color, weight)
+    RegisteringForeignTag --> WeighingAndSync: Vendor/Filament/Spool found-or-created from the tag's own data
+    ForeignTagFound --> Idle: tag removed
+    RegisteringForeignTag --> Idle: tag removed mid find-or-create
+
+    WeighingAndSync --> Present: weigh once, write Aux+Main as needed, PATCH Spoolman
+
+    Present --> ReconcilingMainSection: 1s poll detects Spoolman change
+    ReconcilingMainSection --> Present: tag rewritten, cache updated
+    Present --> Idle: tag removed (2 consecutive misses)
+
+    Present --> SpoolmanUnreachable: API call fails
+    WeighingAndSync --> SpoolmanUnreachable: API call fails
+    SpoolmanUnreachable --> Present: connectivity restored, retry succeeds
+    SpoolmanUnreachable --> Idle: tag removed
