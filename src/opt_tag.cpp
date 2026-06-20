@@ -70,21 +70,97 @@ static bool cborGetFloat(const CborValue* val, float* out) {
 
 // Locate the OPT NDEF record payload within a raw tag block dump.
 // Sets *payloadOut and *payloadLen on success, returns true.
+//
+// Tag layout (nfc_initialize.py):
+//   [0..3]  Capability Container — must start with 0xE1
+//   [4..]   TLV sequence:
+//             0x03 <1- or 3-byte length> <NDEF message>
+//             0xFE  Terminator
+//
+// NDEF record header bytes (TNF=0x02 = MIME type):
+//   [0]  flags: MB|ME|CF|SR|IL|TNF[2:0]
+//   [1]  type_length
+//   [2]  payload_length  (1 byte when SR=1, 4 bytes when SR=0)
+//   ...  id_length       (only present when IL=1)
+//   ...  type            (type_length bytes) — must equal OPT_MIME_TYPE
+//   ...  id              (id_length bytes, if IL=1)
+//   ...  payload         (payload_length bytes) — our CBOR data
 static bool findNdefPayload(const uint8_t* tagBytes, size_t len,
                              const uint8_t** payloadOut, size_t* payloadLen) {
     if (len < OPT_CC_SIZE + 2) return false;
+    if (tagBytes[0] != 0xE1) return false;   // not a valid NDEF tag
 
-    // TODO: parse the full NDEF TLV structure and locate the record with
-    //       MIME type OPT_MIME_TYPE ("application/vnd.openprinttag").
-    //       Structure (from nfc_initialize.py):
-    //         [0..3]   Capability Container: 0xE1, 0x40, size/8, 0x01
-    //         [4..]    TLV sequence:
-    //                    0x03 <len> <NDEF message bytes>
-    //                    0xFE      Terminator
-    //       NDEF record header (TNF=0x02 MIME, SR bit determines payload len width).
-    //       Match type field against OPT_MIME_TYPE before returning payload pointer.
-    (void)payloadOut;
-    (void)payloadLen;
+    // ── Walk TLV sequence starting after the 4-byte Capability Container ──────
+    size_t pos = OPT_CC_SIZE;
+    while (pos < len) {
+        uint8_t tlvType = tagBytes[pos++];
+        if (tlvType == 0xFE) break;                        // Terminator
+        if (tlvType == 0x00) continue;                     // Null TLV — skip
+
+        // Read TLV length (1-byte or 3-byte form)
+        if (pos >= len) return false;
+        size_t tlvLen;
+        if (tagBytes[pos] == 0xFF) {
+            if (pos + 2 >= len) return false;
+            tlvLen = ((size_t)tagBytes[pos + 1] << 8) | tagBytes[pos + 2];
+            pos += 3;
+        } else {
+            tlvLen = tagBytes[pos++];
+        }
+        if (pos + tlvLen > len) return false;
+
+        if (tlvType != 0x03) { pos += tlvLen; continue; }  // not an NDEF TLV
+
+        // ── Parse NDEF message ────────────────────────────────────────────────
+        const uint8_t* msg    = tagBytes + pos;
+        size_t         msgLen = tlvLen;
+        size_t         mpos   = 0;
+
+        while (mpos < msgLen) {
+            if (mpos >= msgLen) break;
+            uint8_t flags      = msg[mpos++];
+            uint8_t tnf        = flags & 0x07;
+            bool    sr         = (flags >> 4) & 1;   // Short Record
+            bool    il         = (flags >> 3) & 1;   // ID Length present
+
+            if (mpos >= msgLen) break;
+            uint8_t typeLen    = msg[mpos++];
+
+            uint32_t plen;
+            if (sr) {
+                if (mpos >= msgLen) break;
+                plen = msg[mpos++];
+            } else {
+                if (mpos + 3 >= msgLen) break;
+                plen = ((uint32_t)msg[mpos] << 24) | ((uint32_t)msg[mpos+1] << 16)
+                     | ((uint32_t)msg[mpos+2] << 8) | msg[mpos+3];
+                mpos += 4;
+            }
+
+            uint8_t idLen = 0;
+            if (il) {
+                if (mpos >= msgLen) break;
+                idLen = msg[mpos++];
+            }
+
+            const uint8_t* recType = msg + mpos;   mpos += typeLen;
+            mpos += idLen;                          // skip ID field
+            const uint8_t* payload = msg + mpos;   mpos += plen;
+
+            if (mpos > msgLen) break;
+
+            // TNF 0x02 = MIME type record
+            if (tnf == 0x02
+                && typeLen == OPT_MIME_TYPE_LEN
+                && memcmp(recType, OPT_MIME_TYPE, OPT_MIME_TYPE_LEN) == 0) {
+                *payloadOut = payload;
+                *payloadLen = plen;
+                return true;
+            }
+        }
+
+        pos += tlvLen;
+    }
     return false;
 }
 
