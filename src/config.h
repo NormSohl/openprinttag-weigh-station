@@ -22,6 +22,13 @@
 // ── Passive piezo buzzer ──────────────────────────────────────
 #define BUZZER_PIN  13
 
+// ── WiFi reset trigger ────────────────────────────────────────
+// Hold the BOOT button (GPIO 0, already on the SparkFun Thing Plus ESP32-S3
+// board) for this many milliseconds at power-on to erase stored WiFi
+// credentials and force the captive portal to reopen.
+#define WIFI_RESET_PIN      0
+#define WIFI_RESET_HOLD_MS  3000
+
 // ── Spoolman ──────────────────────────────────────────────────
 #define SPOOLMAN_BASE_URL  "http://spoolman.local:7912"
 

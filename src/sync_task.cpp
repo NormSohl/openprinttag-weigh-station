@@ -316,6 +316,22 @@ void syncTask(void* param) {
     WiFiManager wm;
     wm.setConfigPortalTimeout(120);
 
+    // Hold BOOT (GPIO 0) for WIFI_RESET_HOLD_MS to erase stored WiFi credentials
+    // and force the captive portal to reopen — useful when moving the device to a
+    // new network or correcting a wrong Spoolman URL.
+    pinMode(WIFI_RESET_PIN, INPUT_PULLUP);
+    if (digitalRead(WIFI_RESET_PIN) == LOW) {
+        uint32_t held = 0;
+        while (digitalRead(WIFI_RESET_PIN) == LOW && held < WIFI_RESET_HOLD_MS) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            held += 100;
+        }
+        if (held >= WIFI_RESET_HOLD_MS) {
+            Serial.println("WiFi reset: credentials cleared. Release BOOT to continue.");
+            wm.resetSettings();
+        }
+    }
+
     // Add Spoolman URL as a captive-portal field so it can be set (or corrected)
     // at install time without reflashing.
     char urlBuf[128];
