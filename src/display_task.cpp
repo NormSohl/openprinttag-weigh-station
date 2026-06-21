@@ -236,7 +236,7 @@ void displayTask(void* param) {
             line(0,  "Spoolman offline");
             linef(8, "%.0fg (local)", remaining);
             line(16, "Will sync later");
-            line(32, "Fix URL at:");
+            line(32, "Fix SpoolMan URL:");
             line(40, DEVICE_HOSTNAME ".local");
             pixelColor = pixel.Color(80, 30, 0);  // orange
             break;
