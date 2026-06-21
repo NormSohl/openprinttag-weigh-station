@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 640">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650">
 
 <defs>
   <marker id="ah" viewBox="0 0 10 6" markerWidth="10" markerHeight="6"
@@ -19,6 +19,7 @@
   .board  { fill: #edf7ed; stroke: #4e7f4e; stroke-width: 1.5; stroke-dasharray: 8,4; }
   .bus    { fill: #fef9e7; stroke: #c8960c; stroke-width: 1.5; }
   .legend { fill: white;   stroke: #aaa;    stroke-width: 1; }
+  .sep    { stroke: #aaa; stroke-width: 0.8; fill: none; }
 
   .w1  { stroke: #333; stroke-width: 1.5; fill: none; marker-end: url(#ah); }
   .w2  { stroke: #333; stroke-width: 1.5; fill: none;
@@ -39,109 +40,122 @@
   .t-wirec { font-size: 10px; fill: #222; text-anchor: middle; }
   .t-lgnd  { font-size:  9px; fill: #333; }
   .t-lgnd-h { font-size: 10px; font-weight: bold; fill: #333; text-anchor: middle; }
+  .t-pin-l { font-size: 9px; fill: #333; text-anchor: start; dominant-baseline: middle; }
+  .t-pin-r { font-size: 9px; fill: #1a4080; font-weight: bold;
+              text-anchor: end; dominant-baseline: middle; }
+  .t-pin-c { font-size: 9px; fill: #666; text-anchor: middle; dominant-baseline: middle; }
 </style>
 
 <!-- ── Title ── -->
-<text x="400" y="20" class="t-page">Weigh Station — System Block Diagram</text>
-<text x="400" y="35" class="t-sub">hardware/wiring.md — full pin reference</text>
+<text x="450" y="20" class="t-page">Weigh Station — System Block Diagram</text>
+<text x="450" y="35" class="t-sub">hardware/wiring.md — full pin reference</text>
 
 <!-- ── USB-C Power ── -->
-<rect x="310" y="46" width="180" height="52" rx="5" class="pwr"/>
-<text x="400" y="70" class="t-main">USB-C Power</text>
-<text x="400" y="87" class="t-sm">5 V input</text>
+<rect x="360" y="46" width="180" height="52" rx="5" class="pwr"/>
+<text x="450" y="70" class="t-main">USB-C Power</text>
+<text x="450" y="87" class="t-sm">5 V input</text>
 
 <!-- 5V: Power → board -->
-<line x1="400" y1="98" x2="400" y2="120" class="w1"/>
-<text x="410" y="113" class="t-wire">5V</text>
+<line x1="450" y1="98" x2="450" y2="120" class="w1"/>
+<text x="460" y="113" class="t-wire">5V</text>
 
 <!-- ── ESP32-S3 Board boundary (dashed) ── -->
-<rect x="55" y="120" width="690" height="108" rx="7" class="board"/>
+<rect x="55" y="120" width="745" height="108" rx="7" class="board"/>
 <text x="68" y="135" class="t-board">SparkFun Thing Plus ESP32-S3</text>
 
 <!-- ESP32-S3 MCU -->
-<rect x="100" y="134" width="175" height="80" rx="4" class="block"/>
-<text x="188" y="170" class="t-main">ESP32-S3</text>
-<text x="188" y="188" class="t-sm">MCU</text>
+<rect x="90" y="134" width="175" height="80" rx="4" class="block"/>
+<text x="178" y="170" class="t-main">ESP32-S3</text>
+<text x="178" y="188" class="t-sm">MCU</text>
 
 <!-- WS2812 NeoPixel (onboard) -->
-<rect x="510" y="134" width="200" height="80" rx="4" class="block"/>
-<text x="610" y="164" class="t-main">WS2812 NeoPixel</text>
-<text x="610" y="182" class="t-sm">onboard · GPIO 48</text>
+<rect x="550" y="134" width="210" height="80" rx="4" class="block"/>
+<text x="655" y="164" class="t-main">WS2812 NeoPixel</text>
+<text x="655" y="182" class="t-sm">onboard · GPIO 48</text>
 
 <!-- GPIO 48: MCU → NeoPixel (internal) -->
-<line x1="275" y1="174" x2="510" y2="174" class="w1"/>
-<text x="393" y="167" class="t-wirec">GPIO 48</text>
+<line x1="265" y1="174" x2="550" y2="174" class="w1"/>
+<text x="408" y="167" class="t-wirec">GPIO 48</text>
 
-<!-- ── PN5180 NFC Module ── -->
-<rect x="28" y="288" width="165" height="82" rx="4" class="block"/>
-<text x="111" y="320" class="t-main">PN5180</text>
-<text x="111" y="337" class="t-sm">NFC Module</text>
-<text x="111" y="354" class="t-sm">ISO 15693</text>
+<!-- ── PN5180 NFC Module — SPI pinout table ── -->
+<rect x="16" y="280" width="200" height="180" rx="4" class="block"/>
+<text x="116" y="303" class="t-main">PN5180</text>
+<text x="116" y="320" class="t-sm">NFC Module</text>
+<text x="116" y="335" class="t-sm">ISO 15693</text>
+<line x1="26" y1="345" x2="206" y2="345" class="sep"/>
+<text x="28"  y="358" class="t-pin-l">NSS</text>   <text x="204" y="358" class="t-pin-r">GPIO 5</text>
+<text x="28"  y="371" class="t-pin-l">MOSI</text>  <text x="204" y="371" class="t-pin-r">GPIO 35</text>
+<text x="28"  y="384" class="t-pin-l">MISO</text>  <text x="204" y="384" class="t-pin-r">GPIO 37</text>
+<text x="28"  y="397" class="t-pin-l">SCK</text>   <text x="204" y="397" class="t-pin-r">GPIO 36</text>
+<text x="28"  y="410" class="t-pin-l">BUSY</text>  <text x="204" y="410" class="t-pin-r">GPIO 6</text>
+<text x="28"  y="423" class="t-pin-l">RST</text>   <text x="204" y="423" class="t-pin-r">GPIO 7</text>
+<line x1="26" y1="433" x2="206" y2="433" class="sep"/>
+<text x="116" y="449" class="t-pin-c">3.3 V · GND</text>
 
 <!-- SPI: MCU ↔ PN5180
-     Route: MCU bottom-left → down → left → PN5180 top -->
-<path d="M 145 214 L 145 250 L 111 250 L 111 288" class="w2"/>
-<text x="86" y="270" class="t-wire">SPI</text>
+     Route: MCU left-centre bottom → down through board edge → left → PN5180 top -->
+<path d="M 130 214 L 130 263 L 116 263 L 116 280" class="w2"/>
+<text x="82" y="273" class="t-wire">SPI</text>
 
 <!-- ── Qwiic I2C Bus ── -->
-<rect x="248" y="288" width="304" height="55" rx="4" class="bus"/>
-<text x="400" y="310" class="t-bus">Qwiic I2C Bus</text>
-<text x="400" y="329" class="t-bus2">SDA GPIO 8 · SCL GPIO 9 · 3.3 V · GND</text>
+<rect x="240" y="280" width="314" height="76" rx="4" class="bus"/>
+<text x="397" y="307" class="t-bus">Qwiic I2C Bus</text>
+<text x="397" y="326" class="t-bus2">SDA · GPIO 8  ·  SCL · GPIO 9</text>
+<text x="397" y="343" class="t-bus2">3.3 V · GND</text>
 
-<!-- Qwiic: MCU → Qwiic bus
-     Route: MCU bottom → down → right → Qwiic bus top -->
-<path d="M 220 214 L 220 260 L 375 260 L 375 288" class="w1"/>
-<text x="232" y="252" class="t-wire">Qwiic</text>
+<!-- Qwiic: MCU → Qwiic bus -->
+<path d="M 225 214 L 225 267 L 378 267 L 378 280" class="w1"/>
+<text x="237" y="260" class="t-wire">Qwiic</text>
 
 <!-- ── Passive Piezo Buzzer ── -->
-<rect x="600" y="288" width="160" height="82" rx="4" class="block"/>
-<text x="680" y="320" class="t-main">Passive Piezo</text>
-<text x="680" y="338" class="t-sm">Buzzer</text>
-<text x="680" y="355" class="t-sm">GPIO 13</text>
+<rect x="604" y="280" width="166" height="90" rx="4" class="block"/>
+<text x="687" y="312" class="t-main">Passive Piezo</text>
+<text x="687" y="330" class="t-sm">Buzzer</text>
+<text x="687" y="348" class="t-sm">GPIO 13</text>
 
 <!-- PWM: MCU → Piezo
-     Route: MCU bottom → below board → right → Piezo top -->
-<path d="M 260 214 L 260 238 L 680 238 L 680 288" class="w1"/>
-<text x="490" y="231" class="t-wirec">PWM · GPIO 13</text>
+     Route: MCU right-centre bottom → below board → right → Piezo top -->
+<path d="M 265 214 L 265 250 L 687 250 L 687 280" class="w1"/>
+<text x="476" y="243" class="t-wirec">PWM · GPIO 13</text>
 
 <!-- ── NAU7802 Load Cell ADC ── -->
-<rect x="218" y="408" width="164" height="82" rx="4" class="block"/>
-<text x="300" y="440" class="t-main">NAU7802</text>
-<text x="300" y="457" class="t-sm">Load Cell ADC</text>
-<text x="300" y="474" class="t-sm">addr 0x2A</text>
+<rect x="218" y="422" width="164" height="82" rx="4" class="block"/>
+<text x="300" y="454" class="t-main">NAU7802</text>
+<text x="300" y="471" class="t-sm">Load Cell ADC</text>
+<text x="300" y="488" class="t-sm">addr 0x2A</text>
 
 <!-- ── SSD1306 OLED ── -->
-<rect x="418" y="408" width="164" height="82" rx="4" class="block"/>
-<text x="500" y="440" class="t-main">SSD1306</text>
-<text x="500" y="457" class="t-sm">OLED 128×64</text>
-<text x="500" y="474" class="t-sm">addr 0x3C</text>
+<rect x="420" y="422" width="164" height="82" rx="4" class="block"/>
+<text x="502" y="454" class="t-main">SSD1306</text>
+<text x="502" y="471" class="t-sm">OLED 128×64</text>
+<text x="502" y="488" class="t-sm">addr 0x3C</text>
 
 <!-- Qwiic bus → NAU7802 -->
-<line x1="330" y1="343" x2="300" y2="408" class="w1"/>
+<line x1="330" y1="356" x2="300" y2="422" class="w1"/>
 <!-- Qwiic bus → SSD1306 -->
-<line x1="468" y1="343" x2="500" y2="408" class="w1"/>
+<line x1="464" y1="356" x2="502" y2="422" class="w1"/>
 
 <!-- ── TAL220B 5 kg Load Cell ── -->
-<rect x="218" y="558" width="164" height="60" rx="4" class="block"/>
-<text x="300" y="585" class="t-main">TAL220B</text>
-<text x="300" y="602" class="t-sm">5 kg Load Cell</text>
+<rect x="218" y="572" width="164" height="60" rx="4" class="block"/>
+<text x="300" y="599" class="t-main">TAL220B</text>
+<text x="300" y="616" class="t-sm">5 kg Load Cell</text>
 
 <!-- 4-wire: NAU7802 ↔ Load Cell -->
-<line x1="300" y1="490" x2="300" y2="558" class="w2"/>
-<text x="314" y="516" class="t-wire">4-wire analog</text>
-<text x="314" y="530" class="t-wire">E+ / E− / A+ / A−</text>
+<line x1="300" y1="504" x2="300" y2="572" class="w2"/>
+<text x="314" y="530" class="t-wire">4-wire analog</text>
+<text x="314" y="544" class="t-wire">E+ / E− / A+ / A−</text>
 
 <!-- ── Legend ── -->
-<rect x="590" y="535" width="188" height="82" rx="4" class="legend"/>
-<text x="684" y="551" class="t-lgnd-h">Legend</text>
-<line x1="604" y1="568" x2="662" y2="568"
+<rect x="604" y="550" width="188" height="82" rx="4" class="legend"/>
+<text x="698" y="566" class="t-lgnd-h">Legend</text>
+<line x1="618" y1="583" x2="676" y2="583"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);marker-start:url(#ah0);"/>
-<text x="670" y="572" class="t-lgnd">Bidirectional data</text>
-<line x1="604" y1="589" x2="662" y2="589"
+<text x="684" y="587" class="t-lgnd">Bidirectional data</text>
+<line x1="618" y1="601" x2="676" y2="601"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);"/>
-<text x="670" y="593" class="t-lgnd">Unidirectional</text>
-<line x1="604" y1="608" x2="662" y2="608"
+<text x="684" y="605" class="t-lgnd">Unidirectional</text>
+<line x1="618" y1="619" x2="676" y2="619"
       style="stroke:#4e7f4e;stroke-width:1.5;stroke-dasharray:6,3;fill:none;"/>
-<text x="670" y="612" class="t-lgnd">PCB boundary</text>
+<text x="684" y="623" class="t-lgnd">PCB boundary</text>
 
 </svg>
