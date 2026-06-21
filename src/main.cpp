@@ -25,6 +25,13 @@ SemaphoreHandle_t gTagMutex     = nullptr;
 volatile bool gWriteMainPending = false;
 volatile bool gWriteAuxPending  = false;
 
+// Spoolman spool ID for the tag currently on the scale (-1 = none / unknown).
+// Set by syncTask; read by displayTask for the "Spool #N" line.
+volatile int  gSpoolId             = -1;
+// True while the spool's Spoolman record still has needs_onboarding=true.
+// Drives the "Registered! Edit in Spoolman" display variant.
+volatile bool gSpoolNeedsOnboarding = false;
+
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);
 void scaleTask(void* param);
@@ -42,7 +49,7 @@ void setup() {
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
-    xTaskCreatePinnedToCore(scaleTask,   "scale",   2048, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(scaleTask,   "scale",   3072, nullptr, 2, nullptr, 1);
 
     // Core 0: I/O — co-located with the WiFi stack
     xTaskCreatePinnedToCore(displayTask, "display", 4096, nullptr, 1, nullptr, 0);

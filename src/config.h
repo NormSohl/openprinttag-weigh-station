@@ -30,3 +30,9 @@
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing
+// Calibration factor for NAU7802 → grams conversion (raw counts per gram).
+// Determine empirically: place a known weight on the scale, read the raw
+// average with zero subtracted, divide by the known mass in grams.
+// Stored in NVS under the "scale" namespace and updated via serial commands
+// (ZERO / CAL <grams>); this constant is only used on first boot.
+#define SCALE_CAL_FACTOR         1.0f

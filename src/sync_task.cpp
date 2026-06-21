@@ -19,6 +19,8 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
+extern volatile int         gSpoolId;
+extern volatile bool        gSpoolNeedsOnboarding;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -331,14 +333,14 @@ void syncTask(void* param) {
                 continue;
 
             case DeviceState::Idle:
-                // Check if Spoolman/WiFi just came back (transitions from IdleNoWiFi).
                 sSpoolId = -1; sLastRemaining = 0.0f; sNeedWeightPatch = false; sSnapshot = {};
+                gSpoolId = -1; gSpoolNeedsOnboarding = false;
                 vTaskDelay(pdMS_TO_TICKS(SPOOLMAN_POLL_MS));
                 continue;
 
             case DeviceState::IdleNoWiFi:
                 sSpoolId = -1; sLastRemaining = 0.0f; sNeedWeightPatch = false; sSnapshot = {};
-                // Reconnect if WiFi credentials were saved from a prior session.
+                gSpoolId = -1; gSpoolNeedsOnboarding = false;
                 if (WiFi.status() == WL_CONNECTED) setState(DeviceState::Idle);
                 vTaskDelay(pdMS_TO_TICKS(SPOOLMAN_POLL_MS));
                 continue;
@@ -372,6 +374,8 @@ void syncTask(void* param) {
                 int sid = createSpool(fid, main.instance_uuid, 0.0f, 0.0f, true);
                 if (sid < 0) { setState(DeviceState::SpoolmanUnreachable); continue; }
                 sSpoolId = sid;
+                gSpoolId = sid;
+                gSpoolNeedsOnboarding = true;
 
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
                 memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
@@ -394,6 +398,9 @@ void syncTask(void* param) {
                     setState(DeviceState::ForeignTagFound);
                 } else {
                     sSpoolId = sid;
+                    gSpoolId = sid;
+                    gSpoolNeedsOnboarding =
+                        (spoolDoc["extra"]["needs_onboarding"] | false);
 
                     // Sync authoritative Spoolman data down to the tag.
                     OptMain updated = main;
@@ -441,6 +448,8 @@ void syncTask(void* param) {
                                   false);
             if (sid < 0) { setState(DeviceState::SpoolmanUnreachable); continue; }
             sSpoolId = sid;
+            gSpoolId = sid;
+            gSpoolNeedsOnboarding = false;
 
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
@@ -525,6 +534,10 @@ void syncTask(void* param) {
             latest.material_class = gTagMain.material_class;
             latest.material_type  = gTagMain.material_type;
             xSemaphoreGive(gTagMutex);
+
+            // Track whether admin has cleared the onboarding flag.
+            if (gSpoolNeedsOnboarding && !(spoolDoc["extra"]["needs_onboarding"] | false))
+                gSpoolNeedsOnboarding = false;
 
             if (mainDiffers(latest, sSnapshot)) {
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
