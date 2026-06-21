@@ -58,7 +58,7 @@ See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi se
 
 See `docs/design/oled-display-states.md` for the OLED content per state. Note: the actual font used in `display_task.cpp` is Adafruit's default size-1 (6×8 px per char, ~21 chars × 8 lines), not the 8×16 assumed in that doc. The `SpoolmanUnreachable` state also now shows a "Fix SpoolMan URL: / weighstation.local" hint in the lower half of the screen.
 
-See `docs/wiring.md` for pin assignments and connector details.
+See `hardware/wiring.md` for pin assignments and connector details.
 
 ## Runtime Configuration
 
