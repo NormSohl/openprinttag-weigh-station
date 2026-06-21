@@ -13,16 +13,9 @@ os.makedirs(tinycbor_src, exist_ok=True)
 
 generated = {
     "tinycbor-export.h": """\
-#ifndef TINYCBOR_EXPORT_H
-#define TINYCBOR_EXPORT_H
-
-#define TINYCBOR_EXPORT
-#define TINYCBOR_NO_EXPORT
-#define TINYCBOR_DEPRECATED
-#define TINYCBOR_DEPRECATED_EXPORT
-#define TINYCBOR_DEPRECATED_NO_EXPORT
-
-#endif /* TINYCBOR_EXPORT_H */
+#ifndef CBOR_API
+#define CBOR_API
+#endif
 """,
     "tinycbor-version.h": """\
 #ifndef TINYCBOR_VERSION_H
