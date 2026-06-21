@@ -4,6 +4,8 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
 #include <esp_random.h>
 #include <string.h>
 #include "config.h"
@@ -100,6 +102,44 @@ static String urlEncode(const char* s) {
 
 // Loaded from NVS at boot; updated via the WiFiManager captive portal.
 static String sBase(SPOOLMAN_BASE_URL);
+
+static WebServer sWeb(80);
+
+static void startWebServer() {
+    if (MDNS.begin(DEVICE_HOSTNAME))
+        MDNS.addService("http", "tcp", 80);
+
+    sWeb.on("/", HTTP_GET, []() {
+        String page =
+            "<!DOCTYPE html><html><head>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Weigh Station</title></head><body>"
+            "<h2>Weigh Station</h2>"
+            "<p><b>Spoolman:</b> " + sBase + "</p>"
+            "<hr>"
+            "<p><a href='/reset'>Reset WiFi &amp; Spoolman URL</a> &mdash; "
+            "clears stored credentials and reopens the setup portal.</p>"
+            "</body></html>";
+        sWeb.send(200, "text/html", page);
+    });
+
+    sWeb.on("/reset", HTTP_GET, []() {
+        sWeb.send(200, "text/html",
+            "<!DOCTYPE html><html><body>"
+            "<h2>Resetting&hellip;</h2>"
+            "<p>WiFi credentials cleared. Device is restarting.</p>"
+            "<p>Connect to <b>WeighStation-Setup</b> to reconfigure.</p>"
+            "</body></html>");
+        sWeb.stop();
+        vTaskDelay(pdMS_TO_TICKS(500));
+        WiFiManager wm;
+        wm.resetSettings();
+        ESP.restart();
+    });
+
+    sWeb.begin();
+    Serial.printf("Web UI: http://%s.local/\n", DEVICE_HOSTNAME);
+}
 
 // Returns HTTP status code, or -1 on connection failure.
 static int httpGet(const String& url, String& body) {
@@ -346,6 +386,7 @@ void syncTask(void* param) {
         setState(DeviceState::IdleNoWiFi);
     } else {
         setState(DeviceState::Idle);
+        startWebServer();
     }
 
     // Persist the URL if the user edited it in the captive portal.
@@ -369,6 +410,7 @@ void syncTask(void* param) {
     OptMain sSnapshot        = {};
 
     for (;;) {
+        sWeb.handleClient();
         DeviceState state = getState();
 
         // ── Quiescent / boot states ───────────────────────────────────────────

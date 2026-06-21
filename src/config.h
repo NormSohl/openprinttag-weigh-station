@@ -29,6 +29,11 @@
 #define WIFI_RESET_PIN      0
 #define WIFI_RESET_HOLD_MS  3000
 
+// ── Web interface ─────────────────────────────────────────────
+// mDNS hostname; device is reachable at http://<DEVICE_HOSTNAME>.local/
+// The /reset endpoint clears WiFi credentials and reboots into the portal.
+#define DEVICE_HOSTNAME  "weighstation"
+
 // ── Spoolman ──────────────────────────────────────────────────
 #define SPOOLMAN_BASE_URL  "http://spoolman.local:7912"
 
