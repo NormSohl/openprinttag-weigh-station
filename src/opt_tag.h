@@ -70,3 +70,11 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen);
 // Returns the byte offset of the NDEF OPT payload within tagBytes, or SIZE_MAX if not found.
 // Add OptMeta.main_region_offset / aux_region_offset to this to get absolute write positions.
 size_t optPayloadOffset(const uint8_t* tagBytes, size_t len);
+
+// Build a complete initialised (data-empty) OPT tag byte array for a blank tag.
+// outBuf must be at least numBlocks * blockSize bytes.
+// On success: outMeta is populated with region offsets; returns the NDEF payload
+// byte offset within outBuf.  Returns SIZE_MAX on error.
+// Layout mirrors nfc_initialize.py: CC → NDEF TLV → Meta CBOR → empty Main → empty Aux → 0xFE.
+size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
+                        uint8_t* outBuf, size_t outBufLen, OptMeta* outMeta);

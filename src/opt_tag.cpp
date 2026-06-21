@@ -177,8 +177,10 @@ bool optIsBlank(const uint8_t* tagBytes, size_t len) {
     size_t payloadLen;
     if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return true;
 
-    // An initialised-but-empty tag has a CBOR payload of just an empty map (0xA0 or 0xBF 0xFF).
-    return (payloadLen == 0 || payload[0] == 0xA0 || (payloadLen >= 2 && payload[0] == 0xBF));
+    // A blank payload is an empty CBOR map: definite 0xA0, or indefinite 0xBF 0xFF.
+    // Do NOT treat a non-empty indefinite map (0xBF <key>...) as blank — that is the Meta section.
+    if (payloadLen == 0 || payload[0] == 0xA0) return true;
+    return (payload[0] == 0xBF && payloadLen >= 2 && payload[1] == 0xFF);
 }
 
 bool optDecode(const uint8_t* tagBytes, size_t len,
@@ -362,4 +364,122 @@ size_t optPayloadOffset(const uint8_t* tagBytes, size_t len) {
     size_t payloadLen;
     if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return SIZE_MAX;
     return (size_t)(payload - tagBytes);
+}
+
+size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
+                        uint8_t* outBuf, size_t outBufLen, OptMeta* outMeta) {
+    const size_t tagSize = (size_t)numBlocks * blockSize;
+    if (!outBuf || tagSize > outBufLen || numBlocks < 2) return SIZE_MAX;
+
+    // 16 bytes reserved for Meta CBOR at the start of the OPT payload.
+    // Meta CBOR with 4 integer keys encodes in ≤13 bytes; 16 gives comfortable headroom.
+    static const size_t META_SECTION_SIZE  = 16;
+    static const size_t MAIN_REGION_OFFSET = META_SECTION_SIZE;  // = 16
+    static const size_t EMPTY_MAP_SIZE     = 2;   // 0xBF 0xFF
+
+    // Aux sits at the last complete block so its absolute address is block-aligned.
+    const size_t auxAbsStart = (size_t)(numBlocks - 1) * blockSize;
+
+    // ── Choose SR bit and TLV length encoding ────────────────────────────────
+    // Start with SR=1 (1-byte payload length, payload ≤ 255 bytes), 1-byte TLV length.
+    bool   useSR1       = true;
+    size_t ndefHdrSize  = 1 + 1 + 1 + OPT_MIME_TYPE_LEN;  // 31 bytes (SR=1)
+    size_t tlvLenSize   = 1;
+    size_t payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+
+    if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+    size_t cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+    size_t ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+
+    if (cborPayloadLen > 255) {
+        // Payload too large for SR=1; switch to SR=0 (4-byte payload length field).
+        useSR1       = false;
+        ndefHdrSize  = 1 + 1 + 4 + OPT_MIME_TYPE_LEN;  // 34 bytes (SR=0)
+        payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+        if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+    }
+
+    if (ndefMsgLen > 254) {
+        // NDEF message too large for 1-byte TLV length; switch to 3-byte (0xFF hi lo).
+        tlvLenSize   = 3;
+        payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+        if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+    }
+
+    const size_t auxOffset     = auxAbsStart - payloadStart;
+    const size_t terminatorPos = auxAbsStart + EMPTY_MAP_SIZE;
+    if (terminatorPos >= tagSize) return SIZE_MAX;
+
+    // ── Write tag bytes ───────────────────────────────────────────────────────
+    memset(outBuf, 0, tagSize);
+
+    // Capability Container
+    outBuf[0] = 0xE1;         // NDEF magic
+    outBuf[1] = 0x40;         // version 1.0, read/write access
+    outBuf[2] = numBlocks;
+    outBuf[3] = 0x01;         // block size / 8 → 4-byte blocks
+
+    // NDEF TLV
+    size_t p = OPT_CC_SIZE;
+    outBuf[p++] = 0x03;
+    if (tlvLenSize == 1) {
+        outBuf[p++] = (uint8_t)ndefMsgLen;
+    } else {
+        outBuf[p++] = 0xFF;
+        outBuf[p++] = (uint8_t)(ndefMsgLen >> 8);
+        outBuf[p++] = (uint8_t)(ndefMsgLen & 0xFF);
+    }
+
+    // NDEF record header
+    outBuf[p++] = useSR1 ? 0xD2 : 0xC2;       // MB=ME=1, SR=(0/1), TNF=0x02
+    outBuf[p++] = (uint8_t)OPT_MIME_TYPE_LEN;
+    if (useSR1) {
+        outBuf[p++] = (uint8_t)cborPayloadLen;
+    } else {
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 24);
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 16);
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 8);
+        outBuf[p++] = (uint8_t)(cborPayloadLen & 0xFF);
+    }
+    memcpy(outBuf + p, OPT_MIME_TYPE, OPT_MIME_TYPE_LEN);
+    p += OPT_MIME_TYPE_LEN;
+    // p == payloadStart here
+
+    // Meta CBOR (at payload offset 0)
+    uint8_t metaBuf[24];
+    CborEncoder enc, map;
+    cbor_encoder_init(&enc, metaBuf, sizeof(metaBuf), 0);
+    cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
+    cbor_encode_int(&map, META_KEY_MAIN_REGION_OFFSET); cbor_encode_int(&map, (int64_t)MAIN_REGION_OFFSET);
+    cbor_encode_int(&map, META_KEY_MAIN_REGION_SIZE);   cbor_encode_int(&map, 0);
+    cbor_encode_int(&map, META_KEY_AUX_REGION_OFFSET);  cbor_encode_int(&map, (int64_t)auxOffset);
+    cbor_encode_int(&map, META_KEY_AUX_REGION_SIZE);    cbor_encode_int(&map, 0);
+    cbor_encoder_close_container(&enc, &map);
+    size_t metaLen = cbor_encoder_get_buffer_size(&enc, metaBuf);
+    if (metaLen > META_SECTION_SIZE) return SIZE_MAX;
+    memcpy(outBuf + p, metaBuf, metaLen);
+
+    // Empty Main CBOR (at payload offset MAIN_REGION_OFFSET)
+    outBuf[p + MAIN_REGION_OFFSET]     = 0xBF;
+    outBuf[p + MAIN_REGION_OFFSET + 1] = 0xFF;
+
+    // Empty Aux CBOR (block-aligned at auxAbsStart)
+    outBuf[auxAbsStart]     = 0xBF;
+    outBuf[auxAbsStart + 1] = 0xFF;
+
+    // TLV terminator
+    outBuf[terminatorPos] = 0xFE;
+
+    if (outMeta) {
+        outMeta->main_region_offset = (uint16_t)MAIN_REGION_OFFSET;
+        outMeta->main_region_size   = 0;
+        outMeta->aux_region_offset  = (uint16_t)auxOffset;
+        outMeta->aux_region_size    = 0;
+    }
+
+    return payloadStart;  // byte offset of OPT CBOR payload within outBuf
 }

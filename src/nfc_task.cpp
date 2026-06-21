@@ -182,16 +182,46 @@ void nfcTask(void* param) {
         }
 
         if (state == DeviceState::FormattingAndRegistering) {
-            // TODO: write an initialised OPT tag structure, mirroring nfc_initialize.py:
-            //   1. Capability Container (4 bytes): {0xE1, 0x40, numBlocks, 0x01}
-            //   2. NDEF TLV (0x03 + length) containing a record with type OPT_MIME_TYPE
-            //   3. Meta CBOR map at offset 0 of payload — encode aux_region_offset so
-            //      aux sits block-aligned near the end, main fills the middle
-            //   4. Empty CBOR map ({}) at the Main region offset
-            //   5. Empty CBOR map ({}) at the Aux region offset
-            //   After writing: decode the tag back to populate sRawLen / sPayloadOffset /
-            //   gTagMeta so subsequent aux writes land in the right place.
-            //   syncTask transitions to WeighingAndSync after creating the stub Spool.
+            uint8_t  initBuf[512] = {};
+            OptMeta  initMeta     = {};
+            size_t   payloadOff   = optBuildBlankTag(numBlocks, blockSize,
+                                                     initBuf, sizeof(initBuf), &initMeta);
+            if (payloadOff == SIZE_MAX) {
+                setState(DeviceState::TagReadError);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            bool writeOk = true;
+            for (uint8_t b = 0; b < numBlocks; b++) {
+                if (nfc.writeSingleBlock(uid, b, initBuf + b * blockSize, blockSize)
+                        != ISO15693_EC_OK) {
+                    writeOk = false;
+                    break;
+                }
+            }
+            if (!writeOk) {
+                setState(DeviceState::TagReadError);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            // Mirror the written bytes into the task-local raw buffer so subsequent
+            // aux/main writes via writeSection() use the correct offsets.
+            memcpy(sRawBuf, initBuf, (size_t)numBlocks * blockSize);
+            sRawLen        = (size_t)numBlocks * blockSize;
+            sPayloadOffset = payloadOff;
+
+            xSemaphoreTake(gTagMutex, portMAX_DELAY);
+            memcpy(gTagUid, uid, 8);
+            gTagMeta = initMeta;
+            gTagMain = {};   // nil UUID — syncTask creates a stub Spool with needs_onboarding=true
+            gTagAux  = {};
+            xSemaphoreGive(gTagMutex);
+
+            // syncTask sees the nil UUID, creates the stub Spool in Spoolman, and
+            // transitions to WeighingAndSync once the record exists.
+            setState(DeviceState::ValidTagFound);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
