@@ -37,20 +37,17 @@ for filename, content in generated.items():
             f.write(content)
         print(f"Generated {filename}")
 
-# Create a library.json to exclude POSIX-only files that won't compile on ESP32/Arduino.
-# open_memstream.c requires funopen/fopencookie (POSIX), cbortojson.c and
-# cborpretty_stdio.c require FILE* stdio — none available on bare-metal ESP32.
-tinycbor_root = os.path.join(libdeps_dir, env_name, "tinycbor")
-lib_json_path = os.path.join(tinycbor_root, "library.json")
-if not os.path.exists(lib_json_path):
-    with open(lib_json_path, "w") as f:
-        f.write("""{
-  "name": "tinycbor",
-  "version": "0.6.0",
-  "build": {
-    "srcDir": "src",
-    "srcFilter": ["+<*.c>", "-<open_memstream.c>", "-<cbortojson.c>", "-<cborpretty_stdio.c>"]
-  }
-}
-""")
-    print("Created tinycbor library.json")
+# open_memstream.c is a POSIX portability shim requiring funopen (BSD) or
+# fopencookie (glibc) — neither available on ESP32/Arduino.  PlatformIO's LDF
+# scans source files before pre-build scripts run, so library.json srcFilter
+# can't exclude it; instead, overwrite the file with an empty stub so that
+# SCons compiles something harmless.  Our firmware never calls cbor_value_to_json*
+# so the missing open_memstream symbol creates no linker gap.
+open_memstream_path = os.path.join(tinycbor_src, "open_memstream.c")
+if os.path.exists(open_memstream_path):
+    with open(open_memstream_path, "r") as f:
+        existing = f.read()
+    if "Cannot implement open_memstream" in existing:
+        with open(open_memstream_path, "w") as f:
+            f.write("/* Stub: POSIX open_memstream not available on ESP32/Arduino */\n")
+        print("Stubbed open_memstream.c for ESP32 compatibility")
