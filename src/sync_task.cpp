@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <Preferences.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <esp_random.h>
@@ -97,7 +98,8 @@ static String urlEncode(const char* s) {
 
 // ── HTTP wrappers ─────────────────────────────────────────────────────────────
 
-static const char* const BASE = SPOOLMAN_BASE_URL;
+// Loaded from NVS at boot; updated via the WiFiManager captive portal.
+static String sBase(SPOOLMAN_BASE_URL);
 
 // Returns HTTP status code, or -1 on connection failure.
 static int httpGet(const String& url, String& body) {
@@ -176,7 +178,7 @@ static bool mainDiffers(const OptMain& a, const OptMain& b) {
 // Find vendor by name or create if absent. Returns id, or -1 on error.
 static int findOrCreateVendor(const char* name) {
     String body;
-    int code = httpGet(String(BASE) + "/api/v1/vendor?name=" + urlEncode(name), body);
+    int code = httpGet(sBase + "/api/v1/vendor?name=" + urlEncode(name), body);
     if (code == 200) {
         JsonDocument doc;
         if (!deserializeJson(doc, body)) {
@@ -191,7 +193,7 @@ static int findOrCreateVendor(const char* name) {
     req["name"] = name;
     String reqStr;
     serializeJson(req, reqStr);
-    code = httpPost(String(BASE) + "/api/v1/vendor", reqStr, body);
+    code = httpPost(sBase + "/api/v1/vendor", reqStr, body);
     if (code >= 200 && code < 300) {
         JsonDocument doc;
         if (!deserializeJson(doc, body)) return doc["id"] | -1;
@@ -203,7 +205,7 @@ static int findOrCreateVendor(const char* name) {
 static int findOrCreateFilament(int vendorId, const OptMain& m) {
     const char* name = m.material_name[0] ? m.material_name : "Unknown";
     String body;
-    int code = httpGet(String(BASE) + "/api/v1/filament?vendor_id=" + String(vendorId)
+    int code = httpGet(sBase + "/api/v1/filament?vendor_id=" + String(vendorId)
                        + "&name=" + urlEncode(name), body);
     if (code == 200) {
         JsonDocument doc;
@@ -234,7 +236,7 @@ static int findOrCreateFilament(int vendorId, const OptMain& m) {
 
     String reqStr;
     serializeJson(req, reqStr);
-    code = httpPost(String(BASE) + "/api/v1/filament", reqStr, body);
+    code = httpPost(sBase + "/api/v1/filament", reqStr, body);
     if (code >= 200 && code < 300) {
         JsonDocument doc;
         if (!deserializeJson(doc, body)) return doc["id"] | -1;
@@ -257,7 +259,7 @@ static int createSpool(int filamentId, const uint8_t* uuid,
 
     String reqStr, body;
     serializeJson(req, reqStr);
-    int code = httpPost(String(BASE) + "/api/v1/spool", reqStr, body);
+    int code = httpPost(sBase + "/api/v1/spool", reqStr, body);
     if (code >= 200 && code < 300) {
         JsonDocument doc;
         if (!deserializeJson(doc, body)) return doc["id"] | -1;
@@ -271,14 +273,14 @@ static bool patchSpoolWeight(int spoolId, float remainingGrams) {
     req["remaining_weight"] = remainingGrams;
     String reqStr, body;
     serializeJson(req, reqStr);
-    int code = httpPatch(String(BASE) + "/api/v1/spool/" + String(spoolId), reqStr, body);
+    int code = httpPatch(sBase + "/api/v1/spool/" + String(spoolId), reqStr, body);
     return (code >= 200 && code < 300);
 }
 
 // GET /api/v1/spool/{id}. Returns true on success; doc is populated.
 static bool getSpoolById(int id, JsonDocument& doc) {
     String body;
-    if (httpGet(String(BASE) + "/api/v1/spool/" + String(id), body) != 200) return false;
+    if (httpGet(sBase + "/api/v1/spool/" + String(id), body) != 200) return false;
     return !deserializeJson(doc, body);
 }
 
@@ -286,7 +288,7 @@ static bool getSpoolById(int id, JsonDocument& doc) {
 // On success, the spool object is deep-copied into spoolOut.
 static int findSpoolByNfcId(const char* uuidStr, JsonDocument& spoolOut) {
     String body;
-    int code = httpGet(String(BASE) + "/api/v1/spool?extra[nfc_id]=" + urlEncode(uuidStr), body);
+    int code = httpGet(sBase + "/api/v1/spool?extra[nfc_id]=" + urlEncode(uuidStr), body);
     if (code < 0)    return -2;
     if (code != 200) return -1;
     JsonDocument list;
@@ -300,15 +302,48 @@ static int findSpoolByNfcId(const char* uuidStr, JsonDocument& spoolOut) {
 // ── Task ──────────────────────────────────────────────────────────────────────
 
 void syncTask(void* param) {
+    // Load persisted Spoolman URL from NVS; fall back to compile-time default.
+    {
+        Preferences prefs;
+        prefs.begin("weigh", true);
+        sBase = prefs.getString("spoolman_url", SPOOLMAN_BASE_URL);
+        prefs.end();
+    }
+
     // Set WiFiSetupMode before blocking in autoConnect so displayTask can show
     // the captive-portal SSID while we wait for provisioning.
     setState(DeviceState::WiFiSetupMode);
     WiFiManager wm;
     wm.setConfigPortalTimeout(120);
+
+    // Add Spoolman URL as a captive-portal field so it can be set (or corrected)
+    // at install time without reflashing.
+    char urlBuf[128];
+    strlcpy(urlBuf, sBase.c_str(), sizeof(urlBuf));
+    WiFiManagerParameter urlParam("spoolman_url", "Spoolman URL", urlBuf, sizeof(urlBuf));
+    wm.addParameter(&urlParam);
+
+    bool saveNeeded = false;
+    wm.setSaveConfigCallback([&saveNeeded]() { saveNeeded = true; });
+
     if (!wm.autoConnect("WeighStation-Setup")) {
         setState(DeviceState::IdleNoWiFi);
     } else {
         setState(DeviceState::Idle);
+    }
+
+    // Persist the URL if the user edited it in the captive portal.
+    if (saveNeeded) {
+        const char* val = urlParam.getValue();
+        if (val && *val) {
+            String url(val);
+            while (url.endsWith("/")) url.remove(url.length() - 1);
+            sBase = url;
+            Preferences prefs;
+            prefs.begin("weigh", false);
+            prefs.putString("spoolman_url", url.c_str());
+            prefs.end();
+        }
     }
 
     // Per-tag state, valid while a spool is on the scale.
