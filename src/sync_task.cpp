@@ -105,6 +105,17 @@ static String sBase(SPOOLMAN_BASE_URL);
 
 static WebServer sWeb(80);
 
+static void saveSpoolmanUrl(const String& url) {
+    String trimmed = url;
+    while (trimmed.endsWith("/")) trimmed.remove(trimmed.length() - 1);
+    if (trimmed.isEmpty()) return;
+    sBase = trimmed;
+    Preferences prefs;
+    prefs.begin("weigh", false);
+    prefs.putString("spoolman_url", trimmed.c_str());
+    prefs.end();
+}
+
 static void startWebServer() {
     if (MDNS.begin(DEVICE_HOSTNAME))
         MDNS.addService("http", "tcp", 80);
@@ -115,20 +126,31 @@ static void startWebServer() {
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Weigh Station</title></head><body>"
             "<h2>Weigh Station</h2>"
-            "<p><b>Spoolman:</b> " + sBase + "</p>"
+            "<form method='post' action='/url'>"
+            "<label>Spoolman URL<br>"
+            "<input name='url' type='url' size='40' value='" + sBase + "'></label> "
+            "<input type='submit' value='Save'>"
+            "</form>"
             "<hr>"
-            "<p><a href='/reset'>Reset WiFi &amp; Spoolman URL</a> &mdash; "
-            "clears stored credentials and reopens the setup portal.</p>"
+            "<p><a href='/reset'>Reset WiFi credentials</a> &mdash; "
+            "clears stored WiFi (not the URL) and reopens the setup portal.</p>"
             "</body></html>";
         sWeb.send(200, "text/html", page);
+    });
+
+    sWeb.on("/url", HTTP_POST, []() {
+        if (sWeb.hasArg("url")) saveSpoolmanUrl(sWeb.arg("url"));
+        sWeb.sendHeader("Location", "/");
+        sWeb.send(303);
     });
 
     sWeb.on("/reset", HTTP_GET, []() {
         sWeb.send(200, "text/html",
             "<!DOCTYPE html><html><body>"
-            "<h2>Resetting&hellip;</h2>"
+            "<h2>Resetting WiFi&hellip;</h2>"
             "<p>WiFi credentials cleared. Device is restarting.</p>"
             "<p>Connect to <b>WeighStation-Setup</b> to reconfigure.</p>"
+            "<p>Your Spoolman URL is preserved.</p>"
             "</body></html>");
         sWeb.stop();
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -392,15 +414,7 @@ void syncTask(void* param) {
     // Persist the URL if the user edited it in the captive portal.
     if (saveNeeded) {
         const char* val = urlParam.getValue();
-        if (val && *val) {
-            String url(val);
-            while (url.endsWith("/")) url.remove(url.length() - 1);
-            sBase = url;
-            Preferences prefs;
-            prefs.begin("weigh", false);
-            prefs.putString("spoolman_url", url.c_str());
-            prefs.end();
-        }
+        if (val && *val) saveSpoolmanUrl(String(val));
     }
 
     // Per-tag state, valid while a spool is on the scale.
