@@ -56,9 +56,32 @@ For the (currently being phased out) fleet of reusable spool bodies: reuse is ha
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, the steady "present" state with background reconciliation, and network-failure fallback.
 
-See `docs/design/oled-display-states.md` for the literal OLED content (text/layout) per state, for the 128×64 SSD1306 with the existing 8×16 font (~16 chars × 4 lines).
+See `docs/design/oled-display-states.md` for the OLED content per state. Note: the actual font used in `display_task.cpp` is Adafruit's default size-1 (6×8 px per char, ~21 chars × 8 lines), not the 8×16 assumed in that doc. The `SpoolmanUnreachable` state also now shows a "Fix SpoolMan URL: / weighstation.local" hint in the lower half of the screen.
 
-## Not Yet Built
-- Serial/network command interface for the format+register flow (only weigh+sync exists today; `syncToDatabase()` is still a stub in the original bench-test firmware).
-- The actual CBOR encoder for the Main section (decoder exists; writing is new).
-- Real Spoolman HTTP client: find-or-create Vendor/Filament/Spool, PATCH weight, GET with `extra` field filters for the `needs_onboarding` marker and `nfc_id` lookups.
+See `docs/wiring.md` for pin assignments and connector details.
+
+## Runtime Configuration
+
+All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
+
+### Spoolman URL
+- NVS namespace `"weigh"`, key `"spoolman_url"`. Compile-time fallback: `SPOOLMAN_BASE_URL` in `config.h`.
+- **Set at first boot:** enter the WiFiManager captive portal (join `WeighStation-Setup` AP) — the URL field is pre-filled with the current value.
+- **Change while running:** browse to `http://weighstation.local/` and update the URL field. No restart needed; `sBase` is updated in place.
+
+### WiFi credentials
+- Managed by WiFiManager. Stored internally by the ESP32 WiFi stack (not in our NVS namespace).
+- **Reset (board accessible):** hold BOOT button (GPIO 0) for 3 seconds at power-on → credentials cleared → captive portal opens immediately.
+- **Reset (cabinet-installed):** browse to `http://weighstation.local/reset` → device reboots into captive portal. The Spoolman URL is preserved across a WiFi reset.
+- **SSID change / missed portal window:** on each power cycle, WiFiManager automatically opens the captive portal for 120 seconds if stored credentials fail. Power-cycle the device and connect to `WeighStation-Setup` within that window.
+
+### Scale calibration
+- NVS namespace `"scale"`, keys `"zero"` (int32), `"cal"` (float), `"valid"` (bool).
+- On first boot with no stored calibration: auto-tares with a 32-sample average and applies `SCALE_CAL_FACTOR` from `config.h` (default 1.0 — uncalibrated).
+- **Serial commands** (115200 baud) for calibration workflow:
+  - `ZERO` — tare with nothing on the scale (32-sample average, persisted to NVS)
+  - `CAL <grams>` — calibrate with a known weight currently on the scale (e.g. `CAL 100`)
+
+## Pending (requires hardware)
+- Scale calibration: run `ZERO` then `CAL <grams>` with a known reference weight once the load cell is wired and mounted.
+- End-to-end state machine validation: NFC read/write, blank tag onboarding flow, Spoolman sync, reconciliation loop.
