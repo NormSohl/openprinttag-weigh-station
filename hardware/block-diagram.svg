@@ -67,32 +67,33 @@
 <rect x="55" y="120" width="760" height="192" rx="7" class="board"/>
 <text x="68" y="135" class="t-board">SparkFun Thing Plus ESP32-S3</text>
 
-<!-- ── ESP32-S3 MCU — with pinout table ── -->
+<!-- ── ESP32-S3 MCU — with full pinout table ── -->
 <rect x="90" y="134" width="200" height="168" rx="4" class="block"/>
 <text x="190" y="149" class="t-main">ESP32-S3</text>
 <text x="190" y="164" class="t-sm">MCU</text>
-<!-- Separator / GPIO 48 wire exits here -->
+<!-- Separator / GPIO 48 wire level -->
 <line x1="100" y1="174" x2="280" y2="174" class="sep"/>
-<!-- Pin table: GPIO# (blue, left) · signal (right). Three groups: SPI, I2C, other -->
-<text x="100" y="186" class="t-gpio">GPIO 5</text>   <text x="280" y="186" class="t-sig">NSS</text>
-<text x="100" y="196" class="t-gpio">GPIO 35</text>  <text x="280" y="196" class="t-sig">MOSI</text>
-<text x="100" y="206" class="t-gpio">GPIO 37</text>  <text x="280" y="206" class="t-sig">MISO</text>
-<text x="100" y="216" class="t-gpio">GPIO 36</text>  <text x="280" y="216" class="t-sig">SCK</text>
-<text x="100" y="226" class="t-gpio">GPIO 6</text>   <text x="280" y="226" class="t-sig">BUSY</text>
-<text x="100" y="236" class="t-gpio">GPIO 7</text>   <text x="280" y="236" class="t-sig">RST</text>
-<line x1="100" y1="244" x2="280" y2="244" class="sep"/>
-<text x="100" y="254" class="t-gpio">GPIO 8</text>   <text x="280" y="254" class="t-sig">SDA</text>
-<text x="100" y="264" class="t-gpio">GPIO 9</text>   <text x="280" y="264" class="t-sig">SCL</text>
-<line x1="100" y1="272" x2="280" y2="272" class="sep"/>
-<text x="100" y="282" class="t-gpio">GPIO 13</text>  <text x="280" y="282" class="t-sig">PWM</text>
-<text x="100" y="294" class="t-gpio">GPIO 48</text>  <text x="280" y="294" class="t-sig">NeoPixel</text>
+<!-- Pin table (9 px row spacing, three groups: SPI · I²C · other) -->
+<text x="100" y="185" class="t-gpio">GPIO 5</text>   <text x="280" y="185" class="t-sig">NSS</text>
+<text x="100" y="194" class="t-gpio">GPIO 35</text>  <text x="280" y="194" class="t-sig">MOSI</text>
+<text x="100" y="203" class="t-gpio">GPIO 37</text>  <text x="280" y="203" class="t-sig">MISO</text>
+<text x="100" y="212" class="t-gpio">GPIO 36</text>  <text x="280" y="212" class="t-sig">SCK</text>
+<text x="100" y="221" class="t-gpio">GPIO 6</text>   <text x="280" y="221" class="t-sig">BUSY</text>
+<text x="100" y="230" class="t-gpio">GPIO 7</text>   <text x="280" y="230" class="t-sig">RST</text>
+<line x1="100" y1="238" x2="280" y2="238" class="sep"/>
+<text x="100" y="247" class="t-gpio">GPIO 8</text>   <text x="280" y="247" class="t-sig">SDA</text>
+<text x="100" y="256" class="t-gpio">GPIO 9</text>   <text x="280" y="256" class="t-sig">SCL</text>
+<line x1="100" y1="264" x2="280" y2="264" class="sep"/>
+<text x="100" y="273" class="t-gpio">GPIO 13</text>  <text x="280" y="273" class="t-sig">NeoPixel</text>
+<text x="100" y="282" class="t-gpio">GPIO 14</text>  <text x="280" y="282" class="t-sig">PWM</text>
+<text x="100" y="291" class="t-gpio">GPIO 48</text>  <text x="280" y="291" class="t-sig">NeoPixel</text>
 
 <!-- WS2812 NeoPixel (onboard) -->
 <rect x="565" y="134" width="210" height="80" rx="4" class="block"/>
 <text x="670" y="164" class="t-main">WS2812 NeoPixel</text>
 <text x="670" y="182" class="t-sm">onboard · GPIO 48</text>
 
-<!-- GPIO 48: exits MCU at separator (y=174) → NeoPixel -->
+<!-- GPIO 48: MCU → onboard NeoPixel (exits at separator y=174) -->
 <line x1="290" y1="174" x2="565" y2="174" class="w1"/>
 <text x="428" y="167" class="t-wirec">GPIO 48</text>
 
@@ -111,10 +112,9 @@
 <line x1="26" y1="517" x2="206" y2="517" class="sep"/>
 <text x="116" y="533" class="t-pin-c">3.3 V · GND</text>
 
-<!-- SPI: MCU ↔ PN5180
-     Exits MCU bottom → routes outside board → PN5180 top -->
+<!-- SPI: MCU ↔ PN5180 -->
 <path d="M 130 302 L 130 358 L 116 358 L 116 364" class="w2"/>
-<text x="82" y="330" class="t-wire">SPI</text>
+<text x="82"  y="330" class="t-wire">SPI</text>
 
 <!-- ── Qwiic I2C Bus ── -->
 <rect x="240" y="364" width="314" height="76" rx="4" class="bus"/>
@@ -124,17 +124,27 @@
 
 <!-- Qwiic: MCU → Qwiic bus -->
 <path d="M 225 302 L 225 350 L 378 350 L 378 364" class="w1"/>
-<text x="234" y="335" class="t-wire">Qwiic</text>
+<text x="232" y="354" class="t-wire">Qwiic</text>
+
+<!-- ── External WS2812 NeoPixel ── -->
+<rect x="604" y="364" width="166" height="90" rx="4" class="block"/>
+<text x="687" y="396" class="t-main">WS2812 NeoPixel</text>
+<text x="687" y="414" class="t-sm">external</text>
+<text x="687" y="432" class="t-sm">GPIO 13 · 3.3V · GND</text>
+
+<!-- GPIO 13: MCU → external NeoPixel (data) -->
+<path d="M 270 302 L 270 322 L 687 322 L 687 364" class="w1"/>
+<text x="479" y="315" class="t-wirec">GPIO 13 · data</text>
 
 <!-- ── Passive Piezo Buzzer ── -->
-<rect x="604" y="364" width="166" height="90" rx="4" class="block"/>
-<text x="687" y="396" class="t-main">Passive Piezo</text>
-<text x="687" y="414" class="t-sm">Buzzer</text>
-<text x="687" y="432" class="t-sm">GPIO 13</text>
+<rect x="604" y="464" width="166" height="90" rx="4" class="block"/>
+<text x="687" y="496" class="t-main">Passive Piezo</text>
+<text x="687" y="514" class="t-sm">Buzzer</text>
+<text x="687" y="532" class="t-sm">GPIO 14</text>
 
-<!-- PWM: MCU → Piezo -->
-<path d="M 280 302 L 280 332 L 687 332 L 687 364" class="w1"/>
-<text x="484" y="325" class="t-wirec">PWM · GPIO 13</text>
+<!-- GPIO 14 / PWM: MCU → Piezo (routes left of NeoPixel block) -->
+<path d="M 282 302 L 282 344 L 590 344 L 590 509 L 604 509" class="w1"/>
+<text x="436" y="337" class="t-wirec">GPIO 14 · PWM</text>
 
 <!-- ── NAU7802 Load Cell ADC ── -->
 <rect x="218" y="506" width="164" height="82" rx="4" class="block"/>

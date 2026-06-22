@@ -8,7 +8,7 @@ Auto-loaded by Claude Code at the start of every session. Summarizes architectur
 
 NFC-based filament inventory system for Seattle Makers' Prusa 3D printing lab. A custom ESP32-S3 weigh station reads OpenPrintTag (OPT) NFC spool tags via a PN5180 module, weighs spools with a NAU7802 load cell, and syncs to Spoolman (self-hosted filament inventory backend) over WiFi.
 
-**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, Qwiic OLED 128x64 (SSD1306), passive piezo buzzer, onboard WS2812 NeoPixel (GPIO 48).
+**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, Qwiic OLED 128x64 (SSD1306), passive piezo buzzer (GPIO 14), external WS2812 NeoPixel breakout (GPIO 13, visible through enclosure 5mm light-pipe hole), onboard WS2812 NeoPixel (GPIO 48). Both NeoPixels show the same status colour.
 
 **Firmware stack:** PlatformIO + Arduino framework, FreeRTOS tasks for scale/NFC/sync/display. ATrappmann's PN5180-Library (`readSingleBlock` / `writeSingleBlock` / `getSystemInfo` cover both reading and writing ISO15693 tags). **Never call `lockICODESLIX2`** — tags must remain rewritable for the life of the spool.
 

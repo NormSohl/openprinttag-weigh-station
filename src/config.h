@@ -15,12 +15,17 @@
 #define I2C_SDA  8
 #define I2C_SCL  9
 
-// ── Onboard WS2812 NeoPixel ───────────────────────────────────
-#define NEOPIXEL_PIN    48
-#define NEOPIXEL_COUNT   1
+// ── WS2812 NeoPixels ──────────────────────────────────────────
+// Onboard pixel on the SparkFun Thing Plus ESP32-S3 board.
+#define NEOPIXEL_PIN     48
+#define NEOPIXEL_COUNT    1
+// External WS2812 breakout, mounted in the enclosure's 5mm light-pipe
+// hole on the sloped front face. Shows the same status colour as the
+// onboard pixel so the status is visible when the lid is closed.
+#define EXT_NEOPIXEL_PIN 13
 
 // ── Passive piezo buzzer ──────────────────────────────────────
-#define BUZZER_PIN  13
+#define BUZZER_PIN  14
 
 // ── WiFi reset trigger ────────────────────────────────────────
 // Hold the BOOT button (GPIO 0, already on the SparkFun Thing Plus ESP32-S3

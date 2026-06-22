@@ -69,20 +69,32 @@ See `wiring.md` for full notes; `bill-of-materials.md` for part sources.
 
 ---
 
-## 6. Passive Piezo Buzzer
+## 6. External WS2812 NeoPixel
 
-| # | From | To | Done |
-|---|------|----|------|
-| 17 | Buzzer + | ESP32-S3 GPIO 13 | ☐ |
-| 18 | Buzzer − | ESP32-S3 GND | ☐ |
+Mounts in the 5 mm light-pipe hole on the sloped front face of the enclosure.
+
+| # | From | To | Wire | Done |
+|---|------|----|------|------|
+| 17 | NeoPixel Data in | ESP32-S3 GPIO 13 | any | ☐ |
+| 18 | NeoPixel + | ESP32-S3 3.3V | red | ☐ |
+| 19 | NeoPixel − | ESP32-S3 GND | black | ☐ |
 
 ---
 
-## 7. Onboard NeoPixel
+## 7. Passive Piezo Buzzer
+
+| # | From | To | Done |
+|---|------|----|------|
+| 20 | Buzzer + | ESP32-S3 GPIO 14 | ☐ |
+| 21 | Buzzer − | ESP32-S3 GND | ☐ |
+
+---
+
+## 8. Onboard NeoPixel
 
 | # | Note | Done |
 |---|------|------|
-| 19 | No wiring — WS2812 is onboard at GPIO 48 | ☐ |
+| 22 | No wiring — WS2812 is onboard at GPIO 48 | ☐ |
 
 ---
 
@@ -90,11 +102,11 @@ See `wiring.md` for full notes; `bill-of-materials.md` for part sources.
 
 | # | Check | Done |
 |---|-------|------|
-| 20 | No bare wire ends touching adjacent pins or the enclosure | ☐ |
-| 21 | PN5180 harness has a slack loop — platform moves freely | ☐ |
-| 22 | Load cell wires not kinked or pinched by enclosure parts | ☐ |
-| 23 | USB-C breakout seated in rear-wall bosses, connector faces cutout | ☐ |
-| 24 | All Qwiic connectors fully clicked in (audible snap) | ☐ |
+| 23 | No bare wire ends touching adjacent pins or the enclosure | ☐ |
+| 24 | PN5180 harness has a slack loop — platform moves freely | ☐ |
+| 25 | Load cell wires not kinked or pinched by enclosure parts | ☐ |
+| 26 | USB-C breakout seated in rear-wall bosses, connector faces cutout | ☐ |
+| 27 | All Qwiic connectors fully clicked in (audible snap) | ☐ |
 
 ---
 
@@ -102,7 +114,7 @@ See `wiring.md` for full notes; `bill-of-materials.md` for part sources.
 
 | # | Expected | Observed | Done |
 |---|----------|----------|------|
-| 25 | OLED shows "Weigh Station / Starting..." | | ☐ |
-| 26 | NeoPixel lights blue (WiFi Setup state) | | ☐ |
-| 27 | `WeighStation-Setup` AP visible on phone/laptop | | ☐ |
-| 28 | Serial monitor (115 200 baud) shows `[scale] Ready` | | ☐ |
+| 28 | OLED shows "Weigh Station / Starting..." | | ☐ |
+| 29 | Both NeoPixels light blue (WiFi Setup state) | | ☐ |
+| 30 | `WeighStation-Setup` AP visible on phone/laptop | | ☐ |
+| 31 | Serial monitor (115 200 baud) shows `[scale] Ready` | | ☐ |

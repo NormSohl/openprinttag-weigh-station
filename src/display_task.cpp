@@ -18,7 +18,8 @@ extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 
 static Adafruit_SSD1306  oled(128, 64, &Wire, -1);
-static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN,     NEO_GRB + NEO_KHZ800);
+static Adafruit_NeoPixel extPixel(1,            EXT_NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,10 @@ void displayTask(void* param) {
     pixel.begin();
     pixel.setBrightness(80);
     pixel.show();
+
+    extPixel.begin();
+    extPixel.setBrightness(80);
+    extPixel.show();
 
     if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
         Serial.println("[display] SSD1306 not found — task halted");
@@ -248,6 +253,8 @@ void displayTask(void* param) {
         oled.display();
         pixel.setPixelColor(0, pixelColor);
         pixel.show();
+        extPixel.setPixelColor(0, pixelColor);
+        extPixel.show();
 
         vTaskDelay(pdMS_TO_TICKS(50));  // ~20 fps ceiling
     }

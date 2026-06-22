@@ -47,13 +47,27 @@ Shares the Qwiic I²C bus with the NAU7802. I²C address: `0x3C`.
 
 ---
 
-## WS2812 NeoPixel
+## WS2812 NeoPixels
 
-Onboard on the SparkFun Thing Plus ESP32-S3 — no external wiring needed.
+Two NeoPixels show the same status colour: the onboard pixel (inside the
+enclosure) and an external WS2812 breakout mounted in the 5 mm light-pipe
+hole on the sloped front face.
+
+### Onboard (no external wiring needed)
 
 | Signal | GPIO |
 |---|---|
 | Data | GPIO 48 (onboard) |
+
+### External WS2812 breakout
+
+| Breakout pin | ESP32-S3 pin |
+|---|---|
+| Data in | GPIO 13 |
+| + (power) | 3.3V |
+| − | GND |
+
+The breakout data input is a 3.3 V logic signal — no level shifter needed.
 
 ---
 
@@ -61,7 +75,7 @@ Onboard on the SparkFun Thing Plus ESP32-S3 — no external wiring needed.
 
 | Buzzer pin | ESP32-S3 pin |
 |---|---|
-| + | GPIO 13 |
+| + | GPIO 14 |
 | − | GND |
 
 No resistor needed for a passive piezo driven by PWM.
@@ -83,6 +97,7 @@ at power-on to reopen the captive portal.
 | PN5180 NFC | SPI | 5 (CS), 35 (MOSI), 37 (MISO), 36 (SCK), 6 (BUSY), 7 (RST) |
 | NAU7802 scale ADC | I²C / Qwiic | 8 (SDA), 9 (SCL) |
 | SSD1306 OLED | I²C / Qwiic | 8 (SDA), 9 (SCL) |
-| WS2812 NeoPixel | — | 48 (onboard) |
-| Passive buzzer | PWM | 13 |
+| WS2812 NeoPixel (onboard) | — | 48 (onboard) |
+| WS2812 NeoPixel (external) | Data | 13 |
+| Passive buzzer | PWM | 14 |
 | BOOT / WiFi reset | — | 0 (onboard) |
