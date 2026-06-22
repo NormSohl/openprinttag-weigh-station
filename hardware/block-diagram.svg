@@ -158,10 +158,11 @@
 <text x="502" y="555" class="t-sm">OLED 128×64</text>
 <text x="502" y="572" class="t-sm">addr 0x3C</text>
 
-<!-- Qwiic bus → NAU7802 -->
+<!-- Qwiic bus → NAU7802 (first in daisy-chain) -->
 <line x1="330" y1="440" x2="300" y2="506" class="w1"/>
-<!-- Qwiic bus → SSD1306 -->
-<line x1="464" y1="440" x2="502" y2="506" class="w1"/>
+<!-- NAU7802 → SSD1306 (daisy-chain pass-through) -->
+<line x1="382" y1="547" x2="420" y2="547" class="w1"/>
+<text x="401" y="540" class="t-wirec">Qwiic</text>
 
 <!-- ── TAL220B 5 kg Load Cell ── -->
 <rect x="218" y="656" width="164" height="60" rx="4" class="block"/>
