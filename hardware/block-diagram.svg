@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 740">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 680">
 
 <defs>
   <marker id="ah" viewBox="0 0 10 6" markerWidth="10" markerHeight="6"
@@ -17,7 +17,6 @@
   .block  { fill: #e3eeff; stroke: #4a6fa5; stroke-width: 1.5; }
   .pwr    { fill: #fdecea; stroke: #b03020; stroke-width: 1.5; }
   .board  { fill: #edf7ed; stroke: #4e7f4e; stroke-width: 1.5; stroke-dasharray: 8,4; }
-  .bus    { fill: #fef9e7; stroke: #c8960c; stroke-width: 1.5; }
   .legend { fill: white;   stroke: #aaa;    stroke-width: 1; }
   .sep    { stroke: #aaa; stroke-width: 0.8; fill: none; }
 
@@ -32,10 +31,6 @@
   .t-sm    { font-size: 10px; fill: #555;
               text-anchor: middle; dominant-baseline: middle; }
   .t-board { font-size: 11px; fill: #4e7f4e; }
-  .t-bus   { font-size: 11px; font-weight: bold; fill: #9a6e00;
-              text-anchor: middle; dominant-baseline: middle; }
-  .t-bus2  { font-size:  9px; fill: #9a6e00;
-              text-anchor: middle; dominant-baseline: middle; }
   .t-wire  { font-size: 10px; fill: #222; }
   .t-wirec { font-size: 10px; fill: #222; text-anchor: middle; }
   .t-lgnd  { font-size:  9px; fill: #333; }
@@ -71,7 +66,6 @@
 <rect x="90" y="134" width="200" height="168" rx="4" class="block"/>
 <text x="190" y="149" class="t-main">ESP32-S3</text>
 <text x="190" y="164" class="t-sm">MCU</text>
-<!-- Separator / GPIO 48 wire level -->
 <line x1="100" y1="174" x2="280" y2="174" class="sep"/>
 <!-- Pin table (9 px row spacing, three groups: SPI · I²C · other) -->
 <text x="100" y="185" class="t-gpio">GPIO 5</text>   <text x="280" y="185" class="t-sig">NSS</text>
@@ -93,7 +87,7 @@
 <text x="670" y="164" class="t-main">WS2812 NeoPixel</text>
 <text x="670" y="182" class="t-sm">onboard · GPIO 48</text>
 
-<!-- GPIO 48: MCU → onboard NeoPixel (exits at separator y=174) -->
+<!-- GPIO 48: MCU → onboard NeoPixel -->
 <line x1="290" y1="174" x2="565" y2="174" class="w1"/>
 <text x="428" y="167" class="t-wirec">GPIO 48</text>
 
@@ -116,15 +110,25 @@
 <path d="M 130 302 L 130 358 L 116 358 L 116 364" class="w2"/>
 <text x="82"  y="330" class="t-wire">SPI</text>
 
-<!-- ── Qwiic I2C Bus ── -->
-<rect x="240" y="364" width="314" height="76" rx="4" class="bus"/>
-<text x="397" y="391" class="t-bus">Qwiic I2C Bus</text>
-<text x="397" y="410" class="t-bus2">SDA · GPIO 8  ·  SCL · GPIO 9</text>
-<text x="397" y="427" class="t-bus2">3.3 V · GND</text>
+<!-- ── NAU7802 Load Cell ADC ── -->
+<rect x="218" y="370" width="164" height="82" rx="4" class="block"/>
+<text x="300" y="402" class="t-main">NAU7802</text>
+<text x="300" y="419" class="t-sm">Load Cell ADC</text>
+<text x="300" y="436" class="t-sm">addr 0x2A</text>
 
-<!-- Qwiic: MCU → Qwiic bus -->
-<path d="M 225 302 L 225 350 L 378 350 L 378 364" class="w1"/>
-<text x="232" y="354" class="t-wire">Qwiic</text>
+<!-- ── SSD1306 OLED ── -->
+<rect x="420" y="370" width="164" height="82" rx="4" class="block"/>
+<text x="502" y="402" class="t-main">SSD1306</text>
+<text x="502" y="419" class="t-sm">OLED 128×64</text>
+<text x="502" y="436" class="t-sm">addr 0x3C</text>
+
+<!-- Qwiic: MCU → NAU7802 (first in daisy-chain) -->
+<path d="M 225 302 L 225 362 L 300 362 L 300 370" class="w1"/>
+<text x="233" y="332" class="t-wire">Qwiic</text>
+
+<!-- NAU7802 → SSD1306 (Qwiic daisy-chain pass-through) -->
+<line x1="382" y1="411" x2="420" y2="411" class="w1"/>
+<text x="401" y="404" class="t-wirec">Qwiic</text>
 
 <!-- ── External WS2812 NeoPixel ── -->
 <rect x="604" y="364" width="166" height="90" rx="4" class="block"/>
@@ -143,48 +147,30 @@
 <text x="687" y="532" class="t-sm">GPIO 14</text>
 
 <!-- GPIO 14 / PWM: MCU → Piezo (routes left of NeoPixel block) -->
-<path d="M 282 302 L 282 344 L 590 344 L 590 509 L 604 509" class="w1"/>
+<path d="M 282 302 L 282 344 L 596 344 L 596 509 L 604 509" class="w1"/>
 <text x="436" y="337" class="t-wirec">GPIO 14 · PWM</text>
 
-<!-- ── NAU7802 Load Cell ADC ── -->
-<rect x="218" y="506" width="164" height="82" rx="4" class="block"/>
-<text x="300" y="538" class="t-main">NAU7802</text>
-<text x="300" y="555" class="t-sm">Load Cell ADC</text>
-<text x="300" y="572" class="t-sm">addr 0x2A</text>
-
-<!-- ── SSD1306 OLED ── -->
-<rect x="420" y="506" width="164" height="82" rx="4" class="block"/>
-<text x="502" y="538" class="t-main">SSD1306</text>
-<text x="502" y="555" class="t-sm">OLED 128×64</text>
-<text x="502" y="572" class="t-sm">addr 0x3C</text>
-
-<!-- Qwiic bus → NAU7802 (first in daisy-chain) -->
-<line x1="330" y1="440" x2="300" y2="506" class="w1"/>
-<!-- NAU7802 → SSD1306 (daisy-chain pass-through) -->
-<line x1="382" y1="547" x2="420" y2="547" class="w1"/>
-<text x="401" y="540" class="t-wirec">Qwiic</text>
-
 <!-- ── TAL220B 5 kg Load Cell ── -->
-<rect x="218" y="656" width="164" height="60" rx="4" class="block"/>
-<text x="300" y="683" class="t-main">TAL220B</text>
-<text x="300" y="700" class="t-sm">5 kg Load Cell</text>
+<rect x="218" y="520" width="164" height="60" rx="4" class="block"/>
+<text x="300" y="547" class="t-main">TAL220B</text>
+<text x="300" y="564" class="t-sm">5 kg Load Cell</text>
 
 <!-- 4-wire: NAU7802 ↔ Load Cell -->
-<line x1="300" y1="588" x2="300" y2="656" class="w2"/>
-<text x="314" y="614" class="t-wire">4-wire analog</text>
-<text x="314" y="628" class="t-wire">E+ / E− / A+ / A−</text>
+<line x1="300" y1="452" x2="300" y2="520" class="w2"/>
+<text x="314" y="474" class="t-wire">4-wire analog</text>
+<text x="314" y="488" class="t-wire">E+ / E− / A+ / A−</text>
 
 <!-- ── Legend ── -->
-<rect x="604" y="634" width="188" height="82" rx="4" class="legend"/>
-<text x="698" y="650" class="t-lgnd-h">Legend</text>
-<line x1="618" y1="667" x2="676" y2="667"
+<rect x="604" y="572" width="188" height="82" rx="4" class="legend"/>
+<text x="698" y="588" class="t-lgnd-h">Legend</text>
+<line x1="618" y1="605" x2="676" y2="605"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);marker-start:url(#ah0);"/>
-<text x="684" y="671" class="t-lgnd">Bidirectional data</text>
-<line x1="618" y1="685" x2="676" y2="685"
+<text x="684" y="609" class="t-lgnd">Bidirectional data</text>
+<line x1="618" y1="623" x2="676" y2="623"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);"/>
-<text x="684" y="689" class="t-lgnd">Unidirectional</text>
-<line x1="618" y1="703" x2="676" y2="703"
+<text x="684" y="627" class="t-lgnd">Unidirectional</text>
+<line x1="618" y1="641" x2="676" y2="641"
       style="stroke:#4e7f4e;stroke-width:1.5;stroke-dasharray:6,3;fill:none;"/>
-<text x="684" y="707" class="t-lgnd">PCB boundary</text>
+<text x="684" y="645" class="t-lgnd">PCB boundary</text>
 
 </svg>
