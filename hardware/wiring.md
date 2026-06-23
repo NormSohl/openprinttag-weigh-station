@@ -36,38 +36,30 @@ The NAU7802 breakout's load cell terminal block accepts a standard 4-wire load c
 
 ---
 
-## SSD1306 OLED 128×64 — I²C (Qwiic)
+## 3.5" ILI9488 TFT Display — SPI
 
-| Signal | ESP32-S3 pin |
-|---|---|
-| SDA | GPIO 8 |
-| SCL | GPIO 9 |
+Hosyond / MSP3520-type 480×320 module. Shares the SPI bus with the PN5180
+(same MOSI/MISO/SCK pins); a firmware mutex prevents bus contention.
+The display mounts in a printed adapter plate on the existing porch face.
 
-Shares the Qwiic I²C bus with the NAU7802. I²C address: `0x3C`.
+| TFT pin | ESP32-S3 pin | Notes |
+|---|---|---|
+| SDI (MOSI) | GPIO 35 | shared with PN5180 |
+| SCK | GPIO 36 | shared with PN5180 |
+| SDO (MISO) | GPIO 37 | shared with PN5180; wired for future touch reads |
+| CS | GPIO 15 | TFT chip select |
+| DC (RS) | GPIO 16 | data/command select |
+| RST | GPIO 17 | reset |
+| VCC | 3.3V | |
+| GND | GND | |
 
 ---
 
-## WS2812 NeoPixels
+## WS2812 NeoPixel (onboard only)
 
-Two NeoPixels show the same status colour: the onboard pixel (inside the
-enclosure) and an external WS2812 breakout mounted in the 5 mm light-pipe
-hole on the sloped front face.
-
-### Onboard (no external wiring needed)
-
-| Signal | GPIO |
-|---|---|
-| Data | GPIO 48 (onboard) |
-
-### External WS2812 breakout
-
-| Breakout pin | ESP32-S3 pin |
-|---|---|
-| Data in | GPIO 13 |
-| + (power) | 3.3V |
-| − | GND |
-
-The breakout data input is a 3.3 V logic signal — no level shifter needed.
+The porch-face NeoPixel is replaced by the TFT display, which shows status
+colours directly. Only the onboard pixel (GPIO 48) remains active; no external
+wiring needed.
 
 ---
 
@@ -95,9 +87,8 @@ at power-on to reopen the captive portal.
 | Peripheral | Interface | ESP32-S3 pins |
 |---|---|---|
 | PN5180 NFC | SPI | 5 (CS), 35 (MOSI), 37 (MISO), 36 (SCK), 6 (BUSY), 7 (RST) |
+| ILI9488 TFT display | SPI (shared) | 15 (CS), 16 (DC), 17 (RST), 35 (MOSI), 37 (MISO), 36 (SCK) |
 | NAU7802 scale ADC | I²C / Qwiic | 8 (SDA), 9 (SCL) |
-| SSD1306 OLED | I²C / Qwiic | 8 (SDA), 9 (SCL) |
 | WS2812 NeoPixel (onboard) | — | 48 (onboard) |
-| WS2812 NeoPixel (external) | Data | 13 |
 | Passive buzzer | PWM | 14 |
 | BOOT / WiFi reset | — | 0 (onboard) |

@@ -11,18 +11,21 @@
 #define SPI_MISO  37
 #define SPI_MOSI  35
 
-// ── I²C / Qwiic (NAU7802 + SSD1306) ──────────────────────────
+// ── I²C / Qwiic (NAU7802) ────────────────────────────────────
 #define I2C_SDA  8
 #define I2C_SCL  9
 
-// ── WS2812 NeoPixels ──────────────────────────────────────────
-// Onboard pixel on the SparkFun Thing Plus ESP32-S3 board.
+// ── 3.5" ILI9488 SPI TFT display ─────────────────────────────
+// Shares MOSI/SCK/MISO with PN5180 — gSpiMutex guards the bus.
+// TFT_CS/TFT_DC/TFT_RST are also consumed by User_Setup.h for TFT_eSPI.
+#define TFT_CS   15
+#define TFT_DC   16
+#define TFT_RST  17
+
+// ── WS2812 NeoPixel (onboard) ────────────────────────────────
+// The external porch NeoPixel is superseded by the TFT display.
 #define NEOPIXEL_PIN     48
 #define NEOPIXEL_COUNT    1
-// External WS2812 breakout, mounted in the enclosure's 5mm light-pipe
-// hole on the sloped front face. Shows the same status colour as the
-// onboard pixel so the status is visible when the lid is closed.
-#define EXT_NEOPIXEL_PIN 13
 
 // ── Passive piezo buzzer ──────────────────────────────────────
 #define BUZZER_PIN  14

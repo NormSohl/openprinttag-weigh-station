@@ -1,6 +1,5 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_SSD1306.h>
+#include <TFT_eSPI.h>
 #include <Adafruit_NeoPixel.h>
 #include "config.h"
 #include "device_state.h"
@@ -16,27 +15,45 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
+extern SemaphoreHandle_t    gSpiMutex;
 
-static Adafruit_SSD1306  oled(128, 64, &Wire, -1);
-static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN,     NEO_GRB + NEO_KHZ800);
-static Adafruit_NeoPixel extPixel(1,            EXT_NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+// TFT_eSPI configured via include/User_Setup.h (ILI9488, 480x320).
+// Landscape rotation (setRotation(1)): width=480, height=320.
+static TFT_eSPI          tft;
+static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Layout helpers ────────────────────────────────────────────────────────────
+// Size-2 body rows: 16px tall, 28px pitch, 12px left margin.
+static const int MARGIN = 12;
+static const int ROW_H  = 28;
 
-// Convenience: write one line of text at a given y pixel position.
-static void line(int y, const char* text) {
-    oled.setCursor(0, y);
-    oled.print(text);
+static void cls() { tft.fillScreen(TFT_BLACK); }
+
+static void row(int r, const char* text, uint16_t color = TFT_WHITE) {
+    int y = MARGIN + r * ROW_H;
+    tft.fillRect(0, y, 480, ROW_H, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(color, TFT_BLACK);
+    tft.setCursor(MARGIN, y);
+    tft.print(text);
 }
 
-static void linef(int y, const char* fmt, ...) {
-    char buf[32];
+static void rowf(int r, uint16_t color, const char* fmt, ...) {
+    char buf[48];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    oled.setCursor(0, y);
-    oled.print(buf);
+    row(r, buf, color);
+}
+
+// Size-3 title on row 0: 24px tall.
+static void title(const char* text, uint16_t color) {
+    tft.fillRect(0, MARGIN, 480, 32, TFT_BLACK);
+    tft.setTextSize(3);
+    tft.setTextColor(color, TFT_BLACK);
+    tft.setCursor(MARGIN, MARGIN);
+    tft.print(text);
 }
 
 // ── Task ──────────────────────────────────────────────────────────────────────
@@ -46,48 +63,47 @@ void displayTask(void* param) {
     pixel.setBrightness(80);
     pixel.show();
 
-    extPixel.begin();
-    extPixel.setBrightness(80);
-    extPixel.show();
+    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    tft.init();
+    tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
+    xSemaphoreGive(gSpiMutex);
 
-    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-        Serial.println("[display] SSD1306 not found — task halted");
-        vTaskDelete(nullptr);
-        return;
-    }
-    oled.clearDisplay();
-    oled.display();
-
-    // Per-render state
-    DeviceState prevState    = DeviceState::Boot;
-    TickType_t  awaitStart   = 0;   // tick when AwaitingFormatConfirm entered
-    bool        blinkOn      = false;
-    TickType_t  lastBlinkTick = 0;
+    DeviceState prevState  = DeviceState::Boot;
+    bool        rendered   = false;
+    TickType_t  awaitStart = 0;
+    bool        blinkOn    = false;
+    TickType_t  lastBlink  = 0;
+    int         lastCount  = -1;
 
     for (;;) {
-        // ── Snapshot shared state ─────────────────────────────────────────────
         xSemaphoreTake(gStateMutex, portMAX_DELAY);
         DeviceState state = gState;
         xSemaphoreGive(gStateMutex);
 
-        // TagDetecting is sub-second — hold the previous frame to avoid flicker.
         if (state == DeviceState::TagDetecting) {
             prevState = state;
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
 
-        // Detect state entry for one-shot timer resets.
-        if (state != prevState && state == DeviceState::AwaitingFormatConfirm) {
-            awaitStart   = xTaskGetTickCount();
-            blinkOn      = true;
-            lastBlinkTick = awaitStart;
+        bool stateChanged = (state != prevState);
+        if (stateChanged) {
+            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            cls();
+            xSemaphoreGive(gSpiMutex);
+            rendered  = false;
+            lastCount = -1;
+            if (state == DeviceState::AwaitingFormatConfirm) {
+                awaitStart = xTaskGetTickCount();
+                blinkOn    = true;
+                lastBlink  = awaitStart;
+            }
         }
         prevState = state;
 
-        // Snapshot tag data under mutex once per frame.
         xSemaphoreTake(gTagMutex, portMAX_DELAY);
-        OptMain      snap  = gTagMain;
+        OptMain      snap    = gTagMain;
         OptAuxiliary auxSnap = gTagAux;
         xSemaphoreGive(gTagMutex);
 
@@ -98,7 +114,6 @@ void displayTask(void* param) {
         int  spoolId         = gSpoolId;
         bool needsOnboarding = gSpoolNeedsOnboarding;
 
-        // Computed remaining filament weight for display.
         float remaining = 0.0f;
         if (snap.empty_container_weight > 0.0f)
             remaining = weight - snap.empty_container_weight;
@@ -108,154 +123,160 @@ void displayTask(void* param) {
             remaining = weight;
         if (remaining < 0.0f) remaining = 0.0f;
 
-        // ── OLED render ───────────────────────────────────────────────────────
-        oled.clearDisplay();
-        oled.setTextColor(SSD1306_WHITE);
-        oled.setTextSize(1);
+        uint32_t pixelColor = 0;
 
-        uint32_t pixelColor = 0;  // NeoPixel colour for this frame
+        // ── Static states: render once on entry ───────────────────────────────
+        if (!rendered) {
+            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
 
-        switch (state) {
+            switch (state) {
 
-        case DeviceState::Boot:
-            line(0,  "Weigh Station");
-            line(8,  "Starting...");
-            pixelColor = 0;
-            break;
+            case DeviceState::Boot:
+                title("Weigh Station", TFT_WHITE);
+                row(2, "Starting...", TFT_DARKGREY);
+                pixelColor = 0;
+                break;
 
-        case DeviceState::WiFiSetupMode:
-            line(0,  "WiFi Setup");
-            line(8,  "Join AP:");
-            line(16, "WeighStation-Setup");
-            pixelColor = pixel.Color(0, 0, 60);  // blue
-            break;
+            case DeviceState::WiFiSetupMode:
+                title("WiFi Setup", tft.color565(0, 100, 220));
+                row(2, "Join network:", TFT_WHITE);
+                row(3, "WeighStation-Setup", TFT_CYAN);
+                row(5, "Then open browser to", TFT_DARKGREY);
+                row(6, "192.168.4.1", TFT_DARKGREY);
+                pixelColor = pixel.Color(0, 0, 60);
+                break;
 
-        case DeviceState::Idle:
-            line(0,  "Seattle Makers");
-            line(8,  "Weigh Station");
-            line(16, "Place spool");
-            line(24, "to begin");
-            pixelColor = pixel.Color(0, 20, 0);  // dim green
-            break;
+            case DeviceState::Idle:
+                title("Seattle Makers", TFT_GREEN);
+                row(2, "Weigh Station", TFT_WHITE);
+                row(4, "Place spool to begin", TFT_DARKGREY);
+                pixelColor = pixel.Color(0, 20, 0);
+                break;
 
-        case DeviceState::IdleNoWiFi:
-            line(0,  "No WiFi");
-            line(8,  "Working offline");
-            line(16, "Place spool");
-            line(24, "to weigh");
-            pixelColor = pixel.Color(40, 15, 0);  // amber
-            break;
+            case DeviceState::IdleNoWiFi:
+                title("No WiFi", tft.color565(220, 100, 0));
+                row(2, "Working offline", TFT_WHITE);
+                row(4, "Place spool to weigh", TFT_DARKGREY);
+                pixelColor = pixel.Color(40, 15, 0);
+                break;
 
-        case DeviceState::TagReadError:
-            line(0,  "Read error");
-            line(8,  "Reposition spool");
-            line(16, "or remove tag");
-            pixelColor = pixel.Color(80, 0, 0);  // red
-            break;
+            case DeviceState::TagReadError:
+                title("Read Error", TFT_RED);
+                row(2, "Reposition spool", TFT_WHITE);
+                row(3, "or remove tag", TFT_WHITE);
+                pixelColor = pixel.Color(80, 0, 0);
+                break;
 
-        case DeviceState::BlankTagFound:
-            // Transient — nfcTask immediately moves to AwaitingFormatConfirm.
-            // Show a neutral message in the unlikely event we linger here.
-            line(0, "New tag found");
-            pixelColor = pixel.Color(60, 40, 0);
-            break;
+            case DeviceState::BlankTagFound:
+                title("New tag found", tft.color565(220, 140, 0));
+                pixelColor = pixel.Color(60, 40, 0);
+                break;
 
-        case DeviceState::AwaitingFormatConfirm: {
+            case DeviceState::AwaitingFormatConfirm:
+                title("New tag found", tft.color565(220, 140, 0));
+                row(2, "Remove to cancel", TFT_WHITE);
+                row(3, "Registering in:", TFT_WHITE);
+                // Countdown digit drawn in the dynamic section below.
+                break;
+
+            case DeviceState::FormattingAndRegistering:
+                title("Registering...", tft.color565(0, 100, 220));
+                row(2, "Please wait", TFT_WHITE);
+                pixelColor = pixel.Color(0, 0, 80);
+                break;
+
+            case DeviceState::ForeignTagFound:
+            case DeviceState::RegisteringForeignTag:
+                title("New spool found", TFT_CYAN);
+                row(2, snap.brand_name[0]    ? snap.brand_name    : "Unknown brand",    TFT_WHITE);
+                row(3, snap.material_name[0] ? snap.material_name : "Unknown material", TFT_WHITE);
+                row(4, "Adding to Spoolman...", TFT_DARKGREY);
+                pixelColor = pixel.Color(0, 50, 50);
+                break;
+
+            case DeviceState::WeighingAndSync: {
+                title("Weighing...", tft.color565(0, 100, 220));
+                char wbuf[24];
+                snprintf(wbuf, sizeof(wbuf), "%.0f g", weight);
+                row(2, wbuf, TFT_WHITE);
+                pixelColor = pixel.Color(0, 0, 80);
+                break;
+            }
+
+            case DeviceState::Present:
+                if (needsOnboarding) {
+                    title("Registered!", TFT_YELLOW);
+                    if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
+                    row(3, "Edit details in Spoolman", TFT_DARKGREY);
+                    rowf(5, TFT_WHITE, "%.0f g", remaining);
+                    pixelColor = pixel.Color(50, 50, 0);
+                } else {
+                    if (spoolId > 0) rowf(0, TFT_WHITE, "Spool #%d", spoolId);
+                    else             row(0, "Spool", TFT_WHITE);
+                    char matLine[28] = {};
+                    strlcpy(matLine, snap.material_name[0] ? snap.material_name : "Unknown", sizeof(matLine));
+                    row(2, matLine, TFT_WHITE);
+                    rowf(3, TFT_GREEN, "%.0f g remaining", remaining);
+                    row(5, "Synced", TFT_DARKGREY);
+                    pixelColor = pixel.Color(0, 80, 0);
+                }
+                break;
+
+            case DeviceState::ReconcilingMainSection:
+                title("Updating tag...", TFT_YELLOW);
+                pixelColor = pixel.Color(50, 50, 0);
+                break;
+
+            case DeviceState::SpoolmanUnreachable: {
+                title("Spoolman offline", tft.color565(220, 80, 0));
+                char rbuf[32];
+                snprintf(rbuf, sizeof(rbuf), "%.0f g (local)", remaining);
+                row(2, rbuf, TFT_WHITE);
+                row(3, "Will sync when reachable", TFT_DARKGREY);
+                row(5, "Fix URL at:", TFT_DARKGREY);
+                row(6, DEVICE_HOSTNAME ".local", TFT_WHITE);
+                pixelColor = pixel.Color(80, 30, 0);
+                break;
+            }
+
+            default:
+                break;
+            }
+
+            xSemaphoreGive(gSpiMutex);
+            rendered = true;
+            pixel.setPixelColor(0, pixelColor);
+            pixel.show();
+        }
+
+        // ── Dynamic: AwaitingFormatConfirm countdown + NeoPixel blink ─────────
+        if (state == DeviceState::AwaitingFormatConfirm) {
             TickType_t now       = xTaskGetTickCount();
             uint32_t   elapsedMs = (uint32_t)((now - awaitStart) * portTICK_PERIOD_MS);
             int        countdown = (int)(BLANK_TAG_CONFIRM_SEC - (int)(elapsedMs / 1000));
             if (countdown < 0) countdown = 0;
 
-            line(0,  "New tag found");
-            line(8,  "Remove to cancel");
-            line(16, "Registering in:");
-
-            // Large countdown digit — setTextSize(4) = 24x32 px per char.
-            oled.setTextSize(4);
-            oled.setCursor(52, 32);
-            oled.print(countdown);
-
-            // Accelerating blink: period shrinks from 500 ms at 5 s → 100 ms at 0 s.
-            uint32_t blinkPeriodMs = (uint32_t)(countdown * 80 + 100);  // 500→100 ms
-            if ((uint32_t)((now - lastBlinkTick) * portTICK_PERIOD_MS) >= blinkPeriodMs) {
-                blinkOn      = !blinkOn;
-                lastBlinkTick = now;
+            if (countdown != lastCount) {
+                // Size-8 digit: 48x64px per char; center at x≈216 for single digit.
+                xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+                tft.fillRect(0, 160, 480, 100, TFT_BLACK);
+                tft.setTextSize(8);
+                tft.setTextColor(tft.color565(220, 140, 0), TFT_BLACK);
+                tft.setCursor(216, 168);
+                tft.print(countdown);
+                xSemaphoreGive(gSpiMutex);
+                lastCount = countdown;
             }
-            pixelColor = blinkOn ? pixel.Color(80, 40, 0) : 0;  // amber blink
-            break;
+
+            uint32_t period = (uint32_t)(countdown * 80 + 100);
+            if ((uint32_t)((now - lastBlink) * portTICK_PERIOD_MS) >= period) {
+                blinkOn   = !blinkOn;
+                lastBlink = now;
+                pixel.setPixelColor(0, blinkOn ? pixel.Color(80, 40, 0) : 0);
+                pixel.show();
+            }
         }
 
-        case DeviceState::FormattingAndRegistering:
-            line(0, "Registering...");
-            line(8, "Please wait");
-            pixelColor = pixel.Color(0, 0, 80);  // blue
-            break;
-
-        case DeviceState::ForeignTagFound:
-        case DeviceState::RegisteringForeignTag:
-            line(0,  "New spool found");
-            // Show decoded vendor + material from tag's own Main data.
-            if (snap.brand_name[0])    line(8,  snap.brand_name);
-            else                        line(8,  "Unknown brand");
-            if (snap.material_name[0]) line(16, snap.material_name);
-            else                        line(16, "Unknown material");
-            line(24, "Adding to DB...");
-            pixelColor = pixel.Color(0, 50, 50);  // cyan
-            break;
-
-        case DeviceState::WeighingAndSync:
-            line(0, "Weighing...");
-            linef(8, "%.0fg", weight);
-            pixelColor = pixel.Color(0, 0, 80);  // blue
-            break;
-
-        case DeviceState::Present:
-            if (needsOnboarding) {
-                // Freshly registered stub — prompt the team to fill in Spoolman.
-                line(0, "Registered!");
-                if (spoolId > 0) linef(8, "Spool #%d", spoolId);
-                else             line(8, "");
-                line(16, "Edit in Spoolman");
-                linef(24, "%.0fg", remaining);
-                pixelColor = pixel.Color(50, 50, 0);  // yellow
-            } else {
-                // Known, synced spool.
-                if (spoolId > 0) linef(0, "Spool #%d", spoolId);
-                else             line(0, "Spool");
-                // Material name: if too long, truncate to 21 chars (full OLED width at size 1).
-                char matLine[22] = {};
-                strlcpy(matLine, snap.material_name[0] ? snap.material_name : "Unknown", sizeof(matLine));
-                line(8, matLine);
-                linef(16, "%.0fg remaining", remaining);
-                line(24, "Synced");
-                pixelColor = pixel.Color(0, 80, 0);  // green
-            }
-            break;
-
-        case DeviceState::ReconcilingMainSection:
-            line(0, "Updating tag...");
-            pixelColor = pixel.Color(50, 50, 0);  // yellow
-            break;
-
-        case DeviceState::SpoolmanUnreachable:
-            line(0,  "Spoolman offline");
-            linef(8, "%.0fg (local)", remaining);
-            line(16, "Will sync later");
-            line(32, "Fix SpoolMan URL:");
-            line(40, DEVICE_HOSTNAME ".local");
-            pixelColor = pixel.Color(80, 30, 0);  // orange
-            break;
-
-        default:
-            break;
-        }
-
-        oled.display();
-        pixel.setPixelColor(0, pixelColor);
-        pixel.show();
-        extPixel.setPixelColor(0, pixelColor);
-        extPixel.show();
-
-        vTaskDelay(pdMS_TO_TICKS(50));  // ~20 fps ceiling
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

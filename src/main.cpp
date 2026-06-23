@@ -25,6 +25,10 @@ SemaphoreHandle_t gTagMutex     = nullptr;
 volatile bool gWriteMainPending = false;
 volatile bool gWriteAuxPending  = false;
 
+// SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
+// Both tasks must take this mutex before any SPI transaction.
+SemaphoreHandle_t gSpiMutex = nullptr;
+
 // Spoolman spool ID for the tag currently on the scale (-1 = none / unknown).
 // Set by syncTask; read by displayTask for the "Spool #N" line.
 volatile int  gSpoolId             = -1;
@@ -46,6 +50,7 @@ void setup() {
     gStateMutex = xSemaphoreCreateMutex();
     gWeightMutex = xSemaphoreCreateMutex();
     gTagMutex = xSemaphoreCreateMutex();
+    gSpiMutex = xSemaphoreCreateMutex();
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);

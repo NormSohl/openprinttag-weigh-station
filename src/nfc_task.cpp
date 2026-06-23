@@ -18,6 +18,7 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
+extern SemaphoreHandle_t    gSpiMutex;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // Sized for the largest expected ICODE SLIX2 tag (40 blocks × 4 B = 160 B; 512 is comfortable headroom).
@@ -96,12 +97,13 @@ void nfcTask(void* param) {
         // ── Poll for tag presence ─────────────────────────────────────────────
         uint8_t  detectedUid[8] = {};
         uint8_t  detectedNumBlocks, detectedBlockSize;
+        xSemaphoreTake(gSpiMutex, portMAX_DELAY);
         bool tagPresent = (nfc.getInventory(detectedUid) == ISO15693_EC_OK);
         if (tagPresent) {
-            // getInventory only gives UID; get block geometry separately
             tagPresent = (nfc.getSystemInfo(detectedUid, &detectedNumBlocks, &detectedBlockSize)
                           == ISO15693_EC_OK);
         }
+        xSemaphoreGive(gSpiMutex);
 
         // ── States where we're waiting for a tag ──────────────────────────────
         if (state == DeviceState::Idle || state == DeviceState::IdleNoWiFi) {
@@ -130,7 +132,10 @@ void nfcTask(void* param) {
             }
 
             // Tag confirmed — read all blocks and classify
-            if (!readAllBlocks(nfc, uid, numBlocks, blockSize)) {
+            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            bool readOk = readAllBlocks(nfc, uid, numBlocks, blockSize);
+            xSemaphoreGive(gSpiMutex);
+            if (!readOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
@@ -192,6 +197,7 @@ void nfcTask(void* param) {
                 continue;
             }
 
+            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
             bool writeOk = true;
             for (uint8_t b = 0; b < numBlocks; b++) {
                 if (nfc.writeSingleBlock(uid, b, initBuf + b * blockSize, blockSize)
@@ -200,6 +206,7 @@ void nfcTask(void* param) {
                     break;
                 }
             }
+            xSemaphoreGive(gSpiMutex);
             if (!writeOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -267,11 +274,14 @@ void nfcTask(void* param) {
             xSemaphoreGive(gTagMutex);
             if (auxOffset > 0) {
                 size_t n = optEncodeAux(aux, cborBuf, sizeof(cborBuf));
-                if (n > 0) writeSection(nfc, uid, blockSize, auxOffset, cborBuf, n);
+                if (n > 0) {
+                    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+                    writeSection(nfc, uid, blockSize, auxOffset, cborBuf, n);
+                    xSemaphoreGive(gSpiMutex);
+                }
             }
         }
 
-        // Write Main when syncTask has detected a Spoolman diff (reconciliation)
         if (gWriteMainPending) {
             gWriteMainPending = false;
             uint8_t cborBuf[256];
@@ -281,7 +291,9 @@ void nfcTask(void* param) {
             xSemaphoreGive(gTagMutex);
             size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
             if (n > 0) {
+                xSemaphoreTake(gSpiMutex, portMAX_DELAY);
                 writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
+                xSemaphoreGive(gSpiMutex);
                 // Leave ReconcilingMainSection — syncTask's next poll will confirm
                 if (getState() == DeviceState::ReconcilingMainSection)
                     setState(DeviceState::Present);

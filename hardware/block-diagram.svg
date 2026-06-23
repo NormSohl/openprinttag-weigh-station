@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 680">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 660">
 
 <defs>
   <marker id="ah" viewBox="0 0 10 6" markerWidth="10" markerHeight="6"
@@ -62,12 +62,12 @@
 <rect x="55" y="120" width="760" height="192" rx="7" class="board"/>
 <text x="68" y="135" class="t-board">SparkFun Thing Plus ESP32-S3</text>
 
-<!-- ── ESP32-S3 MCU — with full pinout table ── -->
+<!-- ── ESP32-S3 MCU ── -->
 <rect x="90" y="134" width="200" height="168" rx="4" class="block"/>
 <text x="190" y="149" class="t-main">ESP32-S3</text>
 <text x="190" y="164" class="t-sm">MCU</text>
 <line x1="100" y1="174" x2="280" y2="174" class="sep"/>
-<!-- Pin table (9 px row spacing, three groups: SPI · I²C · other) -->
+<!-- SPI group -->
 <text x="100" y="185" class="t-gpio">GPIO 5</text>   <text x="280" y="185" class="t-sig">NSS</text>
 <text x="100" y="194" class="t-gpio">GPIO 35</text>  <text x="280" y="194" class="t-sig">MOSI</text>
 <text x="100" y="203" class="t-gpio">GPIO 37</text>  <text x="280" y="203" class="t-sig">MISO</text>
@@ -75,12 +75,14 @@
 <text x="100" y="221" class="t-gpio">GPIO 6</text>   <text x="280" y="221" class="t-sig">BUSY</text>
 <text x="100" y="230" class="t-gpio">GPIO 7</text>   <text x="280" y="230" class="t-sig">RST</text>
 <line x1="100" y1="238" x2="280" y2="238" class="sep"/>
+<!-- I²C group -->
 <text x="100" y="247" class="t-gpio">GPIO 8</text>   <text x="280" y="247" class="t-sig">SDA</text>
 <text x="100" y="256" class="t-gpio">GPIO 9</text>   <text x="280" y="256" class="t-sig">SCL</text>
 <line x1="100" y1="264" x2="280" y2="264" class="sep"/>
-<text x="100" y="273" class="t-gpio">GPIO 13</text>  <text x="280" y="273" class="t-sig">NeoPixel</text>
-<text x="100" y="282" class="t-gpio">GPIO 14</text>  <text x="280" y="282" class="t-sig">PWM</text>
-<text x="100" y="291" class="t-gpio">GPIO 48</text>  <text x="280" y="291" class="t-sig">NeoPixel</text>
+<!-- TFT + other -->
+<text x="100" y="273" class="t-gpio">GPIO 15</text>  <text x="280" y="273" class="t-sig">TFT CS</text>
+<text x="100" y="282" class="t-gpio">GPIO 16</text>  <text x="280" y="282" class="t-sig">TFT DC</text>
+<text x="100" y="291" class="t-gpio">GPIO 14</text>  <text x="280" y="291" class="t-sig">PWM</text>
 
 <!-- WS2812 NeoPixel (onboard) -->
 <rect x="565" y="134" width="210" height="80" rx="4" class="block"/>
@@ -91,7 +93,7 @@
 <line x1="290" y1="174" x2="565" y2="174" class="w1"/>
 <text x="428" y="167" class="t-wirec">GPIO 48</text>
 
-<!-- ── PN5180 NFC Module — SPI pinout table ── -->
+<!-- ── PN5180 NFC Module ── -->
 <rect x="16" y="364" width="200" height="180" rx="4" class="block"/>
 <text x="116" y="387" class="t-main">PN5180</text>
 <text x="116" y="404" class="t-sm">NFC Module</text>
@@ -106,9 +108,10 @@
 <line x1="26" y1="517" x2="206" y2="517" class="sep"/>
 <text x="116" y="533" class="t-pin-c">3.3 V · GND</text>
 
-<!-- SPI: MCU ↔ PN5180 -->
+<!-- SPI bus: MCU ↔ PN5180 + TFT (shared) -->
 <path d="M 130 302 L 130 358 L 116 358 L 116 364" class="w2"/>
-<text x="82"  y="330" class="t-wire">SPI</text>
+<text x="60"  y="330" class="t-wire">SPI (shared</text>
+<text x="60"  y="342" class="t-wire">w/ TFT)</text>
 
 <!-- ── NAU7802 Load Cell ADC ── -->
 <rect x="218" y="370" width="164" height="82" rx="4" class="block"/>
@@ -116,39 +119,31 @@
 <text x="300" y="419" class="t-sm">Load Cell ADC</text>
 <text x="300" y="436" class="t-sm">addr 0x2A</text>
 
-<!-- ── SSD1306 OLED ── -->
-<rect x="420" y="370" width="164" height="82" rx="4" class="block"/>
-<text x="502" y="402" class="t-main">SSD1306</text>
-<text x="502" y="419" class="t-sm">OLED 128×64</text>
-<text x="502" y="436" class="t-sm">addr 0x3C</text>
+<!-- ── ILI9488 TFT Display ── -->
+<rect x="420" y="364" width="185" height="100" rx="4" class="block"/>
+<text x="512" y="394" class="t-main">ILI9488 TFT</text>
+<text x="512" y="411" class="t-sm">3.5" · 480×320</text>
+<line x1="430" y1="421" x2="595" y2="421" class="sep"/>
+<text x="432" y="433" class="t-pin-l">CS</text>    <text x="593" y="433" class="t-pin-r">GPIO 15</text>
+<text x="432" y="446" class="t-pin-l">DC</text>    <text x="593" y="446" class="t-pin-r">GPIO 16</text>
+<text x="432" y="458" class="t-pin-l">MOSI/SCK</text> <text x="593" y="458" class="t-pin-r">35 / 36</text>
 
-<!-- Qwiic: MCU → NAU7802 (first in daisy-chain) -->
+<!-- Qwiic: MCU → NAU7802 -->
 <path d="M 225 302 L 225 362 L 300 362 L 300 370" class="w1"/>
 <text x="233" y="332" class="t-wire">Qwiic</text>
 
-<!-- NAU7802 → SSD1306 (Qwiic daisy-chain pass-through) -->
-<line x1="382" y1="411" x2="420" y2="411" class="w1"/>
-<text x="401" y="404" class="t-wirec">Qwiic</text>
-
-<!-- ── External WS2812 NeoPixel ── -->
-<rect x="604" y="364" width="166" height="90" rx="4" class="block"/>
-<text x="687" y="396" class="t-main">WS2812 NeoPixel</text>
-<text x="687" y="414" class="t-sm">external</text>
-<text x="687" y="432" class="t-sm">GPIO 13 · 3.3V · GND</text>
-
-<!-- GPIO 13: MCU → external NeoPixel (data) -->
-<path d="M 270 302 L 270 322 L 687 322 L 687 364" class="w1"/>
-<text x="479" y="315" class="t-wirec">GPIO 13 · data</text>
+<!-- SPI bus: MCU → TFT (branches from same SPI bus) -->
+<path d="M 155 302 L 155 340 L 512 340 L 512 364" class="w1"/>
+<text x="334" y="333" class="t-wirec">SPI · GPIO 15/16/35/36/37</text>
 
 <!-- ── Passive Piezo Buzzer ── -->
-<rect x="604" y="464" width="166" height="90" rx="4" class="block"/>
-<text x="687" y="496" class="t-main">Passive Piezo</text>
-<text x="687" y="514" class="t-sm">Buzzer</text>
-<text x="687" y="532" class="t-sm">GPIO 14</text>
+<rect x="630" y="364" width="150" height="70" rx="4" class="block"/>
+<text x="705" y="396" class="t-main">Passive Piezo</text>
+<text x="705" y="414" class="t-sm">GPIO 14 · PWM</text>
 
-<!-- GPIO 14 / PWM: MCU → Piezo (routes left of NeoPixel block) -->
-<path d="M 282 302 L 282 344 L 596 344 L 596 509 L 604 509" class="w1"/>
-<text x="436" y="337" class="t-wirec">GPIO 14 · PWM</text>
+<!-- GPIO 14: MCU → Piezo -->
+<path d="M 270 302 L 270 350 L 705 350 L 705 364" class="w1"/>
+<text x="488" y="343" class="t-wirec">GPIO 14 · PWM</text>
 
 <!-- ── TAL220B 5 kg Load Cell ── -->
 <rect x="218" y="520" width="164" height="60" rx="4" class="block"/>
@@ -161,16 +156,16 @@
 <text x="314" y="488" class="t-wire">E+ / E− / A+ / A−</text>
 
 <!-- ── Legend ── -->
-<rect x="604" y="572" width="188" height="82" rx="4" class="legend"/>
-<text x="698" y="588" class="t-lgnd-h">Legend</text>
-<line x1="618" y1="605" x2="676" y2="605"
+<rect x="630" y="452" width="188" height="82" rx="4" class="legend"/>
+<text x="724" y="468" class="t-lgnd-h">Legend</text>
+<line x1="644" y1="485" x2="702" y2="485"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);marker-start:url(#ah0);"/>
-<text x="684" y="609" class="t-lgnd">Bidirectional data</text>
-<line x1="618" y1="623" x2="676" y2="623"
+<text x="710" y="489" class="t-lgnd">Bidirectional data</text>
+<line x1="644" y1="503" x2="702" y2="503"
       style="stroke:#333;stroke-width:1.5;fill:none;marker-end:url(#ah);"/>
-<text x="684" y="627" class="t-lgnd">Unidirectional</text>
-<line x1="618" y1="641" x2="676" y2="641"
+<text x="710" y="507" class="t-lgnd">Unidirectional</text>
+<line x1="644" y1="521" x2="702" y2="521"
       style="stroke:#4e7f4e;stroke-width:1.5;stroke-dasharray:6,3;fill:none;"/>
-<text x="684" y="645" class="t-lgnd">PCB boundary</text>
+<text x="710" y="525" class="t-lgnd">PCB boundary</text>
 
 </svg>

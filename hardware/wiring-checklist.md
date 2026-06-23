@@ -43,15 +43,21 @@ See `wiring.md` for full notes; `bill-of-materials.md` for part sources.
 
 ---
 
-## 4. SSD1306 OLED — Qwiic
+## 4. ILI9488 3.5" TFT Display — SPI
 
-| # | Connection | Done |
-|---|-----------|------|
-| 12 | Qwiic cable: NAU7802 Qwiic out → SSD1306 Qwiic | ☐ |
+Mounts in the printed adapter plate on the porch face.
+SPI pins are shared with the PN5180 — firmware mutex prevents conflicts.
 
-> Daisy-chains on the same I2C bus (SDA GPIO 8 / SCL GPIO 9).
-> If your NAU7802 has only one Qwiic port, use a Qwiic splitter or
-> run a second cable directly from the ESP32-S3 Qwiic connector.
+| # | From | To | Wire | Done |
+|---|------|----|------|------|
+| 12 | TFT VCC | ESP32-S3 3.3V | red | ☐ |
+| 13 | TFT GND | ESP32-S3 GND | black | ☐ |
+| 14 | TFT SDI (MOSI) | ESP32-S3 GPIO 35 | any | ☐ |
+| 15 | TFT SCK | ESP32-S3 GPIO 36 | any | ☐ |
+| 16 | TFT SDO (MISO) | ESP32-S3 GPIO 37 | any | ☐ |
+| 17 | TFT CS | ESP32-S3 GPIO 15 | any | ☐ |
+| 18 | TFT DC (RS) | ESP32-S3 GPIO 16 | any | ☐ |
+| 19 | TFT RST | ESP32-S3 GPIO 17 | any | ☐ |
 
 ---
 
@@ -59,42 +65,30 @@ See `wiring.md` for full notes; `bill-of-materials.md` for part sources.
 
 | # | Load cell wire | NAU7802 terminal | Done |
 |---|---------------|-----------------|------|
-| 13 | Red (E+) | E+ | ☐ |
-| 14 | Black (E−) | E− | ☐ |
-| 15 | White (A+) | A+ | ☐ |
-| 16 | Green (A−) | A− | ☐ |
+| 20 | Red (E+) | E+ | ☐ |
+| 21 | Black (E−) | E− | ☐ |
+| 22 | White (A+) | A+ | ☐ |
+| 23 | Green (A−) | A− | ☐ |
 
 > Verify wire colors against your specific TAL220B — some batches
 > substitute blue for green on A−.
 
 ---
 
-## 6. External WS2812 NeoPixel
-
-Mounts in the 5 mm light-pipe hole on the sloped front face of the enclosure.
-
-| # | From | To | Wire | Done |
-|---|------|----|------|------|
-| 17 | NeoPixel Data in | ESP32-S3 GPIO 13 | any | ☐ |
-| 18 | NeoPixel + | ESP32-S3 3.3V | red | ☐ |
-| 19 | NeoPixel − | ESP32-S3 GND | black | ☐ |
-
----
-
-## 7. Passive Piezo Buzzer
+## 6. Passive Piezo Buzzer
 
 | # | From | To | Done |
 |---|------|----|------|
-| 20 | Buzzer + | ESP32-S3 GPIO 14 | ☐ |
-| 21 | Buzzer − | ESP32-S3 GND | ☐ |
+| 24 | Buzzer + | ESP32-S3 GPIO 14 | ☐ |
+| 25 | Buzzer − | ESP32-S3 GND | ☐ |
 
 ---
 
-## 8. Onboard NeoPixel
+## 7. Onboard NeoPixel
 
 | # | Note | Done |
 |---|------|------|
-| 22 | No wiring — WS2812 is onboard at GPIO 48 | ☐ |
+| 26 | No wiring — WS2812 is onboard at GPIO 48 | ☐ |
 
 ---
 
@@ -102,11 +96,12 @@ Mounts in the 5 mm light-pipe hole on the sloped front face of the enclosure.
 
 | # | Check | Done |
 |---|-------|------|
-| 23 | No bare wire ends touching adjacent pins or the enclosure | ☐ |
-| 24 | PN5180 harness has a slack loop — platform moves freely | ☐ |
-| 25 | Load cell wires not kinked or pinched by enclosure parts | ☐ |
-| 26 | USB-C breakout seated in rear-wall bosses, connector faces cutout | ☐ |
-| 27 | All Qwiic connectors fully clicked in (audible snap) | ☐ |
+| 27 | No bare wire ends touching adjacent pins or the enclosure | ☐ |
+| 28 | PN5180 harness has a slack loop — platform moves freely | ☐ |
+| 29 | Load cell wires not kinked or pinched by enclosure parts | ☐ |
+| 30 | USB-C breakout seated in rear-wall bosses, connector faces cutout | ☐ |
+| 31 | NAU7802 Qwiic connector fully clicked in (audible snap) | ☐ |
+| 32 | TFT adapter plate seated flush; no SPI wires pinched | ☐ |
 
 ---
 
@@ -114,7 +109,8 @@ Mounts in the 5 mm light-pipe hole on the sloped front face of the enclosure.
 
 | # | Expected | Observed | Done |
 |---|----------|----------|------|
-| 28 | OLED shows "Weigh Station / Starting..." | | ☐ |
-| 29 | Both NeoPixels light blue (WiFi Setup state) | | ☐ |
-| 30 | `WeighStation-Setup` AP visible on phone/laptop | | ☐ |
-| 31 | Serial monitor (115 200 baud) shows `[scale] Ready` | | ☐ |
+| 33 | TFT shows "Weigh Station / Starting..." | | ☐ |
+| 34 | TFT turns blue, shows "WiFi Setup / WeighStation-Setup" | | ☐ |
+| 35 | Onboard NeoPixel lights blue | | ☐ |
+| 36 | `WeighStation-Setup` AP visible on phone/laptop | | ☐ |
+| 37 | Serial monitor (115 200 baud) shows `[scale] Ready` | | ☐ |

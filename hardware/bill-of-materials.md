@@ -11,9 +11,8 @@ Everything needed to build one weigh station, beyond the fasteners
 | NFC reader module | PN5180-NFC (ISO 15693) | 1 | Needs both 3.3V logic + 5V RF rail |
 | Load cell amplifier | NAU7802 (SparkFun Qwiic Scale) | 1 | I²C, on Qwiic bus |
 | Load cell | TAL220B, 5kg, 55×12.7×12.7mm | 1 | Single-bolt mount, ~40mm hole spacing |
-| OLED display | 1.3" SSD1306, Qwiic (LCD-23453) | 1 | I²C, on Qwiic bus |
+| TFT display | 3.5" ILI9488 SPI TFT, 480×320 (Hosyond / MSP3520-type) | 1 | SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17 |
 | Piezo buzzer | Passive, GPIO 14 | 1 | Feedback tones |
-| NeoPixel | WS2812 breakout, GPIO 13 | 1 | Status LED |
 | USB-C breakout | Power input only | 1 | 40×70mm, mounted on dedicated floor bosses |
 | USB-C panel-mount cable | Extension, panel-mount | 1 | Replaces original breakout-board plan |
 
