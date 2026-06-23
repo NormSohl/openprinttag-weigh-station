@@ -22,6 +22,54 @@ extern SemaphoreHandle_t    gSpiMutex;
 static TFT_eSPI          tft;
 static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
+// ── Buzzer helpers ────────────────────────────────────────────────────────────
+static void bzTone(uint32_t hz, uint32_t ms) {
+    ledcWriteTone(BUZZER_PIN, hz);
+    vTaskDelay(pdMS_TO_TICKS(ms));
+}
+
+static void buzz(DeviceState prev, DeviceState curr) {
+    switch (curr) {
+    case DeviceState::Idle:
+        // Boot-ready chime only on the WiFi-provisioning → Idle transition.
+        // Spool-removed returns to Idle silently (no sound on every removal).
+        if (prev == DeviceState::WiFiSetupMode) {
+            bzTone(523, 80); bzTone(659, 80); bzTone(784, 120);  // C5-E5-G5
+        }
+        break;
+    case DeviceState::IdleNoWiFi:
+        bzTone(392, 80); bzTone(330, 160);                       // G4-E4 descending
+        break;
+    case DeviceState::TagReadError:
+        bzTone(330, 80); bzTone(262, 180);                       // E4-C4 low error
+        break;
+    case DeviceState::AwaitingFormatConfirm:
+        bzTone(880, 60);                                          // A5 double-pip
+        ledcWriteTone(BUZZER_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        bzTone(880, 60);
+        break;
+    case DeviceState::ForeignTagFound:
+        bzTone(659, 70); bzTone(784, 100);                       // E5-G5 attention
+        break;
+    case DeviceState::Present:
+        if (prev == DeviceState::WeighingAndSync) {
+            bzTone(659, 70); bzTone(784, 70); bzTone(880, 120);  // E5-G5-A5 weigh done
+        } else {
+            // Newly registered or reconciled spool: fuller fanfare
+            bzTone(523, 60); bzTone(659, 60);
+            bzTone(784, 60); bzTone(880, 100);                   // C5-E5-G5-A5
+        }
+        break;
+    case DeviceState::SpoolmanUnreachable:
+        bzTone(392, 100); bzTone(330, 200);                      // G4-E4 warning drop
+        break;
+    default:
+        break;
+    }
+    ledcWriteTone(BUZZER_PIN, 0);
+}
+
 // ── Layout helpers ────────────────────────────────────────────────────────────
 // Size-2 body rows: 16px tall, 28px pitch, 12px left margin.
 static const int MARGIN = 12;
@@ -63,6 +111,8 @@ void displayTask(void* param) {
     pixel.setBrightness(80);
     pixel.show();
 
+    ledcAttach(BUZZER_PIN, 4000, 8);
+
     xSemaphoreTake(gSpiMutex, portMAX_DELAY);
     tft.init();
     tft.setRotation(1);
@@ -89,6 +139,7 @@ void displayTask(void* param) {
 
         bool stateChanged = (state != prevState);
         if (stateChanged) {
+            buzz(prevState, state);
             xSemaphoreTake(gSpiMutex, portMAX_DELAY);
             cls();
             xSemaphoreGive(gSpiMutex);
