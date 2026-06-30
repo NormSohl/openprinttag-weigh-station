@@ -1,18 +1,21 @@
 // =============================================================
 // porch-tft-adapter.scad — ILI9488 3.5" TFT bezel / cradle plate
 // =============================================================
-// Mounts on the 45° porch face with 4× M3 screws:
+// Mounts on the 45° porch face with 4× M3 screws — all four are
+// NEW holes; use this plate as a drilling template:
 //
-//   LEFT (2×): existing porch holes originally drilled for the SSD1306
-//              OLED — outer pair only, at face-local X = −37.24 mm,
-//              Y = ±12.70 mm.  (Inner OLED holes at X = −6.76 fall
-//              inside the TFT active area and cannot be used.)
+//   1. Hold plate flush against porch face, centred on the display
+//      opening, and tape or clamp in place.
+//   2. Mark all four bore centres with an awl.
+//   3. Remove plate and drill Ø3.4 mm through the porch wall.
+//   4. Fasten with M3×14 SHCS + hex/nyloc nuts inside the cavity.
 //
-//   RIGHT (2×): NEW holes — use this plate as a drilling template.
-//              Hold the plate flush against the porch face, aligned
-//              to the two left screws (finger-tight), then mark the
-//              right bores with an awl.  Remove plate and drill Ø3.4 mm
-//              through the porch wall at the marks.
+// Holes are symmetric: ±52 mm (plate-local) / ±39 mm left and
+// ±65 mm right (face-local) — 2.8 mm outside the PCB pocket edge
+// on each side.  The old OLED holes (face-local X = −37.24 and
+// −6.76) are intentionally NOT reused: the inner pair falls inside
+// the TFT active area, and the outer pair leaves only 1 mm clearance
+// from the pocket; new symmetric holes are cleaner.
 //
 // The TFT PCB sits in a shallow rear pocket; the front bezel window
 // exposes the active area.  No header pocket — header desoldered;
@@ -47,16 +50,13 @@ tft_cy =  0;   // face-local Y of TFT / plate centre  (mm)
 // Plate-local = face-local − (tft_cx, tft_cy).
 
 // ── Mounting hole positions (plate-local) ───────────────────────
-// Left pair — existing OLED outer holes (face-local X = −37.24 mm):
-left_hole_x  = -37.24 - tft_cx;   // = −50.24 mm
-hole_y_half  =  12.70;             // = oled_hole_dy / 2 = 25.40 / 2
-
-// Right pair — NEW holes drilled using this plate as template:
-//   Face-local X = +65 mm  (plate right edge is at +59; 6 mm clearance).
-//   Clears TFT PCB right edge (face-local +62 mm) by 3 mm.
-//   Clears right-most old porch feature (LED at face-local +48 mm).
-//   Porch face half-width = base_w/2 = 70 mm → 5 mm from face edge.
-right_hole_x = 65.00 - tft_cx;    // = +52.00 mm (plate-local)
+// Symmetric pairs at ±mount_hole_x.
+// Face-local: left = −39 mm, right = +65 mm.
+// Both clear the PCB pocket edge (±49.2 mm) by 2.8 mm.
+// Right holes clear the old LED cutout (face-local +48 mm) and sit
+// 5 mm inside the porch face edge (base_w/2 = 70 mm).
+mount_hole_x = 52.00;   // plate-local (face-local = ±52 + 13 = −39 / +65)
+hole_y_half  = 12.70;   // Y half-spacing (= oled_hole_dy / 2 = 25.40 / 2)
 
 // ── ILI9488 TFT — MSP3520-type PCB, landscape ──────────────────
 tft_pcb_x   = 98.00;   // PCB width  (X, face-width direction)
@@ -76,10 +76,9 @@ pocket_y   = tft_pcb_y + pocket_clr;     // 56.74 mm
 pocket_d   = 3.2;   // depth from back face (1.8 mm solid lip remains)
 
 // ── Plate dimensions ───────────────────────────────────────────
-// Width: right_hole_x (52) + m3_hd_d/2 (2.9) + 4 mm margin → 59 mm
+// Width: mount_hole_x (52) + m3_hd_d/2 (2.9) + 4 mm margin → 59 mm
 //        plate_x = 2 × 59 = 118 mm (symmetric about plate centre).
-// Clearance check left: 59 − 50.24 = 8.76 mm  ✓
-// Clearance check right: 59 − 52.00 = 7.00 mm  ✓ (need 2.9+3 = 5.9)
+// Edge clearance both sides: 59 − 52 = 7.00 mm  ✓ (need 2.9+3 = 5.9)
 plate_x  = 118;
 plate_y  = tft_pcb_y + 10;   // 66.34 mm (5 mm margin above/below PCB)
 plate_t  = 5.0;               // total thickness
@@ -129,15 +128,10 @@ module adapter() {
             cube([wire_notch_x, wire_notch_y + 2 * eps, pocket_d + 2 * eps],
                  center = true);
 
-        // ── Left M3 holes (existing OLED outer porch holes) ────
-        for (sy = [-1, 1])
-            translate([left_hole_x, sy * hole_y_half, -eps])
-                m3_bore();
-
-        // ── Right M3 holes (NEW — plate is drill template) ─────
-        // Mark through these bores with an awl, then drill Ø3.4 mm.
-        for (sy = [-1, 1])
-            translate([right_hole_x, sy * hole_y_half, -eps])
+        // ── 4× M3 holes — symmetric ±mount_hole_x, ±hole_y_half ──
+        // Use plate as drill template: awl → drill Ø3.4 mm all four.
+        for (sx = [-1, 1], sy = [-1, 1])
+            translate([sx * mount_hole_x, sy * hole_y_half, -eps])
                 m3_bore();
     }
 }
