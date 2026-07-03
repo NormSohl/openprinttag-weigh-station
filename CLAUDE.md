@@ -8,7 +8,7 @@ Auto-loaded by Claude Code at the start of every session. Summarizes architectur
 
 NFC-based filament inventory system for Seattle Makers' Prusa 3D printing lab. A custom ESP32-S3 weigh station reads OpenPrintTag (OPT) NFC spool tags via a PN5180 module, weighs spools with a NAU7802 load cell, and syncs to Spoolman (self-hosted filament inventory backend) over WiFi.
 
-**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, Qwiic OLED 128x64 (SSD1306), passive piezo buzzer, onboard WS2812 NeoPixel (GPIO 48).
+**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 48). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (GPIO 35/36/37); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via include/User_Setup.h.
 
 **Firmware stack:** PlatformIO + Arduino framework, FreeRTOS tasks for scale/NFC/sync/display. ATrappmann's PN5180-Library (`readSingleBlock` / `writeSingleBlock` / `getSystemInfo` cover both reading and writing ISO15693 tags). **Never call `lockICODESLIX2`** — tags must remain rewritable for the life of the spool.
 
@@ -56,9 +56,32 @@ For the (currently being phased out) fleet of reusable spool bodies: reuse is ha
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, the steady "present" state with background reconciliation, and network-failure fallback.
 
-See `docs/design/oled-display-states.md` for the literal OLED content (text/layout) per state, for the 128×64 SSD1306 with the existing 8×16 font (~16 chars × 4 lines).
+See `docs/design/oled-display-states.md` for the OLED content per state. Note: the actual font used in `display_task.cpp` is Adafruit's default size-1 (6×8 px per char, ~21 chars × 8 lines), not the 8×16 assumed in that doc. The `SpoolmanUnreachable` state also now shows a "Fix SpoolMan URL: / weighstation.local" hint in the lower half of the screen.
 
-## Not Yet Built
-- Serial/network command interface for the format+register flow (only weigh+sync exists today; `syncToDatabase()` is still a stub in the original bench-test firmware).
-- The actual CBOR encoder for the Main section (decoder exists; writing is new).
-- Real Spoolman HTTP client: find-or-create Vendor/Filament/Spool, PATCH weight, GET with `extra` field filters for the `needs_onboarding` marker and `nfc_id` lookups.
+See `hardware/wiring.md` for pin assignments and connector details.
+
+## Runtime Configuration
+
+All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
+
+### Spoolman URL
+- NVS namespace `"weigh"`, key `"spoolman_url"`. Compile-time fallback: `SPOOLMAN_BASE_URL` in `config.h`.
+- **Set at first boot:** enter the WiFiManager captive portal (join `WeighStation-Setup` AP) — the URL field is pre-filled with the current value.
+- **Change while running:** browse to `http://weighstation.local/` and update the URL field. No restart needed; `sBase` is updated in place.
+
+### WiFi credentials
+- Managed by WiFiManager. Stored internally by the ESP32 WiFi stack (not in our NVS namespace).
+- **Reset (board accessible):** hold BOOT button (GPIO 0) for 3 seconds at power-on → credentials cleared → captive portal opens immediately.
+- **Reset (cabinet-installed):** browse to `http://weighstation.local/reset` → device reboots into captive portal. The Spoolman URL is preserved across a WiFi reset.
+- **SSID change / missed portal window:** on each power cycle, WiFiManager automatically opens the captive portal for 120 seconds if stored credentials fail. Power-cycle the device and connect to `WeighStation-Setup` within that window.
+
+### Scale calibration
+- NVS namespace `"scale"`, keys `"zero"` (int32), `"cal"` (float), `"valid"` (bool).
+- On first boot with no stored calibration: auto-tares with a 32-sample average and applies `SCALE_CAL_FACTOR` from `config.h` (default 1.0 — uncalibrated).
+- **Serial commands** (115200 baud) for calibration workflow:
+  - `ZERO` — tare with nothing on the scale (32-sample average, persisted to NVS)
+  - `CAL <grams>` — calibrate with a known weight currently on the scale (e.g. `CAL 100`)
+
+## Pending (requires hardware)
+- Scale calibration: run `ZERO` then `CAL <grams>` with a known reference weight once the load cell is wired and mounted.
+- End-to-end state machine validation: NFC read/write, blank tag onboarding flow, Spoolman sync, reconciliation loop.

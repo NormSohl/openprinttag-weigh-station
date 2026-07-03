@@ -1,0 +1,485 @@
+#include "opt_tag.h"
+#include <cbor.h>
+#include <string.h>
+
+// ── CBOR key constants ────────────────────────────────────────────────────────
+// Meta keys (data/meta_fields.yaml)
+static constexpr int META_KEY_MAIN_REGION_OFFSET = 0;
+static constexpr int META_KEY_MAIN_REGION_SIZE   = 1;
+static constexpr int META_KEY_AUX_REGION_OFFSET  = 2;
+static constexpr int META_KEY_AUX_REGION_SIZE    = 3;
+
+// Main keys (data/main_fields.yaml)
+static constexpr int MAIN_KEY_INSTANCE_UUID              = 0;
+static constexpr int MAIN_KEY_MATERIAL_CLASS             = 8;
+static constexpr int MAIN_KEY_MATERIAL_TYPE              = 9;
+static constexpr int MAIN_KEY_MATERIAL_NAME              = 10;
+static constexpr int MAIN_KEY_BRAND_NAME                 = 11;
+static constexpr int MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT  = 16;
+static constexpr int MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT   = 17;
+static constexpr int MAIN_KEY_EMPTY_CONTAINER_WEIGHT     = 18;
+static constexpr int MAIN_KEY_PRIMARY_COLOR_RGBA         = 19;
+static constexpr int MAIN_KEY_FILAMENT_DIAMETER          = 30;
+static constexpr int MAIN_KEY_MIN_PRINT_TEMPERATURE      = 34;
+static constexpr int MAIN_KEY_MAX_PRINT_TEMPERATURE      = 35;
+static constexpr int MAIN_KEY_MIN_BED_TEMPERATURE        = 37;
+static constexpr int MAIN_KEY_MAX_BED_TEMPERATURE        = 38;
+static constexpr int MAIN_KEY_MATERIAL_ABBREVIATION      = 52;
+
+// Auxiliary keys (data/aux_fields.yaml)
+static constexpr int AUX_KEY_CONSUMED_WEIGHT = 0;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// The reference implementation (fields.py CompactFloat) may encode floats as
+// int (whole numbers), CBOR float16, float32, or float64.  Read whichever type
+// is present and return it as float.
+static bool cborGetFloat(const CborValue* val, float* out) {
+    if (cbor_value_is_integer(val)) {
+        int64_t i;
+        if (cbor_value_get_int64(val, &i) != CborNoError) return false;
+        *out = (float)i;
+        return true;
+    }
+    if (cbor_value_is_float(val)) {
+        return cbor_value_get_float(val, out) == CborNoError;
+    }
+    if (cbor_value_is_double(val)) {
+        double d;
+        if (cbor_value_get_double(val, &d) != CborNoError) return false;
+        *out = (float)d;
+        return true;
+    }
+    if (cbor_value_is_half_float(val)) {
+        // tinycbor stores half-float as uint16; decode manually
+        uint16_t hf;
+        if (cbor_value_get_half_float(val, &hf) != CborNoError) return false;
+        // Convert IEEE 754 half to float
+        uint32_t sign     = (hf >> 15) & 0x1;
+        uint32_t exp      = (hf >> 10) & 0x1F;
+        uint32_t mantissa = hf & 0x3FF;
+        uint32_t bits;
+        if (exp == 0)       bits = (sign << 31) | ((mantissa) << 13);
+        else if (exp == 31) bits = (sign << 31) | (0xFF << 23) | (mantissa << 13);
+        else                bits = (sign << 31) | ((exp + 112) << 23) | (mantissa << 13);
+        memcpy(out, &bits, 4);
+        return true;
+    }
+    return false;
+}
+
+// Locate the OPT NDEF record payload within a raw tag block dump.
+// Sets *payloadOut and *payloadLen on success, returns true.
+//
+// Tag layout (nfc_initialize.py):
+//   [0..3]  Capability Container — must start with 0xE1
+//   [4..]   TLV sequence:
+//             0x03 <1- or 3-byte length> <NDEF message>
+//             0xFE  Terminator
+//
+// NDEF record header bytes (TNF=0x02 = MIME type):
+//   [0]  flags: MB|ME|CF|SR|IL|TNF[2:0]
+//   [1]  type_length
+//   [2]  payload_length  (1 byte when SR=1, 4 bytes when SR=0)
+//   ...  id_length       (only present when IL=1)
+//   ...  type            (type_length bytes) — must equal OPT_MIME_TYPE
+//   ...  id              (id_length bytes, if IL=1)
+//   ...  payload         (payload_length bytes) — our CBOR data
+static bool findNdefPayload(const uint8_t* tagBytes, size_t len,
+                             const uint8_t** payloadOut, size_t* payloadLen) {
+    if (len < OPT_CC_SIZE + 2) return false;
+    if (tagBytes[0] != 0xE1) return false;   // not a valid NDEF tag
+
+    // ── Walk TLV sequence starting after the 4-byte Capability Container ──────
+    size_t pos = OPT_CC_SIZE;
+    while (pos < len) {
+        uint8_t tlvType = tagBytes[pos++];
+        if (tlvType == 0xFE) break;                        // Terminator
+        if (tlvType == 0x00) continue;                     // Null TLV — skip
+
+        // Read TLV length (1-byte or 3-byte form)
+        if (pos >= len) return false;
+        size_t tlvLen;
+        if (tagBytes[pos] == 0xFF) {
+            if (pos + 2 >= len) return false;
+            tlvLen = ((size_t)tagBytes[pos + 1] << 8) | tagBytes[pos + 2];
+            pos += 3;
+        } else {
+            tlvLen = tagBytes[pos++];
+        }
+        if (pos + tlvLen > len) return false;
+
+        if (tlvType != 0x03) { pos += tlvLen; continue; }  // not an NDEF TLV
+
+        // ── Parse NDEF message ────────────────────────────────────────────────
+        const uint8_t* msg    = tagBytes + pos;
+        size_t         msgLen = tlvLen;
+        size_t         mpos   = 0;
+
+        while (mpos < msgLen) {
+            if (mpos >= msgLen) break;
+            uint8_t flags      = msg[mpos++];
+            uint8_t tnf        = flags & 0x07;
+            bool    sr         = (flags >> 4) & 1;   // Short Record
+            bool    il         = (flags >> 3) & 1;   // ID Length present
+
+            if (mpos >= msgLen) break;
+            uint8_t typeLen    = msg[mpos++];
+
+            uint32_t plen;
+            if (sr) {
+                if (mpos >= msgLen) break;
+                plen = msg[mpos++];
+            } else {
+                if (mpos + 3 >= msgLen) break;
+                plen = ((uint32_t)msg[mpos] << 24) | ((uint32_t)msg[mpos+1] << 16)
+                     | ((uint32_t)msg[mpos+2] << 8) | msg[mpos+3];
+                mpos += 4;
+            }
+
+            uint8_t idLen = 0;
+            if (il) {
+                if (mpos >= msgLen) break;
+                idLen = msg[mpos++];
+            }
+
+            const uint8_t* recType = msg + mpos;   mpos += typeLen;
+            mpos += idLen;                          // skip ID field
+            const uint8_t* payload = msg + mpos;   mpos += plen;
+
+            if (mpos > msgLen) break;
+
+            // TNF 0x02 = MIME type record
+            if (tnf == 0x02
+                && typeLen == OPT_MIME_TYPE_LEN
+                && memcmp(recType, OPT_MIME_TYPE, OPT_MIME_TYPE_LEN) == 0) {
+                *payloadOut = payload;
+                *payloadLen = plen;
+                return true;
+            }
+        }
+
+        pos += tlvLen;
+    }
+    return false;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+bool optIsBlank(const uint8_t* tagBytes, size_t len) {
+    if (!tagBytes || len < OPT_CC_SIZE) return true;
+
+    // A formatted tag has 0xE1 as the first CC byte (NDEF magic).
+    if (tagBytes[0] != 0xE1) return true;
+
+    // If no payload can be located, treat as blank.
+    const uint8_t* payload;
+    size_t payloadLen;
+    if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return true;
+
+    // A blank payload is an empty CBOR map: definite 0xA0, or indefinite 0xBF 0xFF.
+    // Do NOT treat a non-empty indefinite map (0xBF <key>...) as blank — that is the Meta section.
+    if (payloadLen == 0 || payload[0] == 0xA0) return true;
+    return (payload[0] == 0xBF && payloadLen >= 2 && payload[1] == 0xFF);
+}
+
+bool optDecode(const uint8_t* tagBytes, size_t len,
+               OptMeta* meta, OptMain* main, OptAuxiliary* aux) {
+    const uint8_t* payload;
+    size_t payloadLen;
+    if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return false;
+
+    // ── Decode Meta region (always at offset 0 of payload) ──────────────────
+    CborParser parser;
+    CborValue  it, map;
+    if (cbor_parser_init(payload, payloadLen, 0, &parser, &it) != CborNoError) return false;
+    if (!cbor_value_is_map(&it)) return false;
+
+    uint16_t mainOffset = 0, auxOffset = 0;
+    if (cbor_value_enter_container(&it, &map) == CborNoError) {
+        while (!cbor_value_at_end(&map)) {
+            int64_t key;
+            if (cbor_value_get_int64(&map, &key) != CborNoError) break;
+            cbor_value_advance_fixed(&map);
+            switch (key) {
+                case META_KEY_MAIN_REGION_OFFSET: {
+                    int64_t v; cbor_value_get_int64(&map, &v); mainOffset = (uint16_t)v;
+                    if (meta) meta->main_region_offset = mainOffset;
+                    break;
+                }
+                case META_KEY_MAIN_REGION_SIZE:
+                    if (meta) { int64_t v; cbor_value_get_int64(&map, &v); meta->main_region_size = (uint16_t)v; }
+                    break;
+                case META_KEY_AUX_REGION_OFFSET: {
+                    int64_t v; cbor_value_get_int64(&map, &v); auxOffset = (uint16_t)v;
+                    if (meta) meta->aux_region_offset = auxOffset;
+                    break;
+                }
+                case META_KEY_AUX_REGION_SIZE:
+                    if (meta) { int64_t v; cbor_value_get_int64(&map, &v); meta->aux_region_size = (uint16_t)v; }
+                    break;
+            }
+            cbor_value_advance(&map);
+        }
+        cbor_value_leave_container(&it, &map);
+    }
+
+    // ── Decode Main region ────────────────────────────────────────────────────
+    if (main && mainOffset < payloadLen) {
+        CborParser mp; CborValue mi, mm;
+        cbor_parser_init(payload + mainOffset, payloadLen - mainOffset, 0, &mp, &mi);
+        if (cbor_value_is_map(&mi) && cbor_value_enter_container(&mi, &mm) == CborNoError) {
+            while (!cbor_value_at_end(&mm)) {
+                int64_t key;
+                if (cbor_value_get_int64(&mm, &key) != CborNoError) break;
+                cbor_value_advance_fixed(&mm);
+                size_t slen;
+                switch (key) {
+                    case MAIN_KEY_INSTANCE_UUID:
+                        slen = 16;
+                        cbor_value_copy_byte_string(&mm, main->instance_uuid, &slen, &mm);
+                        continue;
+                    case MAIN_KEY_BRAND_NAME:
+                        slen = sizeof(main->brand_name);
+                        cbor_value_copy_text_string(&mm, main->brand_name, &slen, &mm);
+                        continue;
+                    case MAIN_KEY_MATERIAL_NAME:
+                        slen = sizeof(main->material_name);
+                        cbor_value_copy_text_string(&mm, main->material_name, &slen, &mm);
+                        continue;
+                    case MAIN_KEY_MATERIAL_ABBREVIATION:
+                        slen = sizeof(main->material_abbreviation);
+                        cbor_value_copy_text_string(&mm, main->material_abbreviation, &slen, &mm);
+                        continue;
+                    case MAIN_KEY_PRIMARY_COLOR_RGBA:
+                        slen = 4;
+                        cbor_value_copy_byte_string(&mm, main->primary_color_rgba, &slen, &mm);
+                        continue;
+                    case MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT: cborGetFloat(&mm, &main->nominal_netto_full_weight); break;
+                    case MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT:  cborGetFloat(&mm, &main->actual_netto_full_weight);  break;
+                    case MAIN_KEY_EMPTY_CONTAINER_WEIGHT:    cborGetFloat(&mm, &main->empty_container_weight);    break;
+                    case MAIN_KEY_FILAMENT_DIAMETER:         cborGetFloat(&mm, &main->filament_diameter);         break;
+                    case MAIN_KEY_MIN_PRINT_TEMPERATURE: { int64_t v; cbor_value_get_int64(&mm, &v); main->min_print_temperature = (int16_t)v; break; }
+                    case MAIN_KEY_MAX_PRINT_TEMPERATURE: { int64_t v; cbor_value_get_int64(&mm, &v); main->max_print_temperature = (int16_t)v; break; }
+                    case MAIN_KEY_MIN_BED_TEMPERATURE:   { int64_t v; cbor_value_get_int64(&mm, &v); main->min_bed_temperature   = (int16_t)v; break; }
+                    case MAIN_KEY_MAX_BED_TEMPERATURE:   { int64_t v; cbor_value_get_int64(&mm, &v); main->max_bed_temperature   = (int16_t)v; break; }
+                    case MAIN_KEY_MATERIAL_CLASS: { int64_t v; cbor_value_get_int64(&mm, &v); main->material_class = (int8_t)v; break; }
+                    case MAIN_KEY_MATERIAL_TYPE:  { int64_t v; cbor_value_get_int64(&mm, &v); main->material_type  = (int8_t)v; break; }
+                }
+                cbor_value_advance(&mm);
+            }
+            cbor_value_leave_container(&mi, &mm);
+        }
+    }
+
+    // ── Decode Auxiliary region ───────────────────────────────────────────────
+    if (aux && auxOffset > 0 && auxOffset < payloadLen) {
+        CborParser ap; CborValue ai, am;
+        cbor_parser_init(payload + auxOffset, payloadLen - auxOffset, 0, &ap, &ai);
+        if (cbor_value_is_map(&ai) && cbor_value_enter_container(&ai, &am) == CborNoError) {
+            while (!cbor_value_at_end(&am)) {
+                int64_t key;
+                if (cbor_value_get_int64(&am, &key) != CborNoError) break;
+                cbor_value_advance_fixed(&am);
+                if (key == AUX_KEY_CONSUMED_WEIGHT) cborGetFloat(&am, &aux->consumed_weight);
+                cbor_value_advance(&am);
+            }
+            cbor_value_leave_container(&ai, &am);
+        }
+    }
+
+    return true;
+}
+
+size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
+    CborEncoder enc, map;
+    cbor_encoder_init(&enc, buf, maxLen, 0);
+    cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
+
+    cbor_encode_int(&map, MAIN_KEY_INSTANCE_UUID);
+    cbor_encode_byte_string(&map, m.instance_uuid, 16);
+
+    cbor_encode_int(&map, MAIN_KEY_BRAND_NAME);
+    cbor_encode_text_stringz(&map, m.brand_name);
+
+    cbor_encode_int(&map, MAIN_KEY_MATERIAL_NAME);
+    cbor_encode_text_stringz(&map, m.material_name);
+
+    cbor_encode_int(&map, MAIN_KEY_MATERIAL_ABBREVIATION);
+    cbor_encode_text_stringz(&map, m.material_abbreviation);
+
+    cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_RGBA);
+    cbor_encode_byte_string(&map, m.primary_color_rgba, 4);
+
+    // Encode floats as float32; reference uses CompactFloat (may use int for whole numbers)
+    // TODO: mirror CompactFloat logic to minimise tag bytes if space becomes an issue
+    cbor_encode_int(&map, MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT);
+    cbor_encode_float(&map, m.nominal_netto_full_weight);
+
+    cbor_encode_int(&map, MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT);
+    cbor_encode_float(&map, m.actual_netto_full_weight);
+
+    cbor_encode_int(&map, MAIN_KEY_EMPTY_CONTAINER_WEIGHT);
+    cbor_encode_float(&map, m.empty_container_weight);
+
+    cbor_encode_int(&map, MAIN_KEY_FILAMENT_DIAMETER);
+    cbor_encode_float(&map, m.filament_diameter);
+
+    cbor_encode_int(&map, MAIN_KEY_MATERIAL_CLASS);
+    cbor_encode_int(&map, m.material_class);
+
+    cbor_encode_int(&map, MAIN_KEY_MATERIAL_TYPE);
+    cbor_encode_int(&map, m.material_type);
+
+    cbor_encode_int(&map, MAIN_KEY_MIN_PRINT_TEMPERATURE);
+    cbor_encode_int(&map, m.min_print_temperature);
+
+    cbor_encode_int(&map, MAIN_KEY_MAX_PRINT_TEMPERATURE);
+    cbor_encode_int(&map, m.max_print_temperature);
+
+    cbor_encode_int(&map, MAIN_KEY_MIN_BED_TEMPERATURE);
+    cbor_encode_int(&map, m.min_bed_temperature);
+
+    cbor_encode_int(&map, MAIN_KEY_MAX_BED_TEMPERATURE);
+    cbor_encode_int(&map, m.max_bed_temperature);
+
+    cbor_encoder_close_container(&enc, &map);
+    return cbor_encoder_get_buffer_size(&enc, buf);
+}
+
+size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
+    CborEncoder enc, map;
+    cbor_encoder_init(&enc, buf, maxLen, 0);
+    cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
+
+    cbor_encode_int(&map, AUX_KEY_CONSUMED_WEIGHT);
+    cbor_encode_float(&map, aux.consumed_weight);
+
+    cbor_encoder_close_container(&enc, &map);
+    return cbor_encoder_get_buffer_size(&enc, buf);
+}
+
+size_t optPayloadOffset(const uint8_t* tagBytes, size_t len) {
+    const uint8_t* payload;
+    size_t payloadLen;
+    if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return SIZE_MAX;
+    return (size_t)(payload - tagBytes);
+}
+
+size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
+                        uint8_t* outBuf, size_t outBufLen, OptMeta* outMeta) {
+    const size_t tagSize = (size_t)numBlocks * blockSize;
+    if (!outBuf || tagSize > outBufLen || numBlocks < 2) return SIZE_MAX;
+
+    // 16 bytes reserved for Meta CBOR at the start of the OPT payload.
+    // Meta CBOR with 4 integer keys encodes in ≤13 bytes; 16 gives comfortable headroom.
+    static const size_t META_SECTION_SIZE  = 16;
+    static const size_t MAIN_REGION_OFFSET = META_SECTION_SIZE;  // = 16
+    static const size_t EMPTY_MAP_SIZE     = 2;   // 0xBF 0xFF
+
+    // Aux sits at the last complete block so its absolute address is block-aligned.
+    const size_t auxAbsStart = (size_t)(numBlocks - 1) * blockSize;
+
+    // ── Choose SR bit and TLV length encoding ────────────────────────────────
+    // Start with SR=1 (1-byte payload length, payload ≤ 255 bytes), 1-byte TLV length.
+    bool   useSR1       = true;
+    size_t ndefHdrSize  = 1 + 1 + 1 + OPT_MIME_TYPE_LEN;  // 31 bytes (SR=1)
+    size_t tlvLenSize   = 1;
+    size_t payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+
+    if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+    size_t cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+    size_t ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+
+    if (cborPayloadLen > 255) {
+        // Payload too large for SR=1; switch to SR=0 (4-byte payload length field).
+        useSR1       = false;
+        ndefHdrSize  = 1 + 1 + 4 + OPT_MIME_TYPE_LEN;  // 34 bytes (SR=0)
+        payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+        if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+    }
+
+    if (ndefMsgLen > 254) {
+        // NDEF message too large for 1-byte TLV length; switch to 3-byte (0xFF hi lo).
+        tlvLenSize   = 3;
+        payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
+        if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
+        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        ndefMsgLen     = ndefHdrSize + cborPayloadLen;
+    }
+
+    const size_t auxOffset     = auxAbsStart - payloadStart;
+    const size_t terminatorPos = auxAbsStart + EMPTY_MAP_SIZE;
+    if (terminatorPos >= tagSize) return SIZE_MAX;
+
+    // ── Write tag bytes ───────────────────────────────────────────────────────
+    memset(outBuf, 0, tagSize);
+
+    // Capability Container
+    outBuf[0] = 0xE1;         // NDEF magic
+    outBuf[1] = 0x40;         // version 1.0, read/write access
+    outBuf[2] = numBlocks;
+    outBuf[3] = 0x01;         // block size / 8 → 4-byte blocks
+
+    // NDEF TLV
+    size_t p = OPT_CC_SIZE;
+    outBuf[p++] = 0x03;
+    if (tlvLenSize == 1) {
+        outBuf[p++] = (uint8_t)ndefMsgLen;
+    } else {
+        outBuf[p++] = 0xFF;
+        outBuf[p++] = (uint8_t)(ndefMsgLen >> 8);
+        outBuf[p++] = (uint8_t)(ndefMsgLen & 0xFF);
+    }
+
+    // NDEF record header
+    outBuf[p++] = useSR1 ? 0xD2 : 0xC2;       // MB=ME=1, SR=(0/1), TNF=0x02
+    outBuf[p++] = (uint8_t)OPT_MIME_TYPE_LEN;
+    if (useSR1) {
+        outBuf[p++] = (uint8_t)cborPayloadLen;
+    } else {
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 24);
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 16);
+        outBuf[p++] = (uint8_t)(cborPayloadLen >> 8);
+        outBuf[p++] = (uint8_t)(cborPayloadLen & 0xFF);
+    }
+    memcpy(outBuf + p, OPT_MIME_TYPE, OPT_MIME_TYPE_LEN);
+    p += OPT_MIME_TYPE_LEN;
+    // p == payloadStart here
+
+    // Meta CBOR (at payload offset 0)
+    uint8_t metaBuf[24];
+    CborEncoder enc, map;
+    cbor_encoder_init(&enc, metaBuf, sizeof(metaBuf), 0);
+    cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
+    cbor_encode_int(&map, META_KEY_MAIN_REGION_OFFSET); cbor_encode_int(&map, (int64_t)MAIN_REGION_OFFSET);
+    cbor_encode_int(&map, META_KEY_MAIN_REGION_SIZE);   cbor_encode_int(&map, 0);
+    cbor_encode_int(&map, META_KEY_AUX_REGION_OFFSET);  cbor_encode_int(&map, (int64_t)auxOffset);
+    cbor_encode_int(&map, META_KEY_AUX_REGION_SIZE);    cbor_encode_int(&map, 0);
+    cbor_encoder_close_container(&enc, &map);
+    size_t metaLen = cbor_encoder_get_buffer_size(&enc, metaBuf);
+    if (metaLen > META_SECTION_SIZE) return SIZE_MAX;
+    memcpy(outBuf + p, metaBuf, metaLen);
+
+    // Empty Main CBOR (at payload offset MAIN_REGION_OFFSET)
+    outBuf[p + MAIN_REGION_OFFSET]     = 0xBF;
+    outBuf[p + MAIN_REGION_OFFSET + 1] = 0xFF;
+
+    // Empty Aux CBOR (block-aligned at auxAbsStart)
+    outBuf[auxAbsStart]     = 0xBF;
+    outBuf[auxAbsStart + 1] = 0xFF;
+
+    // TLV terminator
+    outBuf[terminatorPos] = 0xFE;
+
+    if (outMeta) {
+        outMeta->main_region_offset = (uint16_t)MAIN_REGION_OFFSET;
+        outMeta->main_region_size   = 0;
+        outMeta->aux_region_offset  = (uint16_t)auxOffset;
+        outMeta->aux_region_size    = 0;
+    }
+
+    return payloadStart;  // byte offset of OPT CBOR payload within outBuf
+}

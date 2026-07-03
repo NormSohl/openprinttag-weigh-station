@@ -1,0 +1,18 @@
+flowchart LR
+    PWR["USB-C\nPower"]
+
+    subgraph BOARD["SparkFun Thing Plus ESP32-S3"]
+        ESP["ESP32-S3\nMCU"]
+        NP["WS2812\nNeoPixel\n(onboard)"]
+    end
+
+    subgraph QWIIC["Qwiic I2C Bus"]
+        NAU["NAU7802\nLoad Cell ADC"]
+        OLED["SSD1306\nOLED 128×64"]
+    end
+
+    PWR         -->|5V|           BOARD
+    ESP         <-->|SPI|         PN5180["PN5180\nNFC Module"]
+    ESP         <-->              QWIIC
+    NAU         <-->|4-wire\nanalog| LC["TAL220B\n5 kg Load Cell"]
+    ESP         -->|PWM|          BUZ["Passive\nPiezo Buzzer"]
