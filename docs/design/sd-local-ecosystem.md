@@ -142,8 +142,8 @@ material data in a browser; the device writes the tag and logs it.
   - `GET /spool/<id>` — per-spool history (filtered log view).
   - `GET /config` — manage the config tables (vendors, materials, spool
     profiles, colors, stock items); writes to primary + mirrors SD.
-  - `GET /reorder` — stock items empty/below threshold; CSV + `mailto:`
-    (optional SMTP send).
+  - `GET /reorder` — stock items empty/below threshold; CSV download +
+    `mailto:`.
   - `GET /export` — download a full backup bundle (log + config + manifest).
   - `POST /restore` — restore from an SD backup (confirm-guarded).
   - `POST /import` — restore from a host-uploaded backup bundle (confirm-
@@ -316,14 +316,11 @@ generate reorder noise.
 
 ### Sending the list
 
-- **Download (default):** `/reorder` offers a CSV download plus a
-  prefilled `mailto:` to the order address — no secrets on the device.
-- **Email via SMTP (optional):** if SMTP host/port/user/app-password are
-  configured, the device mails the CSV directly. Off by default so a lab
-  device needn't hold mail credentials.
+`/reorder` offers a **CSV download** to the web client's machine, plus a
+prefilled `mailto:` link to the order address. The human sends/places the
+order from the CSV — no mail credentials or SMTP on the device.
 
-Vendor/API order integration is explicitly out of scope for now — the
-human places the order from the CSV.
+Vendor/API order integration is explicitly out of scope for now.
 
 ## Firmware impact
 
@@ -382,8 +379,6 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
   to keep — trades backup freshness/depth against card wear and space.
 - LittleFS partition size (4 MB default vs 8 MB) — depends on whether we
   keep dual-OTA app slots.
-- Reorder email: download + `mailto:` only, or also ship optional SMTP
-  send (adds mail-credential storage in config/NVS)?
 
 ## Explicitly out of scope
 
