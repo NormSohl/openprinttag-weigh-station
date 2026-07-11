@@ -1,6 +1,10 @@
 // =============================================================
 // porch-tft-adapter.scad — ILI9488 3.5" TFT bezel / cradle plate
 // =============================================================
+// KNOWN ISSUES (deferred) — see printed-parts-issues.md #2:
+//   - enlarge display opening ~0.5 mm; deepen pocket ~10 mm to seat the
+//     pin header (avoids cutting a slot). Not yet applied.
+// =============================================================
 // Full-width faceplate for the 45° porch face (140 mm wide).
 // Mounts with 4× M3 screws — all four are NEW holes; use this
 // plate as a drilling template:

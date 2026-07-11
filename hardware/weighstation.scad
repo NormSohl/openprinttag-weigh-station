@@ -1,6 +1,11 @@
 // =============================================================
 // OpenPrintTag Weigh Station — parametric enclosure
 // =============================================================
+// KNOWN ISSUE (deferred) — see printed-parts-issues.md #1:
+//   load-cell fixed-end boss (~line 408) flexes under load; stiffen its
+//   cross-section / add gussets so only the load-cell beam deflects.
+//   Enlarged by hand on the built unit; SCAD not yet updated.
+// =============================================================
 // Parts: set `part` below (or via -D part="...") and export STL.
 //   "platform"  — weighing disc + antenna pocket (prints top-face-down)
 //   "spigot"    — separate centering cone, bolts to platform center
