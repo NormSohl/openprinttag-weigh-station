@@ -86,8 +86,11 @@ pocket_d   = 13.2;  // depth from back face — houses PCB + header;
 //   the wrong side, flip to +18.
 sd_slot_edge   = "top";   // "top"(+Y) | "bottom"(-Y) | "left"(-X) | "right"(+X)
 sd_slot_offset = -18;     // 18 mm toward -X (=67 mm from the +X/right edge)
-sd_slot_w      = 13;      // slot width  (microSD ~11 mm + clearance)
-sd_slot_h      = 3;       // slot height (card + socket-lip clearance)
+sd_slot_w      = 16;      // slot width  (microSD ~11 mm + ~2.5 mm/side
+                          //   clearance — absorbs offset/print tolerance)
+sd_slot_h      = 5;       // slot height — generous; also tall enough that
+                          //   it clears the card at BOTH front-reference
+                          //   readings (7.2 and 9.0), spanning ~4.7–9.7
 // Card-mouth height: measured 6 mm behind the display's FRONT GLASS,
 // which rests at the pocket floor (Z = pocket_d = 13.2).  So the slot
 // centre is pocket_d − 6 above the back face.  (If "front" meant the
