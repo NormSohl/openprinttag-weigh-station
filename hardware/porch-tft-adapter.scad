@@ -80,11 +80,12 @@ pocket_d   = 13.2;  // depth from back face — houses PCB + header;
 // CONFIRMED: the card exits the TOP edge of the display, and the socket
 //   is on the BACK of the PCB — so its mouth sits near the open back of
 //   this tray (see sd_slot_z).
-// STILL TO SET: sd_slot_offset — the socket is off-centre (upper-left in
-//   the board photo, ~20–30 mm from centre). Set the value AND sign once
-//   the board's mounting rotation in the pocket is fixed.
+// OFFSET: socket mouth measured 67 mm (±1) from the board's right edge on
+//   the 98 mm-wide board → 31 mm from the left edge → 18 mm off-centre.
+//   Sign assumes the board's right edge = +X here; if the slot prints on
+//   the wrong side, flip to +18.
 sd_slot_edge   = "top";   // "top"(+Y) | "bottom"(-Y) | "left"(-X) | "right"(+X)
-sd_slot_offset = 0;       // shift along the top edge from centre (mm) — SET ME
+sd_slot_offset = -18;     // 18 mm toward -X (=67 mm from the +X/right edge)
 sd_slot_w      = 13;      // slot width  (microSD ~11 mm + clearance)
 sd_slot_h      = 3;       // slot height (card + socket-lip clearance)
 // Card-mouth height ≈ pocket floor (13.2) − PCB (1.6) − socket standoff
