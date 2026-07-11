@@ -88,9 +88,12 @@ sd_slot_edge   = "top";   // "top"(+Y) | "bottom"(-Y) | "left"(-X) | "right"(+X)
 sd_slot_offset = -18;     // 18 mm toward -X (=67 mm from the +X/right edge)
 sd_slot_w      = 13;      // slot width  (microSD ~11 mm + clearance)
 sd_slot_h      = 3;       // slot height (card + socket-lip clearance)
-// Card-mouth height ≈ pocket floor (13.2) − PCB (1.6) − socket standoff
-// (~1.1) ≈ 10.5 mm above the back face.  Verify exact standoff on board.
-sd_slot_z      = 10.5;
+// Card-mouth height: measured 6 mm behind the display's FRONT GLASS,
+// which rests at the pocket floor (Z = pocket_d = 13.2).  So the slot
+// centre is pocket_d − 6 above the back face.  (If "front" meant the
+// adapter's outer bezel face instead, that'd be plate_t − 6 = 9.0.)
+sd_slot_from_front = 6;
+sd_slot_z          = pocket_d - sd_slot_from_front;   // 13.2 − 6 = 7.2 mm
 
 // =============================================================
 // microSD access slot: a box cut through one perimeter wall, spanning
