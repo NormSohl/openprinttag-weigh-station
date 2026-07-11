@@ -34,6 +34,23 @@ Connect with a Qwiic cable directly to the SparkFun Thing Plus Qwiic connector.
 The NAU7802 breakout's load cell terminal block accepts a standard 4-wire load cell
 (E+, E−, A+, A−).
 
+### Load cell wiring (full-bridge)
+
+| Load cell wire | Function | NAU7802 terminal |
+|---|---|---|
+| Red (红) | Excitation + | E+ |
+| Black (黑) | Excitation − | E− |
+| Green (绿) | Signal + | A+ |
+| White (白) | Signal − | A− |
+| Yellow (黄) | Shield / drain | GND (omit if cell has no yellow lead) |
+
+Mount the cell so its force axis is vertical and the sealed (potted) face points
+**down** — that orientation gives a positive output. Calibrate with a known weight
+at 50–80 % of the cell's rated range (the `ZERO` / `CAL <grams>` serial workflow).
+
+> Full details and the original manufacturer sheet:
+> [`docs/datasheets/load-cell-install-guide.md`](../docs/datasheets/load-cell-install-guide.md)
+
 ---
 
 ## 3.5" ILI9488 TFT Display — SPI

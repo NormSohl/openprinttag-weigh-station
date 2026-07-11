@@ -8,6 +8,9 @@ the NAU7802 ADC in the weigh station.
 (original Chinese single-sheet insert, title **安装必看** — "Read Before
 Installing").
 
+**See also:** [`hardware/wiring.md`](../../hardware/wiring.md) — the
+NAU7802 section carries the condensed wire-color-to-terminal table.
+
 > Translation notes: the original is a general-purpose insert covering
 > both half-bridge and full-bridge cells and several mounting layouts.
 > Only the full-bridge wiring and single-beam mounting apply to this
