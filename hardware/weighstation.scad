@@ -1,10 +1,11 @@
 // =============================================================
 // OpenPrintTag Weigh Station — parametric enclosure
 // =============================================================
-// KNOWN ISSUE (deferred) — see printed-parts-issues.md #1:
-//   load-cell fixed-end boss (~line 408) flexes under load; stiffen its
-//   cross-section / add gussets so only the load-cell beam deflects.
-//   Enlarged by hand on the built unit; SCAD not yet updated.
+// Rev — see printed-parts-issues.md:
+//   #1 load-cell fixed-end boss reinforced (enlarged + rear buttress).
+//   Porch UI reworked: OLED/button/LED removed; single TFT opening + 4
+//   adapter screw holes added (matches porch-tft-adapter.scad).
+//   VERIFY the reinforcement in a render and tune to the physical fix.
 // =============================================================
 // Parts: set `part` below (or via -D part="...") and export STL.
 //   "platform"  — weighing disc + antenna pocket (prints top-face-down)
@@ -126,26 +127,22 @@ ant_pocket_dy = ant_clear_r + ant_w/2;      // pocket center offset along radius
 
 // ---------------- ports / UI ----------------
 usb_w = 12;  usb_h = 7;            // rear cutout for USB-C breakout module
-btn_hole_d = 16 + 0.2;             // 16mm panel-mount button + 0.2 print compensation
-led_hole_d = 5;                    // front light pipe
-// SparkFun Qwiic OLED 1.3in (LCD-23453): glass 29.42 x 14.7mm, mounting
-// holes 30.48mm apart on the WIDE axis (only ~0.5mm beyond the glass) and
-// 25.40mm on the short axis (tabs clear the glass by ~5mm). The wide-axis
-// holes sit nearly in line with the glass edges, so a full-glass window
-// would clip them. Window wide dim held to 26mm: leaves a ~0.5mm web to
-// each M3 hole and still shows ~93% of the lit 128x64 pixel block (the lit
-// area ~27.9mm is inset from the 29.42 glass edge). Screws are light-duty
-// (they hold a few grams of board), so the thin web is adequate.
-oled_w = 26;   oled_h = 14;        // window: wide(V) x short-up-slope(U);
-// both dims < glass (29.42 x 14.7) so the glass seats on the inner lip
-oled_hole_dx = 30.48;              // WIDE-axis hole spacing (-> face width V)
-oled_hole_dy = 25.40;              // short-axis hole spacing (-> up-slope U)
+// The SSD1306 OLED, panel button, and status LED are REMOVED — replaced
+// by a single 3.5in ILI9488 TFT on a printed adapter (porch-tft-adapter.scad).
+// The adapter is 140 (face-width V) x 67 (up-slope U), centred on the
+// porch face and fastened with 4x M3.
 // 45-degree UI porch: a wedge extending forward past the platform edge,
-// carrying display + button + LED on its sloped face, angled at the user.
+// carrying the display on its sloped face, angled at the user.
 porch_len = 45;                    // how far the wedge extends (also = height drop @45)
-ui_oled_y = -22;                   // positions ALONG the sloped face (Y axis)
-ui_btn_y  =  28;
-ui_led_y  =  48;
+
+// Display opening through the slope wall: inset 15mm/side from the
+// adapter outline -> 110 (V) x 37 (U), centred on the face.
+disp_open_w = 110;                 // face-width (V) extent
+disp_open_u = 37;                  // up-slope   (U) extent
+disp_open_r = 3;                   // corner radius
+// Adapter screw pattern (matches porch-tft-adapter.scad hole_x/y_half):
+disp_screw_v = 60;                 // +-60 along face width (V)
+disp_screw_u = 23.5;               // +-23.5 along slope    (U)
 
 // ---------------- overload stop ----------------
 stop_bolt_d = 5;                   // M5 set bolt under free end
@@ -356,29 +353,20 @@ module base() {
       rotate([90,0,0]) cylinder(d=10, h=4*wall, center=true);
 
     // --- UI cutouts on the 45-degree face ---
-    // All centered through the slope wall from the face center point.
+    // Single TFT display opening + 4 adapter screw holes, centred on the
+    // face. Cut through the slope wall from the face center point.
+    // V = face width (world Y); U = up-slope (local X after the -45 tilt).
     translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2]) {
-      // OLED window
-      translate([0, ui_oled_y, 0]) rotate([0, -45, 0])
+      // Display opening (inset 15mm/side from the adapter outline)
+      rotate([0, -45, 0])
         translate([0, 0, -2*wall])
-          rrect(oled_h, oled_w, 4*wall, 2);
-      // OLED mounting holes (M3 through, heads proud on outside face)
-      translate([0, ui_oled_y, 0]) rotate([0, -45, 0])
-        for (lx = [-1, 1], ly = [-1, 1])
-          translate([lx*oled_hole_dy/2, ly*oled_hole_dx/2, 0])
+          rrect(disp_open_u, disp_open_w, 4*wall, disp_open_r);
+      // 4x M3 adapter screw clearance holes (Ø3.4; nuts inside the porch
+      // cavity). Match porch-tft-adapter.scad's ±60 (V) × ±23.5 (U).
+      for (sv = [-1, 1], su = [-1, 1])
+        translate([0, sv*disp_screw_v, 0]) rotate([0, -45, 0])
+          translate([su*disp_screw_u, 0, 0])
             cylinder(d=3.4, h=4*wall, center=true);
-      // No relief pocket: the window opening (26 x 14) is SMALLER than the
-      // glass (29.42 x 14.7), so the glass seats against the inner lip
-      // around the window and the PCB clamps flat to the inner face. The
-      // window-smaller-than-glass arrangement captures the display without
-      // any pocket (a pocket wide enough for the glass would undercut the
-      // mounting holes, which sit only 0.5mm beyond the glass edges).
-      // panel-mount button
-      translate([0, ui_btn_y, 0]) rotate([0, -45, 0])
-        cylinder(d=btn_hole_d, h=4*wall, center=true);
-      // LED light pipe
-      translate([0, ui_led_y, 0]) rotate([0, -45, 0])
-        cylinder(d=led_hole_d, h=4*wall, center=true);
     }
 
     // --- floor cuts (these stay in the difference: they cut the shell) ---
@@ -407,15 +395,33 @@ module base() {
   // The M5 SHCS comes down through the load cell hole and the spacer pad
   // on the platform, threading into the insert here. Cradle walls prevent
   // rotation about the single bolt.
+  // pillar reinforcement (issue #1): this boss flexed under scale load.
+  // Enlarge it (extend rearward -X, widen ±Y) and add a rear triangular
+  // buttress down to the floor. All added material is on -X / ±Y — the +X
+  // edge is held fixed at lc_x0+14 so nothing encroaches on the load
+  // cell's free travel (the bar cantilevers +X above z=lc_boss_h).
+  // VERIFY in a render and tune to match the physical fix.
+  lc_boss_ext  = 10;   // rearward (-X) base extension
+  lc_boss_wide = 3;    // extra width per ±Y side
+  lc_boss_butt = 10;   // rear buttress reach along -X at the floor
   difference() {
     union() {
-      translate([lc_x0 - 4, -lc_w/2 - 4, 0])
-        cube([18, lc_w + 8, lc_boss_h]);
+      // enlarged boss (+X edge held at lc_x0+14; grows -X and ±Y)
+      translate([lc_x0 - 4 - lc_boss_ext, -lc_w/2 - 4 - lc_boss_wide, 0])
+        cube([18 + lc_boss_ext, lc_w + 8 + 2*lc_boss_wide, lc_boss_h]);
+      // anti-rotation cradle walls (unchanged, atop the boss)
       for (sy = [-1, 1])
         translate([lc_x0 - 4, sy*(lc_w/2 + 0.05) + (sy < 0 ? -3 : 0), lc_boss_h])
           cube([18, 3, 5]);
+      // rear triangular buttress: boss upper-rear down to a -X floor pad
+      hull() {
+        translate([lc_x0 - 4 - lc_boss_ext, -lc_w/2 - 4 - lc_boss_wide, 0.55*lc_boss_h])
+          cube([eps, lc_w + 8 + 2*lc_boss_wide, eps]);
+        translate([lc_x0 - 4 - lc_boss_ext - lc_boss_butt, -lc_w/2 - 4 - lc_boss_wide, 0])
+          cube([eps, lc_w + 8 + 2*lc_boss_wide, eps]);
+      }
     }
-    // M5 heat-set insert pocket in the top of the boss (insert pressed in from above)
+    // M5 heat-set insert pocket in the top of the boss (from above)
     translate([lc_x0 + lc_hole_from_end, 0, lc_boss_h - m5_ins_l])
       cylinder(d=m5_ins_d, h=m5_ins_l + eps);
   }

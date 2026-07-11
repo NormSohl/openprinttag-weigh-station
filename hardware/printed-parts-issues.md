@@ -9,7 +9,7 @@ Related files: [`weighstation.scad`](./weighstation.scad),
 
 | # | Part | Severity | Status |
 |---|------|----------|--------|
-| 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | Open, deferred; workaround applied to built unit |
+| 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | **Fixed** — SCAD reinforced (verify + tune) |
 | 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed** — SCAD updated |
 
 ---
@@ -26,21 +26,22 @@ the mount instead of by the strain-gauge beam. The load cell must be the
 reading (non-linear, hysteresis, drift).
 
 **Interim workaround:** the pillar cross-section was increased on the
-built unit to stiffen it. Physical part only — **the SCAD is not yet
-updated.**
+built unit to stiffen it.
 
-**Planned change (deferred):**
-- Increase the boss cross-section (the `18` X-depth and/or `lc_w + 8`
-  width) and/or add gusset ribs so the fixed end is effectively rigid at
-  max rated load.
-- Re-verify: no visible deflection of the boss under a full-scale test
-  weight; only the load-cell beam should move.
+**Fix applied to SCAD:** the boss is enlarged (extended rearward −X by
+`lc_boss_ext`, widened ±Y by `lc_boss_wide`) and gains a rear triangular
+buttress (`lc_boss_butt`) down to the floor. All added material is on the
+−X / ±Y sides — the +X edge is held fixed so nothing encroaches on the
+load cell's free travel. Only the strain-gauge beam should deflect.
+
+**Follow-ups:**
+- Tune `lc_boss_ext` / `lc_boss_wide` / `lc_boss_butt` to match the
+  physical fix; **verify in a render** (no OpenSCAD in this env) that the
+  buttress clears nearby floor features.
+- Re-check under a full-scale test weight: no visible boss deflection.
 - Cross-ref the load-cell install guide
   ([`docs/datasheets/load-cell-install-guide.md`](../docs/datasheets/load-cell-install-guide.md))
   — "force direction perpendicular, rigid mount."
-
-**Why deferred:** the built unit works with the enlarged pillar; fold the
-fix into the SCAD on the next revision so we don't re-cut it by hand.
 
 ---
 
