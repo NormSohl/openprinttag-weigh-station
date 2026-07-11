@@ -30,32 +30,42 @@ already carries better storage. Split by reliability need:
 
 | Tier | Medium | Holds | Why |
 |---|---|---|---|
-| **Counters** | **NVS** (internal flash) | spool-ID counter, log write/rotation pointers, scale cal, WiFi | transactional, power-fail safe; the values whose corruption hurts most |
-| **Primary** | **LittleFS** (internal flash) | append-only event log + derived indices (the working set) | copy-on-write, wear-leveled, brownout-resilient by design; no removable media |
-| **Backup/bulk** | **microSD** (removable) | rolling log mirror, rotated cold archive, `/web/` UI assets, `/config/*` tables | GBs of cheap space; card absent or corrupt loses only backup, never live data |
+| **Counters** | **NVS** (internal flash) | spool-ID counter, log write/rotation pointers, scale cal, WiFi, hostname/SoftAP | transactional, power-fail safe; the values whose corruption hurts most |
+| **Primary** | **LittleFS** (internal flash) | event log + derived indices + **all config tables** + **web UI assets** | copy-on-write, wear-leveled, brownout-resilient; no removable media |
+| **Backup** | **microSD** (removable) | mirror of everything above, rotated cold archive, export/import transport | pure backup — **nothing lives only on SD**; card absent or corrupt loses backup, never function |
 
-Source of truth is the **append-only event log on LittleFS**; everything
-else is a projection that can be regenerated from it. The SD mirror lets
-you pull the card (or hit `/export`) for off-device copies, and old log
-segments rotate out to the SD archive when the flash partition fills.
+**Nothing the device needs to run lives only on SD** — the card can be
+absent and the station still onboards, weighs, and serves its web UI. The
+source of truth is the **event log on LittleFS**; indices and config are
+edited in primary storage and **mirrored to SD as backup** (SD is read
+only during restore, never in normal operation). Old log segments still
+rotate out to the SD archive when the flash partition fills.
+
+A **minimal recovery page is embedded in firmware** so a blank board with
+no card can still boot, show the address, and accept a restore.
 
 ```
-# LittleFS (internal flash) — PRIMARY
-/log/events.ndjson         # append-only, one JSON object per line
-/index/spools.json         # current state per spool (derived)
-/index/inventory.json      # remaining grams per material (derived)
-/index/reorder.json        # materials below threshold (derived)
+# LittleFS (internal flash) — PRIMARY (source of truth)
+/log/events.ndjson          # append-only, one JSON object per line
+/index/spools.json          # current state per spool (derived)
+/index/inventory.json       # remaining grams per material (derived)
+/index/reorder.json         # materials below threshold (derived)
+/config/vendors.json        # brand list
+/config/materials.json      # material presets (temps, diameter, class/type…)
+/config/spool-profiles.json # spool size → nominal-full + empty tare
+/config/colors.json         # color palette (name → RGBA)
+/config/reorder.json        # per-material reorder thresholds
+/web/                       # static UI assets (served from primary)
 
-# NVS namespace "store" — counters
-counter                    # uint32, next spool ID (atomic)
-rotate                     # log rotation bookkeeping
+# NVS namespace "store" — counters + device settings
+counter                     # uint32, next spool ID (atomic)
+rotate                      # log rotation bookkeeping
+# (+ scale cal, WiFi, hostname/SoftAP as today)
 
-# microSD — BACKUP / BULK / ASSETS
-/backup/events-*.ndjson    # rolling mirror + rotated cold archive
-/web/                      # static UI assets served to the browser
-/config/reorder.json       # per-material reorder thresholds
-/config/spool-weights.json # empty-spool tare weights by vendor/type
-/config/materials.json     # onboarding material presets
+# microSD — BACKUP ONLY (mirror + transport; never SD-only)
+/backup/events-*.ndjson     # rolling log mirror + rotated cold archive
+/backup/config/             # mirror of /config/*
+/backup/manifest.json       # backup version + checksums for restore
 ```
 
 ### Capacity
@@ -117,53 +127,80 @@ material data in a browser; the device writes the tag and logs it.
   not touch-driven. A QR code to the URL is a cheap add on 480×320 and
   lets a phone jump straight in. (Today's Idle screen shows only
   "Place spool to begin" — extend it.)
-- **Assets from SD:** serve `/web/` static files off the card, so
-  updating the UI is just editing files — no reflash.
+- **Assets from primary storage:** serve `/web/` static files off
+  LittleFS, so the UI loads with no card present; updating it is editing
+  files (web upload), no reflash. Backed up to SD like everything else.
 - **Routes (sketch):**
   - `GET /` — dashboard: recent activity, low-stock warnings.
-  - `GET /onboard` — material-template form for the pending stub tag.
+  - `GET /onboard` — onboarding form (pick vendor/material/spool/color).
   - `POST /tare` — read the load cell once; return the current weight to
     prefill `empty_container_weight` (reference-spool capture).
   - `POST /onboard` — write Main section to tag, append `onboard` event.
   - `GET /spools` — spool list from `spools.json`.
   - `GET /spool/<id>` — per-spool history (filtered log view).
+  - `GET /config` — manage the config tables (vendors, materials, spool
+    profiles, colors, reorder thresholds); writes to primary + mirrors SD.
   - `GET /reorder` — materials below threshold; export CSV / printable.
-  - `GET /export` — download `events.ndjson` for off-device backup.
+  - `GET /export` — write/download a full backup (log + config).
+  - `POST /restore` — restore from an SD backup (confirm-guarded).
 
-### Material template
+### Config catalog — onboard by picking, not typing
 
-A small JSON/CSV of common materials (PLA/PETG/ASA presets: temps,
-diameter, densities) so onboarding is pick-a-preset + tweak, not
-type-everything. Lives on SD; editable via the web UI.
+Most OPT Main fields are *reusable* across spools, not per-spool. Holding
+them as web-editable config tables (in primary storage) turns onboarding
+into **pick vendor → pick material → pick spool profile → pick color**,
+filling nearly all of Main automatically. Only `actual_netto_full_weight`
+is measured per-spool.
 
-### Empty-spool tare (`empty_container_weight`)
-
-Onboarding must establish the bare-spool tare — the firmware already uses
-`empty_container_weight` to compute remaining filament (gross − tare).
-A new full spool can't be weighed empty, so tare comes from one of two
-sources, both surfaced in the onboarding form (no touchscreen involved):
-
-1. **Reference-spool capture.** Keep spare *empty* spools of the common
-   types on hand. During onboarding, place a matching empty on the scale
-   and hit **"Capture tare"** in the web form — the device reads the load
-   cell once and fills `empty_container_weight`. Optionally save it back
-   to the weights table for reuse.
-2. **Cfg-table lookup.** `/config/spool-weights.json` maps vendor/type →
-   empty weight (and optional nominal full weight). Selecting a vendor +
-   material in the form pre-fills the tare, so no reference spool is
-   needed when the type is already known.
+| Table | Fills OPT Main field(s) |
+|---|---|
+| `vendors.json` | brand_name (k11) |
+| `materials.json` | material_name (k10), abbreviation (k52), class (k8), type (k9), diameter (k30), min/max print temp (k34/35), min/max bed temp (k37/38) |
+| `spool-profiles.json` | nominal_netto_full_weight (k16) + empty_container_weight (k18) |
+| `colors.json` | primary_color_rgba (k19) |
 
 ```json
-// /config/spool-weights.json
+// /config/spool-profiles.json  (size → nominal-full + empty tare)
 [
-  {"vendor":"Prusament","type":"1kg PETG","empty_g":201.0},
-  {"vendor":"Generic","type":"1kg cardboard","empty_g":130.0},
-  {"vendor":"Generic","type":"1kg plastic","empty_g":175.0}
+  {"label":"Prusament 1kg PETG", "nominal_full_g":1000, "empty_g":201.0},
+  {"label":"Generic 1kg cardboard","nominal_full_g":1000,"empty_g":130.0},
+  {"label":"Generic 0.75kg plastic","nominal_full_g":750, "empty_g":175.0}
 ]
 ```
 
-Table is user-editable via the web UI; a captured reference tare offers
-to append/update the matching row.
+All tables are user-editable via `GET /config` in the web UI (writes to
+primary, mirrors to SD). New free-text values entered during onboarding
+offer to save back to the relevant table for reuse.
+
+### Empty-spool tare (`empty_container_weight`)
+
+The tare feeds the firmware's remaining-filament calc (gross − tare). A
+new full spool can't be weighed empty, so onboarding gets it two ways
+(both in the web form — no touchscreen):
+
+1. **Reference-spool capture.** Keep spare *empty* spools on hand; place a
+   matching empty and hit **"Capture tare"** (`POST /tare` reads the load
+   cell once). Offers to save the value to the spool profile.
+2. **Profile lookup.** Picking a spool profile pre-fills the tare, so no
+   reference spool is needed when the type is known.
+
+## Backup & restore
+
+SD is pure backup, and backup is only useful with a restore path.
+
+- **Mirror (primary → SD):** on config edits and log appends, mirror to
+  `/backup/` on SD. Cadence is tunable (write-through vs periodic batch —
+  see open questions). `manifest.json` carries version + checksums.
+- **Auto-bootstrap:** on boot, if primary is empty (fresh/erased board)
+  and an SD backup exists, offer to restore from it.
+- **Manual restore (`POST /restore`):** replay the backup log to rebuild
+  the primary log, regenerate indices, and import config. **Confirm-
+  guarded** so it can't silently overwrite good primary data.
+- **Import/export:** `/export` writes a full backup (also downloadable);
+  restoring onto a second unit is how you **clone config to another
+  station**.
+- **No-card / blank-flash floor:** the firmware-embedded recovery page
+  still loads, shows the address, and accepts a restore or fresh setup.
 
 ## Ordering workflow
 
@@ -186,8 +223,9 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `scale_task.cpp` | unchanged |
 | `display_task.cpp` | minor: show local spool ID; "offline" wording gone |
 | `sync_task.cpp` (679 lines) | **removed** — Spoolman HTTP client deleted |
-| `store.*` | **new** — storage layer: LittleFS log append + index rebuild + CRC (primary), NVS counters, SD mirror/rotate/archive |
-| `web_app.*` | **new/expanded** — from the existing config server into a full app; assets served off SD |
+| `store.*` | **new** — storage layer: LittleFS log/indices/config (primary) + CRC, NVS counters, SD mirror/rotate/archive, backup/restore |
+| `web_app.*` | **new/expanded** — full app (dashboard, onboarding, config CRUD, restore); `/web/` assets served off LittleFS |
+| recovery page | **new** — minimal UI embedded in firmware for the no-card / blank-flash bootstrap + restore floor |
 | `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host), LittleFS partition + paths |
 | partition table | **new** — carve a ~4 MB LittleFS data partition (see Capacity) |
 
@@ -210,8 +248,8 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
 1. ~~**SD corruption on power loss**~~ — **downgraded.** Primary data now
    lives on LittleFS (internal flash), which is copy-on-write and
    brownout-resilient; the counter is in transactional NVS. SD holds only
-   backup/archive/assets, so a corrupt or absent card loses backup, not
-   live data — the device runs standalone with no card. Log stays
+   the backup mirror + archive, so a corrupt or absent card loses backup,
+   not live data — the device runs standalone with no card. Log stays
    append-only + per-line CRC so a torn tail line is skipped on recovery.
 2. ~~**SPI bus contention**~~ — **resolved.** SD is on its own SPI host,
    so it never touches `gSpiMutex`. No contention with the PN5180 or TFT.
