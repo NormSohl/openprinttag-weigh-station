@@ -11,7 +11,7 @@ Everything needed to build one weigh station, beyond the fasteners
 | NFC reader module | PN5180-NFC (ISO 15693) | 1 | Needs both 3.3V logic + 5V RF rail |
 | Load cell amplifier | NAU7802 (SparkFun Qwiic Scale) | 1 | I²C, on Qwiic bus |
 | Load cell | TAL220B, 5kg, 55×12.7×12.7mm | 1 | Single-bolt mount, ~40mm hole spacing |
-| TFT display | 3.5" ILI9488 SPI TFT, 480×320 (Hosyond / MSP3520-type) | 1 | SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17 |
+| TFT display | Hosyond 3.5" ILI9488 SPI TFT, 480×320, resistive touch (MSP3520-type) | 1 | Amazon (Hosyond Store, sold by HONGXINBAORUI), ~$17.99; incl. stylus. SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17. Has on-board microSD slot + resistive touch (T_xx pins) — neither wired yet |
 | Piezo buzzer | Passive, GPIO 14 | 1 | Feedback tones |
 | USB-C breakout | Power input only | 1 | 40×70mm, mounted on dedicated floor bosses |
 | USB-C panel-mount cable | Extension, panel-mount | 1 | Replaces original breakout-board plan |
@@ -62,6 +62,11 @@ quantities yet:
   spec/source chosen yet
 - **Spoolman host hardware** — ruled out on Synology NAS (no Docker
   support on j-series); separate dev server still to be sourced
+- **Display microSD interface pinout** — source is now known (Hosyond
+  3.5" ILI9488 shield, see Electronics table), but the SD slot's pin
+  assignments and whether it shares the TFT SPI bus are not yet
+  confirmed. Needed for the SD-local ecosystem redesign
+  (`docs/design/sd-local-ecosystem.md`). Awaiting the module datasheet.
 
 ## Tools Required (not consumed, but needed for assembly)
 
