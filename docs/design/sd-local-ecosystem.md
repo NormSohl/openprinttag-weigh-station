@@ -1,14 +1,17 @@
-# Redesign: SD-Local Ecosystem (Spoolman-free)
+# Redesign: Local-Storage Ecosystem (Spoolman-free)
 
 Status: **design draft** — no code moved yet. Target for the
-`redesign/sd-local-ecosystem` branch.
+`redesign/sd-local-ecosystem` branch. (Primary storage is the ESP32-S3's
+internal flash; SD is backup/archive — see Storage architecture below.)
 
 ## Goal
 
 Replace the external Spoolman backend with a fully self-contained
-ecosystem: the weigh station stores everything locally on the display
-module's SD card and serves its own web UI for onboarding, history, and
-reordering. No separate server to host, back up, or keep running.
+ecosystem: the weigh station stores everything locally and serves its own
+web UI for onboarding, history, and reordering. No separate server to
+host, back up, or keep running. Primary data lives on the ESP32-S3's
+internal flash; the SD card is demoted to backup, cold archive, and
+web-asset hosting — so the device works even with no card inserted.
 
 ## Guiding insight
 
@@ -16,23 +19,64 @@ reordering. No separate server to host, back up, or keep running.
 holds spool identity (brand, material, color, weights); its Aux section
 holds used/remaining weight. So local storage does **not** need to be a
 database — it only needs to be a logbook plus a few rebuildable indices.
-If the SD card ever dies, current inventory can be reconstructed by
-re-scanning the physical spools; only loose history is at risk.
+Even a total storage loss only costs *history*; current inventory can be
+reconstructed by re-scanning the physical spools.
 
-## Data model on SD
+## Storage architecture — three tiers
 
-Source of truth is an **append-only event log**; everything else is a
-projection that can be regenerated from it.
+The SD card's weakness (FAT corruption on brownout, removable-media
+flakiness, cheap-card wear) makes it a poor *primary* store. The board
+already carries better storage. Split by reliability need:
+
+| Tier | Medium | Holds | Why |
+|---|---|---|---|
+| **Counters** | **NVS** (internal flash) | spool-ID counter, log write/rotation pointers, scale cal, WiFi | transactional, power-fail safe; the values whose corruption hurts most |
+| **Primary** | **LittleFS** (internal flash) | append-only event log + derived indices (the working set) | copy-on-write, wear-leveled, brownout-resilient by design; no removable media |
+| **Backup/bulk** | **microSD** (removable) | rolling log mirror, rotated cold archive, `/web/` UI assets, `/config/*` tables | GBs of cheap space; card absent or corrupt loses only backup, never live data |
+
+Source of truth is the **append-only event log on LittleFS**; everything
+else is a projection that can be regenerated from it. The SD mirror lets
+you pull the card (or hit `/export`) for off-device copies, and old log
+segments rotate out to the SD archive when the flash partition fills.
 
 ```
-/log/events.ndjson        # append-only, one JSON object per line
-/index/spools.json        # current state per spool (derived)
-/index/inventory.json     # remaining grams per material (derived)
-/index/reorder.json       # materials below threshold (derived)
+# LittleFS (internal flash) — PRIMARY
+/log/events.ndjson         # append-only, one JSON object per line
+/index/spools.json         # current state per spool (derived)
+/index/inventory.json      # remaining grams per material (derived)
+/index/reorder.json        # materials below threshold (derived)
+
+# NVS namespace "store" — counters
+counter                    # uint32, next spool ID (atomic)
+rotate                     # log rotation bookkeeping
+
+# microSD — BACKUP / BULK / ASSETS
+/backup/events-*.ndjson    # rolling mirror + rotated cold archive
 /web/                      # static UI assets served to the browser
-/config/reorder.json      # per-material reorder thresholds
+/config/reorder.json       # per-material reorder thresholds
 /config/spool-weights.json # empty-spool tare weights by vendor/type
+/config/materials.json     # onboarding material presets
 ```
+
+### Capacity
+
+Sizing a ~4 MB LittleFS partition out of the board's 16 MB flash
+(conservative — leaves room for dual-OTA app slots; could be 8 MB).
+Current-state record ≈ 250 B/spool; history event ≈ 120 B; ~20 events per
+spool lifetime ≈ 2.5 KB/spool with full history.
+
+| Counting… | Per unit | Fits in 4 MB LittleFS |
+|---|---|---|
+| Registered spools, current state only | ~250 B | **~16,000** |
+| Spools with full lifetime history | ~2.5 KB | **~1,600** |
+| Raw history events | ~120 B | **~35,000** |
+| Spool-ID counter (NVS `uint32`) | 4 B | **4.29 billion** (never the limit) |
+
+With SD archiving the working set stays on flash and older history rolls
+to the card (GBs) — pushing the practical ceiling to hundreds of
+thousands of spools, bounded by the card, not the device. Levers for more
+headroom: an 8 MB partition (doubles everything) or a slimmer log line
+(`used_g` is derivable from `gross − tare`).
 
 ### Event log line schema (NDJSON)
 
@@ -142,9 +186,10 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `scale_task.cpp` | unchanged |
 | `display_task.cpp` | minor: show local spool ID; "offline" wording gone |
 | `sync_task.cpp` (679 lines) | **removed** — Spoolman HTTP client deleted |
-| `sd_store.*` | **new** — SD mount, log append, index rebuild, CRC |
-| `web_app.*` | **new/expanded** — from the existing config server into a full app served off SD |
-| `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host) + paths |
+| `store.*` | **new** — storage layer: LittleFS log append + index rebuild + CRC (primary), NVS counters, SD mirror/rotate/archive |
+| `web_app.*` | **new/expanded** — from the existing config server into a full app; assets served off SD |
+| `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host), LittleFS partition + paths |
+| partition table | **new** — carve a ~4 MB LittleFS data partition (see Capacity) |
 
 ## SD interface — RESOLVED
 
@@ -162,22 +207,29 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
 
 ## Risks & mitigations
 
-1. **SD corruption on power loss** — the real risk. Mitigate:
-   append-only (never rewrite the log in place), flush/close per record,
-   per-line CRC to skip a torn tail, and rebuild indices from the log.
-   Dead card loses history only, not inventory (re-scan spools).
-2. ~~**SPI bus contention**~~ — **resolved.** SD is on its own SPI host
-   (see above), so it never touches `gSpiMutex`. No contention with the
-   PN5180 or TFT.
-3. **Backup** — single card, single device. Web `/export` for periodic
-   off-device backup of the log.
+1. ~~**SD corruption on power loss**~~ — **downgraded.** Primary data now
+   lives on LittleFS (internal flash), which is copy-on-write and
+   brownout-resilient; the counter is in transactional NVS. SD holds only
+   backup/archive/assets, so a corrupt or absent card loses backup, not
+   live data — the device runs standalone with no card. Log stays
+   append-only + per-line CRC so a torn tail line is skipped on recovery.
+2. ~~**SPI bus contention**~~ — **resolved.** SD is on its own SPI host,
+   so it never touches `gSpiMutex`. No contention with the PN5180 or TFT.
+3. **Flash wear** — writes happen at *weigh cadence* (occasional), not
+   the 1 Hz reconciliation poll (reads/network only), so LittleFS
+   wear-leveling keeps internal flash well within endurance for years.
+4. **Backup freshness** — single device. SD mirror + web `/export` give
+   off-device copies; mirror lag is the only exposure if flash itself
+   ever failed (rare).
 
 ## Open questions
 
 - Keep station-mode WiFi at all, or SoftAP-only? SoftAP-only is the
   simplest "ecosystem" but loses remote access from the lab network.
-- Local spool-ID allocation: persist the counter in NVS (atomic) vs.
-  derive `max(spool)+1` from the log on boot.
+- SD mirror cadence: write-through on every event vs. periodic batch
+  (trades backup freshness against card wear).
+- LittleFS partition size (4 MB default vs 8 MB) — depends on whether we
+  keep dual-OTA app slots.
 
 ## Explicitly out of scope
 
@@ -191,4 +243,10 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
   elsewhere instead — tare capture lives in the onboarding web form
   (`POST /tare`), and the web-UI address is shown on the idle screen. Not
   worth the 5 pins, XPT2046 driver, panel calibration, and parallel UI.
+- **FRAM (e.g. Qwiic MB85RC256V) — considered, deferred.** Byte-atomic,
+  ~10¹² write endurance, would drop onto the existing I²C/Qwiic bus. But
+  LittleFS + NVS already give power-safe primary storage and a
+  transactional counter with **zero added hardware**, so FRAM buys little
+  for v1. Revisit only if a guaranteed-atomic ring buffer of the last N
+  events (independent of any filesystem) is ever wanted.
 - Any external server or cloud dependency.
