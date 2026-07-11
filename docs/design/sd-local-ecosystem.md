@@ -31,6 +31,7 @@ projection that can be regenerated from it.
 /index/reorder.json       # materials below threshold (derived)
 /web/                      # static UI assets served to the browser
 /config/reorder.json      # per-material reorder thresholds
+/config/spool-weights.json # empty-spool tare weights by vendor/type
 ```
 
 ### Event log line schema (NDJSON)
@@ -66,11 +67,19 @@ material data in a browser; the device writes the tag and logs it.
   infrastructure required. (Builds on the existing captive-portal AP
   code.) Falls back to station mode + `weighstation.local` if a network
   is configured.
+- **Discoverability:** the **idle/at-rest screen shows the address**
+  (SoftAP SSID or `weighstation.local` + IP) so anyone can find the web
+  UI without poking the device — this is why the display is deliberately
+  not touch-driven. A QR code to the URL is a cheap add on 480×320 and
+  lets a phone jump straight in. (Today's Idle screen shows only
+  "Place spool to begin" — extend it.)
 - **Assets from SD:** serve `/web/` static files off the card, so
   updating the UI is just editing files — no reflash.
 - **Routes (sketch):**
   - `GET /` — dashboard: recent activity, low-stock warnings.
   - `GET /onboard` — material-template form for the pending stub tag.
+  - `POST /tare` — read the load cell once; return the current weight to
+    prefill `empty_container_weight` (reference-spool capture).
   - `POST /onboard` — write Main section to tag, append `onboard` event.
   - `GET /spools` — spool list from `spools.json`.
   - `GET /spool/<id>` — per-spool history (filtered log view).
@@ -82,6 +91,35 @@ material data in a browser; the device writes the tag and logs it.
 A small JSON/CSV of common materials (PLA/PETG/ASA presets: temps,
 diameter, densities) so onboarding is pick-a-preset + tweak, not
 type-everything. Lives on SD; editable via the web UI.
+
+### Empty-spool tare (`empty_container_weight`)
+
+Onboarding must establish the bare-spool tare — the firmware already uses
+`empty_container_weight` to compute remaining filament (gross − tare).
+A new full spool can't be weighed empty, so tare comes from one of two
+sources, both surfaced in the onboarding form (no touchscreen involved):
+
+1. **Reference-spool capture.** Keep spare *empty* spools of the common
+   types on hand. During onboarding, place a matching empty on the scale
+   and hit **"Capture tare"** in the web form — the device reads the load
+   cell once and fills `empty_container_weight`. Optionally save it back
+   to the weights table for reuse.
+2. **Cfg-table lookup.** `/config/spool-weights.json` maps vendor/type →
+   empty weight (and optional nominal full weight). Selecting a vendor +
+   material in the form pre-fills the tare, so no reference spool is
+   needed when the type is already known.
+
+```json
+// /config/spool-weights.json
+[
+  {"vendor":"Prusament","type":"1kg PETG","empty_g":201.0},
+  {"vendor":"Generic","type":"1kg cardboard","empty_g":130.0},
+  {"vendor":"Generic","type":"1kg plastic","empty_g":175.0}
+]
+```
+
+Table is user-editable via the web UI; a captured reference tare offers
+to append/update the matching row.
 
 ## Ordering workflow
 
@@ -145,4 +183,12 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
 
 - Physical keyboard for onboarding — rejected. Adds USB-host firmware
   and hardware for worse UX than a browser form.
+- **Resistive touchscreen — left unwired.** The board bundles resistive
+  touch (T_xx pins) + stylus, but it simplifies nothing: the common path
+  is hands-free (place/remove spool), and the only input-heavy task
+  (onboarding) is far better on a browser form than a stylus + on-screen
+  keyboard. The two conveniences touch might have offered are handled
+  elsewhere instead — tare capture lives in the onboarding web form
+  (`POST /tare`), and the web-UI address is shown on the idle screen. Not
+  worth the 5 pins, XPT2046 driver, panel calibration, and parallel UI.
 - Any external server or cloud dependency.
