@@ -49,12 +49,12 @@ no card can still boot, show the address, and accept a restore.
 /log/events.ndjson          # append-only, one JSON object per line
 /index/spools.json          # current state per spool (derived)
 /index/inventory.json       # remaining grams per material (derived)
-/index/reorder.json         # materials below threshold (derived)
+/index/reorder.json         # stock items empty/below threshold (derived)
 /config/vendors.json        # brand list
 /config/materials.json      # material presets (temps, diameter, class/type…)
 /config/spool-profiles.json # spool size → nominal-full + empty tare
 /config/colors.json         # color palette (name → RGBA)
-/config/reorder.json        # per-material reorder thresholds
+/config/stock-items.json    # standard-stock catalog: SKUs to keep + thresholds
 /web/                       # static UI assets (served from primary)
 
 # NVS namespace "store" — counters + device settings
@@ -141,10 +141,13 @@ material data in a browser; the device writes the tag and logs it.
   - `GET /spools` — spool list from `spools.json`.
   - `GET /spool/<id>` — per-spool history (filtered log view).
   - `GET /config` — manage the config tables (vendors, materials, spool
-    profiles, colors, reorder thresholds); writes to primary + mirrors SD.
-  - `GET /reorder` — materials below threshold; export CSV / printable.
-  - `GET /export` — write/download a full backup (log + config).
+    profiles, colors, stock items); writes to primary + mirrors SD.
+  - `GET /reorder` — stock items empty/below threshold; CSV + `mailto:`
+    (optional SMTP send).
+  - `GET /export` — download a full backup bundle (log + config + manifest).
   - `POST /restore` — restore from an SD backup (confirm-guarded).
+  - `POST /import` — restore from a host-uploaded backup bundle (confirm-
+    guarded); the no-card route.
 
 ### Config catalog — onboard by picking, not typing
 
@@ -239,6 +242,29 @@ Accepted tradeoff: on a chronically full card the oldest point-in-time
 history eventually ages out — expected for finite storage, and current
 inventory is always recoverable from the tags + primary flash regardless.
 
+### Off-device backup — download to the host machine
+
+A third, independent copy: the web client can **download a full backup to
+the browser's machine** (`GET /export`). It's the strongest copy —
+off-device, air-gapped from whatever fails the board or the card, and
+needs no SD and no mail credentials.
+
+- **Same bundle as an SD snapshot** — a single file (zip) containing
+  `events.ndjson`, `config/*`, and `manifest.json` (version + CRCs). A
+  host-saved file is byte-identical to an SD snapshot and restores through
+  the exact same verified path.
+- **Round-trip via upload** — `POST /import` accepts an uploaded bundle,
+  verifies it against its manifest CRCs, and restores (confirm-guarded).
+  Works even with no SD present.
+- **Config cloning without moving the card** — download a bundle here,
+  upload it on a second station; it inherits vendors/materials/profiles/
+  colors/stock-items.
+- Purely manual (a "Download backup" button on the dashboard); an
+  optional periodic reminder can nudge, but no credentials are stored.
+
+Net: three independent copies — **primary (flash), SD (auto snapshots),
+host (manual, air-gapped)**.
+
 ### Restore paths
 
 - **Auto-bootstrap:** on boot, if primary is empty (fresh/erased board)
@@ -246,21 +272,58 @@ inventory is always recoverable from the tags + primary flash regardless.
 - **Manual restore (`POST /restore`):** replay the backup log to rebuild
   the primary log, regenerate indices, and import config. **Confirm-
   guarded** so it can't silently overwrite good primary data.
-- **Import/export:** `/export` writes a full backup (also downloadable);
-  restoring onto a second unit is how you **clone config to another
-  station**.
+- **Upload restore (`POST /import`):** restore from a host-uploaded
+  bundle (see above) — the no-card recovery route.
 - **No-card / blank-flash floor:** the firmware-embedded recovery page
-  still loads, shows the address, and accepts a restore or fresh setup.
+  still loads, shows the address, and accepts a restore/upload or fresh
+  setup.
 
 ## Ordering workflow
 
-Spoolman never did ordering, so this is net-new either way.
+Spoolman never did ordering, so this is net-new either way. Manually
+triggered from the web UI, review-then-send.
 
-- Maintain `inventory.json` (remaining grams per material) from the log.
-- `config/reorder.json` holds a per-material low-water threshold.
-- When a material drops below threshold, it lands on the `/reorder`
-  page, which produces a printable/CSV order list (vendor integration
-  optional, later).
+### "Standard inventory" = the stock catalog
+
+There is **no standard-inventory flag on the tag or per spool** — nor
+should there be. "We keep this in stock" is a property of a *product
+line/SKU*, not of an individual spool (a line you're **out of** has zero
+spools to carry a flag). So it lives in a config table; **presence in the
+table means it's standard stock.**
+
+```json
+// /config/stock-items.json
+[
+  {"vendor":"Prusament","material":"PETG","color":"Prusa Orange",
+   "diameter":1.75,"spool_g":1000,
+   "min_spools":2,                 // threshold; or "min_grams"
+   "sku":"PRM-PETG-ORG-1000","gtin":"859...","pack_qty":1}
+]
+```
+
+Spools that aren't in the catalog (a one-off someone brought in) never
+generate reorder noise.
+
+### Flow
+
+1. **Roll-up** on-hand per stock item from the inventory index — match
+   active spools by identity (vendor + material + color [+ diameter]) and
+   sum remaining grams / count spools.
+2. **Flag** each item that is **empty** or **below its threshold**
+   (`min_spools`/`min_grams`; global default if unset).
+3. **Review** the shortfall list on `GET /reorder`.
+4. **Send** the reviewed list as a CSV.
+
+### Sending the list
+
+- **Download (default):** `/reorder` offers a CSV download plus a
+  prefilled `mailto:` to the order address — no secrets on the device.
+- **Email via SMTP (optional):** if SMTP host/port/user/app-password are
+  configured, the device mails the CSV directly. Off by default so a lab
+  device needn't hold mail credentials.
+
+Vendor/API order integration is explicitly out of scope for now — the
+human places the order from the CSV.
 
 ## Firmware impact
 
@@ -274,7 +337,7 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `display_task.cpp` | minor: show local spool ID; "offline" wording gone |
 | `sync_task.cpp` (679 lines) | **removed** — Spoolman HTTP client deleted |
 | `store.*` | **new** — storage layer: LittleFS log/indices/config (primary) + CRC, NVS counters, SD mirror/rotate/archive, backup/restore |
-| `web_app.*` | **new/expanded** — full app (dashboard, onboarding, config CRUD, restore); `/web/` assets served off LittleFS |
+| `web_app.*` | **new/expanded** — full app (dashboard, onboarding, config CRUD, reorder/CSV, backup export/import); `/web/` assets served off LittleFS |
 | recovery page | **new** — minimal UI embedded in firmware for the no-card / blank-flash bootstrap + restore floor |
 | `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host), LittleFS partition + paths |
 | partition table | **new** — carve a ~4 MB LittleFS data partition (see Capacity) |
@@ -319,6 +382,8 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
   to keep — trades backup freshness/depth against card wear and space.
 - LittleFS partition size (4 MB default vs 8 MB) — depends on whether we
   keep dual-OTA app slots.
+- Reorder email: download + `mailto:` only, or also ship optional SMTP
+  send (adds mail-credential storage in config/NVS)?
 
 ## Explicitly out of scope
 
