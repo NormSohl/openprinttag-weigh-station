@@ -68,9 +68,11 @@ lip, adds 10 mm of wall to house the soldered header). The design now
 **keeps the header** rather than desoldering it. Follow-ups when
 convenient:
 
-- The header stays soldered, so the `wire_notch` / hand-solder assumption
-  is superseded; the notch now just serves as a back wire exit. Revisit
-  whether to keep it or add a proper back cover / cable relief.
+- Header stays soldered: the wire notch is **removed**; wires exit the
+  open back into the porch cavity.
+- A **microSD access slot** was added in the top wall (card exits the top;
+  socket on the PCB back). `sd_slot_offset` still needs setting once the
+  board's mounting rotation is fixed — the socket is off-centre.
 - Screws pass through 15 mm of plate now — use M3×20+ (noted in the SCAD
   header).
 - Not rendered here (OpenSCAD unavailable in this env) — **verify in

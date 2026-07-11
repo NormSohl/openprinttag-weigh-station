@@ -6,6 +6,7 @@
 //   - Whole object +10 mm tall (plate_t 5->15); the pocket is deepened to
 //     match so the board's pin header seats inside the taller walls — no
 //     slot cut, header stays soldered on the board.
+//   - Wire notch removed; added a microSD access slot in a side wall.
 // =============================================================
 // Full-width faceplate for the 45° porch face (140 mm wide).
 // Mounts with 4× M3 screws — all four are NEW holes; use this
@@ -24,7 +25,9 @@
 // The TFT PCB drops into a deep rear pocket; the front bezel window
 // exposes the active area behind a thin 1.8 mm bezel lip.  The pocket is
 // deep enough (13.2 mm) to house the board's soldered pin header inside
-// the walls — no slot cut.  Wires exit the open back / the low-Y notch.
+// the walls — no slot cut.  Wires exit the open back into the porch
+// cavity.  A microSD access slot in one side wall lets the card be
+// inserted/removed while mounted (the open back faces the porch wall).
 //
 // ── Coordinate frame (plate lies flat on print bed) ────────────
 //   X  = face width  (horizontal when mounted on porch)
@@ -70,11 +73,45 @@ pocket_y   = tft_pcb_y + pocket_clr;     // 57.74 mm
 pocket_d   = 13.2;  // depth from back face — houses PCB + header;
                     // 1.8 mm bezel lip remains (plate_t − pocket_d)
 
-// ── Wire exit notch (low-Y edge) ───────────────────────────────
-wire_notch_x = 24;   // width — clears ~8 leads at 3 mm pitch
-wire_notch_y = 10;   // inward reach from plate edge
+// ── microSD access slot ────────────────────────────────────────
+// Aligns with the board's microSD socket mouth so the card can be
+// inserted/removed while mounted (the open back faces the porch wall and
+// is inaccessible). Cuts through the TOP wall at the card's height.
+// CONFIRMED: the card exits the TOP edge of the display, and the socket
+//   is on the BACK of the PCB — so its mouth sits near the open back of
+//   this tray (see sd_slot_z).
+// STILL TO SET: sd_slot_offset — the socket is off-centre (upper-left in
+//   the board photo, ~20–30 mm from centre). Set the value AND sign once
+//   the board's mounting rotation in the pocket is fixed.
+sd_slot_edge   = "top";   // "top"(+Y) | "bottom"(-Y) | "left"(-X) | "right"(+X)
+sd_slot_offset = 0;       // shift along the top edge from centre (mm) — SET ME
+sd_slot_w      = 13;      // slot width  (microSD ~11 mm + clearance)
+sd_slot_h      = 3;       // slot height (card + socket-lip clearance)
+// Card-mouth height ≈ pocket floor (13.2) − PCB (1.6) − socket standoff
+// (~1.1) ≈ 10.5 mm above the back face.  Verify exact standoff on board.
+sd_slot_z      = 10.5;
 
 // =============================================================
+// microSD access slot: a box cut through one perimeter wall, spanning
+// from just inside the pocket cavity to just outside the plate edge, at
+// the card-mouth height (sd_slot_z).
+module sd_slot() {
+    vert = (sd_slot_edge == "top" || sd_slot_edge == "bottom");
+    sgn  = (sd_slot_edge == "top" || sd_slot_edge == "right") ? 1 : -1;
+
+    if (vert) {
+        inner = pocket_y / 2 - 1;      // start inside the pocket
+        outer = plate_y / 2 + 1;       // end outside the plate edge
+        translate([sd_slot_offset, sgn * (inner + outer) / 2, sd_slot_z])
+            cube([sd_slot_w, outer - inner, sd_slot_h], center = true);
+    } else {
+        inner = pocket_x / 2 - 1;
+        outer = plate_x / 2 + 1;
+        translate([sgn * (inner + outer) / 2, sd_slot_offset, sd_slot_z])
+            cube([outer - inner, sd_slot_w, sd_slot_h], center = true);
+    }
+}
+
 module adapter() {
     difference() {
 
@@ -95,12 +132,10 @@ module adapter() {
                 offset(0.5) offset(-0.5)
                     square([win_x, win_y], center = true);
 
-        // ── Wire exit notch at low-Y (down-slope) edge ─────────
-        translate([0,
-                   -(plate_y / 2 - wire_notch_y / 2 + eps),
-                   -eps])
-            cube([wire_notch_x, wire_notch_y + 2 * eps, pocket_d + 2 * eps],
-                 center = true);
+        // ── microSD access slot through one perimeter wall ─────
+        // Spans from just inside the pocket to just outside the plate
+        // edge, at the card-mouth height, so the card passes through.
+        sd_slot();
 
         // ── 4× M3 clearance holes — symmetric, 10 mm from edges ─
         // Plain through-bores; use plate as a drill template.
