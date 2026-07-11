@@ -222,6 +222,23 @@ dailies/weeklies) and prune older; SD has GBs, so the cap just prevents
 unbounded growth. Snapshot cadence is tunable (after onboarding events,
 on card insert, or periodic — see open questions).
 
+**Space reclaim (card full):** before staging a new snapshot, if the card
+lacks room, **delete the oldest `history/` snapshot first** and retry;
+repeat oldest-first until it fits. Guardrails:
+
+- Only dated `history/` files are evictable — **never** the current
+  `events.ndjson`, `events.staging`, `manifest.json`, or `/backup/config/`.
+- Evict down to (but not past) a floor of the most-recent few snapshots
+  unless space truly demands going lower.
+- If even evicting all prunable history won't fit the new snapshot, **skip
+  the backup gracefully** — surface a "backup card full" warning on the
+  dashboard/idle screen; primary data on flash is untouched, so nothing
+  live is lost, only backup freshness.
+
+Accepted tradeoff: on a chronically full card the oldest point-in-time
+history eventually ages out — expected for finite storage, and current
+inventory is always recoverable from the tags + primary flash regardless.
+
 ### Restore paths
 
 - **Auto-bootstrap:** on boot, if primary is empty (fresh/erased board)
