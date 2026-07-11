@@ -10,7 +10,7 @@ Related files: [`weighstation.scad`](./weighstation.scad),
 | # | Part | Severity | Status |
 |---|------|----------|--------|
 | 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | Open, deferred; workaround applied to built unit |
-| 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | Open, deferred |
+| 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed** — SCAD updated |
 
 ---
 
@@ -61,11 +61,17 @@ plate thickness / perimeter walls grow by 10 mm (`plate_t` 5→15) so the
 adapter becomes a deeper tray whose raised walls house the board's pin
 header. This **eliminates the slot cut** for the header pins.
 
-> Design note: the current file assumes the header is **desoldered** and
-> wires hand-soldered (hence the `wire_notch`). Change B shifts toward
-> **keeping the header** and giving it depth instead. Revisit the
-> desolder-vs-keep-header assumption and the wire-exit approach together
-> when implementing — deepening the pocket may make the wire notch
-> unnecessary.
+**Status:** **Fixed** — applied to `porch-tft-adapter.scad`:
+`win_x` 85→86, `win_y` 55→56; `pocket_clr` 0.4→1.4 (pocket grown 0.5 mm/
+side); `plate_t` 5→15 with `pocket_d` 3.2→13.2 (keeps the 1.8 mm bezel
+lip, adds 10 mm of wall to house the soldered header). The design now
+**keeps the header** rather than desoldering it. Follow-ups when
+convenient:
 
-**Status:** Open, deferred.
+- The header stays soldered, so the `wire_notch` / hand-solder assumption
+  is superseded; the notch now just serves as a back wire exit. Revisit
+  whether to keep it or add a proper back cover / cable relief.
+- Screws pass through 15 mm of plate now — use M3×20+ (noted in the SCAD
+  header).
+- Not rendered here (OpenSCAD unavailable in this env) — **verify in
+  OpenSCAD / a slicer before printing.**

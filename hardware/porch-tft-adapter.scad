@@ -1,11 +1,11 @@
 // =============================================================
 // porch-tft-adapter.scad — ILI9488 3.5" TFT bezel / cradle plate
 // =============================================================
-// KNOWN ISSUES (deferred) — see printed-parts-issues.md #2:
-//   - enlarge 0.5 mm PER SIDE, opening + surrounding shelf equally
-//     (win_x 85->86, win_y 55->56; grow pocket the same 0.5 mm/side).
-//   - +10 mm to the WHOLE object (plate_t 5->15) — taller walls seat the
-//     pin header, avoiding a slot cut. Not yet applied.
+// Rev — issue #2 applied (printed-parts-issues.md):
+//   - Window + surrounding pocket enlarged 0.5 mm PER SIDE.
+//   - Whole object +10 mm tall (plate_t 5->15); the pocket is deepened to
+//     match so the board's pin header seats inside the taller walls — no
+//     slot cut, header stays soldered on the board.
 // =============================================================
 // Full-width faceplate for the 45° porch face (140 mm wide).
 // Mounts with 4× M3 screws — all four are NEW holes; use this
@@ -15,15 +15,16 @@
 //   2. Mark all four bore centres with an awl.
 //   3. Remove plate and drill Ø3.4 mm through the porch wall.
 //   4. Fasten with M3 screws + hex/nyloc nuts inside the cavity.
+//      Screws now pass through a 15 mm-thick plate — use M3×20+.
 //
 // Holes are symmetric, 10 mm in from every edge:
 //   X = ±60 mm  (140/2 − 10),  Y = ±23.5 mm  (67/2 − 10).
 // Plain through-bores — NOT countersunk (pan/button-head screws).
 //
-// The TFT PCB sits in a shallow rear pocket; the front bezel window
-// exposes the active area.  No header pocket — header desoldered;
-// wires hand-soldered to PCB pads and exit through a notch at the
-// low-Y (down-slope) edge.
+// The TFT PCB drops into a deep rear pocket; the front bezel window
+// exposes the active area behind a thin 1.8 mm bezel lip.  The pocket is
+// deep enough (13.2 mm) to house the board's soldered pin header inside
+// the walls — no slot cut.  Wires exit the open back / the low-Y notch.
 //
 // ── Coordinate frame (plate lies flat on print bed) ────────────
 //   X  = face width  (horizontal when mounted on porch)
@@ -42,12 +43,13 @@ eps = 0.01;
 // ── Plate dimensions ───────────────────────────────────────────
 plate_x  = 140;   // face width (spans full porch face)
 plate_y  = 67;    // slope extent
-plate_t  = 5.0;   // total thickness
+plate_t  = 15.0;  // total thickness — deep tray; walls house the header
 corner_r = 4;
 
 // ── Display opening (front bezel window) ────────────────────────
-win_x = 85;   // opening width
-win_y = 55;   // opening height
+// Enlarged 0.5 mm per side (was 85×55).
+win_x = 86;   // opening width
+win_y = 56;   // opening height
 
 // ── Mounting holes ─────────────────────────────────────────────
 // 10 mm in from each edge, symmetric about plate centre.
@@ -60,11 +62,13 @@ m3_cl_d     = 3.4;   // clearance bore Ø (plain through-hole, no countersink)
 tft_pcb_x = 98.00;   // PCB width  (X, face-width direction)
 tft_pcb_y = 56.34;   // PCB height (Y, slope direction)
 
-// PCB cradle pocket: PCB + 0.4 mm assembly clearance; 3.2 mm deep
-pocket_clr = 0.4;
-pocket_x   = tft_pcb_x + pocket_clr;     // 98.4 mm  (±49.2 from centre)
-pocket_y   = tft_pcb_y + pocket_clr;     // 56.74 mm
-pocket_d   = 3.2;   // depth from back face (1.8 mm solid lip remains)
+// PCB cradle pocket: PCB + assembly clearance, grown 0.5 mm/side with the
+// window (pocket_clr 0.4 → 1.4). Deep enough to house the pin header.
+pocket_clr = 1.4;
+pocket_x   = tft_pcb_x + pocket_clr;     // 99.4 mm  (±49.7 from centre)
+pocket_y   = tft_pcb_y + pocket_clr;     // 57.74 mm
+pocket_d   = 13.2;  // depth from back face — houses PCB + header;
+                    // 1.8 mm bezel lip remains (plate_t − pocket_d)
 
 // ── Wire exit notch (low-Y edge) ───────────────────────────────
 wire_notch_x = 24;   // width — clears ~8 leads at 3 mm pitch
