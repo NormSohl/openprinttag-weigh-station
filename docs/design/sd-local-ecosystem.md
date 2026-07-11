@@ -62,10 +62,12 @@ counter                     # uint32, next spool ID (atomic)
 rotate                      # log rotation bookkeeping
 # (+ scale cal, WiFi, hostname/SoftAP as today)
 
-# microSD — BACKUP ONLY (mirror + transport; never SD-only)
-/backup/events-*.ndjson     # rolling log mirror + rotated cold archive
-/backup/config/             # mirror of /config/*
-/backup/manifest.json       # backup version + checksums for restore
+# microSD — BACKUP ONLY (verified snapshots + transport; never SD-only)
+/backup/events.ndjson       # current good backup (promoted by rename)
+/backup/events.staging      # in-progress write; promoted only after verify
+/backup/history/            # dated point-in-time snapshots (retained)
+/backup/config/             # config backup (same discipline)
+/backup/manifest.json       # current generation + CRCs for restore/recovery
 ```
 
 ### Capacity
@@ -188,9 +190,40 @@ new full spool can't be weighed empty, so onboarding gets it two ways
 
 SD is pure backup, and backup is only useful with a restore path.
 
-- **Mirror (primary → SD):** on config edits and log appends, mirror to
-  `/backup/` on SD. Cadence is tunable (write-through vs periodic batch —
-  see open questions). `manifest.json` carries version + checksums.
+### Write discipline — never overwrite a good backup in place
+
+Each backup is a **fresh, verified file promoted by rename**; the previous
+good copy is retained as dated history. So an intact backup exists at
+every instant, even if power is lost mid-write. Crash-safe sequence:
+
+1. **Stage.** Write the snapshot to `backup/events.staging`; flush + close
+   (commit FAT metadata). The live `backup/events.ndjson` is untouched.
+2. **Verify.** Recompute a CRC32 over the staged file and compare to the
+   hash taken from the primary source during the write (plus re-check
+   per-line CRCs + record count). On mismatch: delete staging and abort —
+   the current backup still stands.
+3. **Archive the old.** Rename the current good backup
+   `events.ndjson → history/events-<UTC-timestamp>.ndjson`.
+4. **Promote.** Rename `events.staging → events.ndjson`.
+5. **Record + prune.** Update `manifest.json` (current generation,
+   timestamp, CRC, record count) and prune history per retention policy.
+
+`manifest.json` names the current-good file + its CRC, which closes the
+brief window between steps 3–4 where `events.ndjson` is momentarily
+absent: on boot, if `events.ndjson` is missing or fails its manifest CRC,
+recovery falls back to the newest `history/` file whose CRC matches its
+manifest entry. Rename is a tiny directory-entry op (not a long data
+write), so its corruption window is negligible vs. an in-place rewrite.
+
+The same scheme covers `/backup/config/`. Dated history gives **free
+point-in-time rollback** — you can restore any snapshot, not just the
+latest. **Retention:** keep the last N snapshots (or GFS-style
+dailies/weeklies) and prune older; SD has GBs, so the cap just prevents
+unbounded growth. Snapshot cadence is tunable (after onboarding events,
+on card insert, or periodic — see open questions).
+
+### Restore paths
+
 - **Auto-bootstrap:** on boot, if primary is empty (fresh/erased board)
   and an SD backup exists, offer to restore from it.
 - **Manual restore (`POST /restore`):** replay the backup log to rebuild
@@ -264,8 +297,9 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
 
 - Keep station-mode WiFi at all, or SoftAP-only? SoftAP-only is the
   simplest "ecosystem" but loses remote access from the lab network.
-- SD mirror cadence: write-through on every event vs. periodic batch
-  (trades backup freshness against card wear).
+- Snapshot cadence + retention: when to write a verified snapshot (after
+  onboarding, on card insert, periodic) and how many dated history files
+  to keep — trades backup freshness/depth against card wear and space.
 - LittleFS partition size (4 MB default vs 8 MB) — depends on whether we
   keep dual-OTA app slots.
 
