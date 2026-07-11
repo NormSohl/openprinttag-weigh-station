@@ -106,7 +106,21 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `sync_task.cpp` (679 lines) | **removed** — Spoolman HTTP client deleted |
 | `sd_store.*` | **new** — SD mount, log append, index rebuild, CRC |
 | `web_app.*` | **new/expanded** — from the existing config server into a full app served off SD |
-| `config.h` | drop `SPOOLMAN_BASE_URL`; add SD CS pin + paths |
+| `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host) + paths |
+
+## SD interface — RESOLVED
+
+The display is a Hosyond 3.5" ILI9488 (`3.5'' TFT SPI 480X320 V1.0`). Its
+microSD lines (`SD_CS`/`SD_MOSI`/`SD_MISO`/`SD_SCK`) are on a **separate
+header** and are **not** bonded on-PCB to the display SPI bus — so the SD
+topology is a free wiring choice, not a constraint. See
+[`docs/datasheets/display-hosyond-ili9488.md`](../datasheets/display-hosyond-ili9488.md).
+
+**Decision: give the SD its own SPI bus.** Wire the four SD pins to the
+ESP32-S3's second SPI host (FSPI/HSPI), separate from the shared
+PN5180 + TFT bus. This keeps SD I/O (frequent, during logging)
+independent of NFC polling and display refresh — no `gSpiMutex` traffic
+for storage at all. Costs 4 GPIOs, which the S3 has spare.
 
 ## Risks & mitigations
 
@@ -114,18 +128,14 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
    append-only (never rewrite the log in place), flush/close per record,
    per-line CRC to skip a torn tail, and rebuild indices from the log.
    Dead card loses history only, not inventory (re-scan spools).
-2. **SPI bus contention** — the display module's SD reader almost
-   certainly shares the TFT SPI bus (separate CS). That makes SD a
-   *third* client alongside PN5180 and TFT on `gSpiMutex`. Manageable,
-   but confirm the module's SD/TFT pinout before wiring. **(BLOCKED on
-   module part number — user to provide.)**
+2. ~~**SPI bus contention**~~ — **resolved.** SD is on its own SPI host
+   (see above), so it never touches `gSpiMutex`. No contention with the
+   PN5180 or TFT.
 3. **Backup** — single card, single device. Web `/export` for periodic
    off-device backup of the log.
 
 ## Open questions
 
-- Display module exact SD pinout / shared-vs-separate SPI — **need part
-  number** before finalizing `config.h` and the mutex path.
 - Keep station-mode WiFi at all, or SoftAP-only? SoftAP-only is the
   simplest "ecosystem" but loses remote access from the lab network.
 - Local spool-ID allocation: persist the counter in NVS (atomic) vs.
