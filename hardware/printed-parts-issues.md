@@ -48,14 +48,18 @@ fix into the SCAD on the next revision so we don't re-cut it by hand.
 
 **File:** `porch-tft-adapter.scad`.
 
-**Change A — window ~0.5 mm larger.** The display opening is a touch
-tight; enlarge it by ~0.5 mm for clearance. (Current `win_x` = 85,
-`win_y` = 55.) *To confirm when implementing: 0.5 mm total or per side.*
+**Change A — enlarge 0.5 mm PER SIDE, opening + surrounding shelf
+equally.** The 0.5 mm is per side (i.e. +1.0 mm on each overall
+dimension), applied equally to the bezel window opening **and** the shelf
+/ pocket recess around it — so the lip width is unchanged, the whole
+recessed area just grows. In the SCAD: `win_x` 85→86, `win_y` 55→56, and
+grow the `pocket_x`/`pocket_y` recess by the same 0.5 mm/side.
 
-**Change B — pocket ~10 mm deeper to clear the header pins.** The board's
-pin header currently forces cutting a slot for the pins. Increasing the
-pocket depth by ~10 mm lets the header seat fully inside the adapter,
-**eliminating the slot cut**.
+**Change B — +10 mm to the WHOLE object (taller walls), to seat the
+header.** The 10 mm applies to the entire part, not just the pocket floor:
+plate thickness / perimeter walls grow by 10 mm (`plate_t` 5→15) so the
+adapter becomes a deeper tray whose raised walls house the board's pin
+header. This **eliminates the slot cut** for the header pins.
 
 > Design note: the current file assumes the header is **desoldered** and
 > wires hand-soldered (hence the `wire_notch`). Change B shifts toward
