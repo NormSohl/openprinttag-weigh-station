@@ -45,7 +45,8 @@ with 2.5mm margin per side. Base footprint 200×140×60mm.
 ## Fasteners
 
 See `fastener-schedule.md` for the complete screw/insert/washer list
-(15 heat-set inserts, 15 screws, 15 washers).
+(15 heat-set inserts, 19 screws, 19 washers, 4 nuts — incl. 4× M3×25 +
+nyloc for the display adapter).
 
 ## OPT NFC Tags
 
