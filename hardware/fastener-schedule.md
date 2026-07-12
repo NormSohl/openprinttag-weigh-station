@@ -53,9 +53,11 @@ go under every screw head bearing on plastic.
 ## Notes
 
 - **Overload stop screw (M3×50):** travels from below the base underside
-  (~42mm) before reaching the insert mouth — a shorter screw will not
-  engage the insert at all. Confirmed against current `lc_boss_h` (46.3mm)
-  and post geometry.
+  (~45mm) before reaching the insert mouth — a shorter screw will not
+  engage the insert at all. `plat_gap` was raised 2→5 (platform/adapter
+  clearance), so `lc_boss_h` grew 46.3→49.3mm and the post is ~3mm taller;
+  M3×50 still engages (~5mm) but confirm on the printed part — step up to
+  M3×55 if engagement is marginal.
 - **Load cell screw (M5×30):** stack is platform (8mm) + load cell bar
   (12.7mm) = 20.7mm of clearance before the insert. M5×30 gives ~4–9mm of
   thread engagement depending on insert seating depth.

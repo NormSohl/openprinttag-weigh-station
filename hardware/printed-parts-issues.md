@@ -11,6 +11,7 @@ Related files: [`weighstation.scad`](./weighstation.scad),
 |---|------|----------|--------|
 | 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | **Fixed** — SCAD reinforced (verify + tune) |
 | 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed** — SCAD updated |
+| 3 | TFT adapter top edge fouls the overhanging platform | High (blocks weighing) | **Fixed** — plate_y 67→63 + plat_gap 2→5 (~3.1mm) |
 
 ---
 

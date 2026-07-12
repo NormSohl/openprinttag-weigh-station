@@ -6,6 +6,8 @@
 //      +X buttress capped below the bar so the beam still flexes).
 //   Porch UI reworked: OLED/button/LED removed; single TFT opening + 4
 //   adapter screw holes added (matches porch-tft-adapter.scad).
+//   plat_gap 2->5: raises the platform so it clears the adapter's top
+//   edge (with plate_y=63) — boss grows ~3mm (see fastener note).
 //   VERIFY the reinforcement in a render and tune to the physical fix.
 // =============================================================
 // Parts: set `part` below (or via -D part="...") and export STL.
@@ -89,7 +91,9 @@ lc_w    = 12.7;
 lc_h    = 12.7;
 lc_hole_from_end = 7.5;  // both ends, M5
 spacer_h        = 3;    // flex clearance both ends
-plat_gap        = 2;    // platform floats this far above the base rim
+plat_gap        = 5;    // platform floats this far above the base rim
+                        // (raised 2->5 so it clears the TFT adapter's top
+                        //  edge; pairs with plate_y=63 -> ~3.1mm clearance)
 // Boss height is DERIVED so the platform always clears the shell:
 // raise the bar high enough that (boss + bar + spacer) tops the rim.
 // (was a fixed 14mm — which buried the platform inside the box)
@@ -130,7 +134,7 @@ ant_pocket_dy = ant_clear_r + ant_w/2;      // pocket center offset along radius
 usb_w = 12;  usb_h = 7;            // rear cutout for USB-C breakout module
 // The SSD1306 OLED, panel button, and status LED are REMOVED — replaced
 // by a single 3.5in ILI9488 TFT on a printed adapter (porch-tft-adapter.scad).
-// The adapter is 140 (face-width V) x 67 (up-slope U), centred on the
+// The adapter is 140 (face-width V) x 63 (up-slope U), centred on the
 // porch face and fastened with 4x M3.
 // 45-degree UI porch: a wedge extending forward past the platform edge,
 // carrying the display on its sloped face, angled at the user.

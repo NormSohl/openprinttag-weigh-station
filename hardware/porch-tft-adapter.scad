@@ -7,6 +7,9 @@
 //     match so the board's pin header seats inside the taller walls — no
 //     slot cut, header stays soldered on the board.
 //   - Wire notch removed; added a microSD access slot in a side wall.
+//   - plate_y trimmed 67->63 so the top edge clears the overhanging
+//     weighing platform (paired with plat_gap 2->5 in weighstation.scad;
+//     ~3.1 mm clearance). Screw pattern decoupled from the outline.
 // =============================================================
 // Full-width faceplate for the 45° porch face (140 mm wide).
 // Mounts with 4× M3 screws — all four are NEW holes; use this
@@ -18,8 +21,9 @@
 //   4. Fasten with M3 screws + hex/nyloc nuts inside the cavity.
 //      Screws now pass through a 15 mm-thick plate — use M3×20+.
 //
-// Holes are symmetric, 10 mm in from every edge:
-//   X = ±60 mm  (140/2 − 10),  Y = ±23.5 mm  (67/2 − 10).
+// Screw pattern matches the porch holes in weighstation.scad:
+//   X = ±60 mm (face width),  Y = ±23.5 mm (up-slope) — FIXED, so the
+//   plate outline (plate_y) can be trimmed without moving the screws.
 // Plain through-bores — NOT countersunk (pan/button-head screws).
 //
 // The TFT PCB drops into a deep rear pocket; the front bezel window
@@ -45,7 +49,8 @@ eps = 0.01;
 
 // ── Plate dimensions ───────────────────────────────────────────
 plate_x  = 140;   // face width (spans full porch face)
-plate_y  = 67;    // slope extent
+plate_y  = 63;    // slope extent — trimmed from 67 so the top edge clears
+                  // the overhanging weighing platform (see interference note)
 plate_t  = 15.0;  // total thickness — deep tray; walls house the header
 corner_r = 4;
 
@@ -55,11 +60,12 @@ win_x = 86;   // opening width
 win_y = 56;   // opening height
 
 // ── Mounting holes ─────────────────────────────────────────────
-// 10 mm in from each edge, symmetric about plate centre.
-hole_inset  = 10;
-hole_x_half = plate_x / 2 - hole_inset;   // = 60.0 mm
-hole_y_half = plate_y / 2 - hole_inset;   // = 23.5 mm
-m3_cl_d     = 3.4;   // clearance bore Ø (plain through-hole, no countersink)
+// FIXED screw pattern — must match the porch holes in weighstation.scad,
+// so it is NOT derived from the plate outline (plate_y can be trimmed
+// freely). At plate_y=63 the Y holes sit 8 mm from the top/bottom edge.
+hole_x_half = 60;     // ±60 mm along face width (V)
+hole_y_half = 23.5;   // ±23.5 mm along slope    (U)
+m3_cl_d     = 3.4;    // clearance bore Ø (plain through-hole, no countersink)
 
 // ── ILI9488 TFT — MSP3520-type PCB, landscape ──────────────────
 tft_pcb_x = 98.00;   // PCB width  (X, face-width direction)
