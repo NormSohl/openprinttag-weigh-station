@@ -28,16 +28,21 @@ reading (non-linear, hysteresis, drift).
 **Interim workaround:** the pillar cross-section was increased on the
 built unit to stiffen it.
 
-**Fix applied to SCAD:** the boss is enlarged (extended rearward −X by
-`lc_boss_ext`, widened ±Y by `lc_boss_wide`) and gains a rear triangular
-buttress (`lc_boss_butt`) down to the floor. All added material is on the
-−X / ±Y sides — the +X edge is held fixed so nothing encroaches on the
-load cell's free travel. Only the strain-gauge beam should deflect.
+**Fix applied to SCAD:** the boss's fore-aft (X) footprint — the direction
+it bends — is widened on both sides: a full-height extension rearward
+(`lc_boss_ext`, −X) and wider ±Y (`lc_boss_wide`), plus a forward
+(`lc_boss_fwd`, +X) buttress toward the free end that stops `lc_beam_gap`
+(5 mm) below the bar so the beam still deflects freely. Fore-aft base
+grows from 18 mm to ~43 mm. Only the strain-gauge beam should move.
+
+> The first attempt used a `hull()` of thin boxes as a rear buttress —
+> that rendered as a degenerate zero-thickness sheet ("polygon with no
+> sides", Volumes: 2). Replaced with the solid +X buttress above.
 
 **Follow-ups:**
-- Tune `lc_boss_ext` / `lc_boss_wide` / `lc_boss_butt` to match the
-  physical fix; **verify in a render** (no OpenSCAD in this env) that the
-  buttress clears nearby floor features.
+- Tune `lc_boss_ext` / `lc_boss_fwd` / `lc_boss_wide` to match the
+  physical fix; **verify in a render** — expect **Volumes: 1** and the +X
+  buttress clearing the overload-stop post (~16 mm gap).
 - Re-check under a full-scale test weight: no visible boss deflection.
 - Cross-ref the load-cell install guide
   ([`docs/datasheets/load-cell-install-guide.md`](../docs/datasheets/load-cell-install-guide.md))

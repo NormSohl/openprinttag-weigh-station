@@ -2,7 +2,8 @@
 // OpenPrintTag Weigh Station — parametric enclosure
 // =============================================================
 // Rev — see printed-parts-issues.md:
-//   #1 load-cell fixed-end boss reinforced (enlarged + rear buttress).
+//   #1 load-cell fixed-end boss reinforced (fore-aft footprint widened;
+//      +X buttress capped below the bar so the beam still flexes).
 //   Porch UI reworked: OLED/button/LED removed; single TFT opening + 4
 //   adapter screw holes added (matches porch-tft-adapter.scad).
 //   VERIFY the reinforcement in a render and tune to the physical fix.
@@ -396,30 +397,32 @@ module base() {
   // on the platform, threading into the insert here. Cradle walls prevent
   // rotation about the single bolt.
   // pillar reinforcement (issue #1): this boss flexed under scale load.
-  // Enlarge it (extend rearward -X, widen ±Y) and add a rear triangular
-  // buttress down to the floor. All added material is on -X / ±Y — the +X
-  // edge is held fixed at lc_x0+14 so nothing encroaches on the load
-  // cell's free travel (the bar cantilevers +X above z=lc_boss_h).
-  // VERIFY in a render and tune to match the physical fix.
-  lc_boss_ext  = 10;   // rearward (-X) base extension
+  // Bulk up the fore-aft (X) footprint — the direction it bends — on both
+  // sides:
+  //   - full-height extension rearward (-X) and wider ±Y,
+  //   - forward (+X) buttress toward the free end, capped lc_beam_gap
+  //     below the bar (z = lc_boss_h - lc_beam_gap) so the beam still
+  //     deflects freely.
+  // Only the load-cell beam should move. VERIFY in a render (expect
+  // Volumes: 1) and tune the params.
+  lc_boss_ext  = 10;   // rearward (-X) extension (full height)
+  lc_boss_fwd  = 15;   // forward (+X) extension toward the free end
   lc_boss_wide = 3;    // extra width per ±Y side
-  lc_boss_butt = 10;   // rear buttress reach along -X at the floor
+  lc_beam_gap  = 5;    // clearance left below the bar for it to flex
   difference() {
     union() {
-      // enlarged boss (+X edge held at lc_x0+14; grows -X and ±Y)
+      // main boss: full height, extended -X, widened ±Y
+      // (+X edge held at lc_x0+14 at full height for the M5 clamp)
       translate([lc_x0 - 4 - lc_boss_ext, -lc_w/2 - 4 - lc_boss_wide, 0])
         cube([18 + lc_boss_ext, lc_w + 8 + 2*lc_boss_wide, lc_boss_h]);
+      // forward (+X) buttress: reaches toward the free end, stopping
+      // lc_beam_gap below the bar so the beam stays free to flex
+      translate([lc_x0 + 14, -lc_w/2 - 4 - lc_boss_wide, 0])
+        cube([lc_boss_fwd, lc_w + 8 + 2*lc_boss_wide, lc_boss_h - lc_beam_gap]);
       // anti-rotation cradle walls (unchanged, atop the boss)
       for (sy = [-1, 1])
         translate([lc_x0 - 4, sy*(lc_w/2 + 0.05) + (sy < 0 ? -3 : 0), lc_boss_h])
           cube([18, 3, 5]);
-      // rear triangular buttress: boss upper-rear down to a -X floor pad
-      hull() {
-        translate([lc_x0 - 4 - lc_boss_ext, -lc_w/2 - 4 - lc_boss_wide, 0.55*lc_boss_h])
-          cube([eps, lc_w + 8 + 2*lc_boss_wide, eps]);
-        translate([lc_x0 - 4 - lc_boss_ext - lc_boss_butt, -lc_w/2 - 4 - lc_boss_wide, 0])
-          cube([eps, lc_w + 8 + 2*lc_boss_wide, eps]);
-      }
     }
     // M5 heat-set insert pocket in the top of the boss (from above)
     translate([lc_x0 + lc_hole_from_end, 0, lc_boss_h - m5_ins_l])
