@@ -10,6 +10,9 @@
 //   - plate_y trimmed 67->63 so the top edge clears the overhanging
 //     weighing platform (paired with plat_gap 2->5 in weighstation.scad;
 //     ~3.1 mm clearance). Screw pattern decoupled from the outline.
+//   - Added 4x M2.5 board-mounting bores through the front panel (92x50
+//     board pattern): cap proud on front, shaft through panel + board
+//     into a nut behind that cinches the board to the panel back.
 // =============================================================
 // Full-width faceplate for the 45° porch face (140 mm wide).
 // Mounts with 4× M3 screws — all four are NEW holes; use this
@@ -66,6 +69,17 @@ win_y = 56;   // opening height
 hole_x_half = 60;     // ±60 mm along face width (V)
 hole_y_half = 23.5;   // ±23.5 mm along slope    (U)
 m3_cl_d     = 3.4;    // clearance bore Ø (plain through-hole, no countersink)
+
+// ── Display-board mounting (M2.5 front through-bolts) ──────────
+// Cap head proud on the front bezel; shaft passes through the panel and
+// the board's corner hole into an M2.5 nut behind, cinching the board
+// against the back of the front panel. Board hole pattern (measured):
+// 92 mm (V) × 50 mm (U) centre-to-centre → ±46 × ±25. These land on the
+// bezel shelf (X > window ±43), so there's solid panel for the cap to
+// bear on and for the board to clamp against.
+brd_screw_v = 46;     // ±46 mm (V, face width) — 92 mm c-c
+brd_screw_u = 25;     // ±25 mm (U, slope)      — 50 mm c-c
+brd_screw_d = 2.7;    // M2.5 clearance bore (cap rests proud on the face)
 
 // ── ILI9488 TFT — MSP3520-type PCB, landscape ──────────────────
 tft_pcb_x = 98.00;   // PCB width  (X, face-width direction)
@@ -148,6 +162,13 @@ module adapter() {
         for (sx = [-1, 1], sy = [-1, 1])
             translate([sx * hole_x_half, sy * hole_y_half, -eps])
                 cylinder(d = m3_cl_d, h = plate_t + 2 * eps);
+
+        // ── 4× M2.5 display-board mounting bores (front panel) ──
+        // Through the front bezel into the pocket; the screw continues
+        // through the board's corner hole to a nut behind. Cap proud.
+        for (sv = [-1, 1], su = [-1, 1])
+            translate([sv * brd_screw_v, su * brd_screw_u, -eps])
+                cylinder(d = brd_screw_d, h = plate_t + 2 * eps);
     }
 }
 
