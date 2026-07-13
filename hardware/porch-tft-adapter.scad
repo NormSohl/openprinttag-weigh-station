@@ -83,26 +83,19 @@ pocket_d   = 13.2;  // depth from back face — houses PCB + header;
 // Aligns with the board's microSD socket mouth so the card can be
 // inserted/removed while mounted (the open back faces the porch wall and
 // is inaccessible). Cuts through the TOP wall at the card's height.
-// CONFIRMED: the card exits the TOP edge of the display, and the socket
-//   is on the BACK of the PCB — so its mouth sits near the open back of
-//   this tray (see sd_slot_z).
-// OFFSET: socket mouth measured 67 mm (±1) from the board's right edge on
-//   the 98 mm-wide board → 31 mm from the left edge → 18 mm off-centre.
-//   Sign assumes the board's right edge = +X here; if the slot prints on
-//   the wrong side, flip to +18.
+// Card exits the TOP edge; socket is on the BACK of the PCB.
+// CORRECTED from the first print: the slot was on the wrong side and a
+// bit tight — flipped the offset sign (+18), widened 3 mm/side, and
+// extended the display-side (front) edge 1.5 mm to reach the socket mouth.
 sd_slot_edge   = "top";   // "top"(+Y) | "bottom"(-Y) | "left"(-X) | "right"(+X)
-sd_slot_offset = -18;     // 18 mm toward -X (=67 mm from the +X/right edge)
-sd_slot_w      = 16;      // slot width  (microSD ~11 mm + ~2.5 mm/side
-                          //   clearance — absorbs offset/print tolerance)
-sd_slot_h      = 5;       // slot height — generous; also tall enough that
-                          //   it clears the card at BOTH front-reference
-                          //   readings (7.2 and 9.0), spanning ~4.7–9.7
-// Card-mouth height: measured 6 mm behind the display's FRONT GLASS,
-// which rests at the pocket floor (Z = pocket_d = 13.2).  So the slot
-// centre is pocket_d − 6 above the back face.  (If "front" meant the
-// adapter's outer bezel face instead, that'd be plate_t − 6 = 9.0.)
-sd_slot_from_front = 6;
-sd_slot_z          = pocket_d - sd_slot_from_front;   // 13.2 − 6 = 7.2 mm
+sd_slot_offset = 18;      // +18 mm — socket sits on the +X side (was -18)
+sd_slot_w      = 22;      // slot width (was 16; +3 mm each side)
+// Z-span (front = display side, Z=pocket_d). Back edge unchanged at 4.7;
+// front/display-side edge raised 1.5 mm (9.7 -> 11.2) to reach the socket.
+sd_slot_back_z  = 4.7;               // back (open-face) edge
+sd_slot_front_z = pocket_d - 2.0;    // 11.2 — display-side edge
+sd_slot_h       = sd_slot_front_z - sd_slot_back_z;       // 6.5 mm
+sd_slot_z       = (sd_slot_back_z + sd_slot_front_z) / 2; // 7.95 mm centre
 
 // =============================================================
 // microSD access slot: a box cut through one perimeter wall, spanning

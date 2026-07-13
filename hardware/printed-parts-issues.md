@@ -79,8 +79,9 @@ convenient:
   **open back** into the porch cavity. No back cover / cable relief — the
   open back is intentional.
 - A **microSD access slot** was added in the top wall (card exits the top;
-  socket on the PCB back), offset −18 mm (socket mouth 67 mm ±1 from the
-  board's right edge). Verify the sign prints on the correct side.
+  socket on the PCB back). First print had it on the wrong side and a bit
+  tight — corrected: offset flipped to **+18 mm**, width **22 mm**
+  (+3/side), and the display-side edge extended 1.5 mm (Z 4.7→11.2).
 - Screws pass through 15 mm of plate now — use M3×20+ (noted in the SCAD
   header).
 - Not rendered here (OpenSCAD unavailable in this env) — **verify in
