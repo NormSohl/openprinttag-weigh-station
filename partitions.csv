@@ -1,0 +1,22 @@
+# ESP32-S3-MINI-1-N8R2 — 8 MB flash. Dual-OTA (2 MB app slots) + LittleFS.
+# The FS partition is named "spiffs" so LittleFS.begin() finds it by default
+# (Arduino-ESP32's default partition label is "spiffs"; the filesystem on it
+# is LittleFS). See docs/design/implementation-plan.md (Decisions LOCKED).
+#
+# Layout (offsets/sizes in bytes):
+#   nvs       20 KB   config/counters (Preferences: "store", "scale", …)
+#   otadata    8 KB   OTA select
+#   app0        2 MB  firmware slot A   (this build is well under 2 MB)
+#   app1        2 MB  firmware slot B   (OTA target)
+#   spiffs   ~3.9 MB  LittleFS: /log, /index, /config, /web
+#   coredump  64 KB   crash dumps
+#   -------------------------------------------------------------
+#   total      8 MB   (ends exactly at 0x800000)
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x200000,
+app1,       app,  ota_1,    0x210000,  0x200000,
+spiffs,     data, spiffs,   0x410000,  0x3E0000,
+coredump,   data, coredump, 0x7F0000,  0x10000,

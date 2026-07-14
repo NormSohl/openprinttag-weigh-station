@@ -41,11 +41,15 @@ spool ID).
 ## Phases
 
 ### Phase 0 — Scaffolding & hardware gate
-- Add a LittleFS **data partition** (partition table) and confirm it mounts.
-- **Wire + bring up the SD** on the ESP32-S3's second SPI host; read/write
-  a test file. *(only hardware gate)*
-- Lock the two build-time decisions below (web stack, partition size).
-- **Milestone:** board mounts LittleFS and reads/writes an SD file.
+- ✅ **Partition table** (`partitions.csv`, wired via
+  `board_build.partitions`): 8 MB = 2 MB×2 OTA app slots + 3.88 MB LittleFS
+  (`spiffs` label) + nvs/otadata/coredump. Layout validated (contiguous,
+  ends at 0x800000). *Confirm 8 MB with `esptool flash_id` before flashing.*
+- ✅ Build-time decisions locked (see Decisions section).
+- ☐ **Wire + bring up the SD** on the ESP32-S3's second SPI host; read/write
+  a test file. *(the remaining hardware gate)*
+- **Milestone:** board mounts LittleFS (custom partition) and reads/writes
+  an SD file.
 
 ### Phase 1 — `store` core (headless)
 - NVS monotonic spool-ID counter.
