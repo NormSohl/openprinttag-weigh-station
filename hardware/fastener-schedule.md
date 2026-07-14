@@ -26,27 +26,42 @@ go under every screw head bearing on plastic.
 | M3×10 SHCS | Tray board → tray bosses | 4 |
 | M3×10 SHCS | USB-C board → floor bosses | 2 |
 | M3×10 SHCS | NAU7802 board → tray standoffs | 2 |
+| M2.5×8 SHCS | Display board → adapter front panel (+ nut) | 4 |
 | M3×12 SHCS | Deck corners → column inserts | 4 |
+| M3×25 SHCS | Display adapter plate → porch face (+ nut) | 4 |
 | M3×50 SHCS | Overload stop adjustment screw | 1 |
 | M4×25 SHCS | Spigot → platform center | 1 |
 | M5×30 SHCS | Load cell fixed end → base boss | 1 |
 
-**Total: 15 screws** — 8× M3×10, 4× M3×12, 1× M3×50, 1× M4×25, 1× M5×30
+**Total: 23 screws** — 4× M2.5×8, 8× M3×10, 4× M3×12, 4× M3×25, 1× M3×50, 1× M4×25, 1× M5×30
+
+## Nuts
+
+| Size | Location | Qty |
+|------|----------|-----|
+| M2.5 nyloc (or hex) | Display board through-bolts — behind the board in the adapter pocket | 4 |
+| M3 nyloc (DIN 985) | Display adapter screws — inside the porch cavity | 4 |
+
+**Total: 8 nuts** — M3s reached via the porch↔body wiring passage; M2.5s
+sit in the adapter's open-back pocket (accessible before final mounting).
 
 ## Washers
 
 | Size | Qty | Notes |
 |------|-----|-------|
-| M3 flat (DIN 125-A) | 13 | One per M3 screw |
+| M2.5 flat (DIN 125-A) | 4 | Under the display-board nuts (spread load on the PCB) |
+| M3 flat (DIN 125-A) | 17 | One per M3 screw (incl. 4 adapter) |
 | M4 flat (DIN 125-A) | 1 | Spigot bolt |
 | M5 flat (DIN 125-A) | 1 | Load cell fixed-end bolt |
 
 ## Notes
 
 - **Overload stop screw (M3×50):** travels from below the base underside
-  (~42mm) before reaching the insert mouth — a shorter screw will not
-  engage the insert at all. Confirmed against current `lc_boss_h` (46.3mm)
-  and post geometry.
+  (~45mm) before reaching the insert mouth — a shorter screw will not
+  engage the insert at all. `plat_gap` was raised 2→5 (platform/adapter
+  clearance), so `lc_boss_h` grew 46.3→49.3mm and the post is ~3mm taller;
+  M3×50 still engages (~5mm) but confirm on the printed part — step up to
+  M3×55 if engagement is marginal.
 - **Load cell screw (M5×30):** stack is platform (8mm) + load cell bar
   (12.7mm) = 20.7mm of clearance before the insert. M5×30 gives ~4–9mm of
   thread engagement depending on insert seating depth.
@@ -56,3 +71,17 @@ go under every screw head bearing on plastic.
   insert (the standoff/boss is sized generously enough to work either way).
 - All M3 boss/standoff fastenings (tray, deck, USB, NAU) use the same
   Ø8 boss with a 1.7mm wall around the M3 insert — adequate in PETG.
+- **Display board through-bolts (M2.5×8 + nut):** cap head sits proud on
+  the adapter's front bezel; the shaft passes through the ~1.8mm front
+  panel and the board's corner hole (92×50mm pattern) into an M2.5 nut
+  behind, cinching the board against the panel back. Nuts + washers go on
+  in the adapter's open-back pocket before the adapter is mounted to the
+  porch. M2.5×8 gives ~2–3mm past the nut; drop to M2.5×6 if the nut sits
+  proud. No counterbore — the cap is intentionally proud (front service).
+- **Display adapter screws (M3×25 + nyloc nut):** pass through the 15mm
+  adapter plate + ~3mm porch slope wall (~18mm), leaving thread for the
+  nyloc nut inside the porch cavity. Plain through-bores (no countersink);
+  pan/button head + washer bears on the front bezel face. Nuts are reached
+  through the porch↔body wiring passage. The porch wall is too thin (3mm)
+  for a heat-set insert, hence nuts. Confirm length once the plate is
+  printed — a longer M3×30 is fine if the nut sits deep.

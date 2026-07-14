@@ -29,6 +29,11 @@ Everything needed to build one weigh station, beyond the fasteners
 **Print envelope check:** platform Ø205mm fits the Prusa MK4S bed (210mm Y)
 with 2.5mm margin per side. Base footprint 200×140×60mm.
 
+> **Known issues / errata:** see
+> [`printed-parts-issues.md`](./printed-parts-issues.md) for deferred
+> fixes (load-cell boss stiffening, TFT adapter window/depth) before the
+> next print revision.
+
 ## Mechanical — Hardware (Wiring)
 
 | Item | Spec | Qty | Notes |
@@ -40,7 +45,8 @@ with 2.5mm margin per side. Base footprint 200×140×60mm.
 ## Fasteners
 
 See `fastener-schedule.md` for the complete screw/insert/washer list
-(15 heat-set inserts, 15 screws, 15 washers).
+(15 heat-set inserts, 23 screws, 23 washers, 8 nuts — incl. 4× M3×25 +
+nyloc for the display adapter and 4× M2.5×8 + nut for the display board).
 
 ## OPT NFC Tags
 

@@ -11,6 +11,12 @@ below **is** our datasheet of record.
 
 **Photo:** [`display-hosyond-ili9488-back.jpeg`](./display-hosyond-ili9488-back.jpeg)
 
+**Mechanical (measured):** PCB 98 × 56.34 mm. Four corner mounting holes,
+**Ø≈2.75 mm**, pattern **92 mm × 50 mm** centre-to-centre (~3 mm inset
+from each edge). Takes M2.5 (an M3 will not pass). The printed adapter
+(`hardware/porch-tft-adapter.scad`) bolts the board via these with M2.5
+front through-bolts into nuts behind — see `brd_screw_*`.
+
 ---
 
 ## Main header (right edge, top → bottom)
