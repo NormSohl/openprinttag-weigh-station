@@ -72,22 +72,24 @@ rotate                      # log rotation bookkeeping
 
 ### Capacity
 
-Sizing a ~4 MB LittleFS partition out of the board's 16 MB flash
-(conservative — leaves room for dual-OTA app slots; could be 8 MB).
+The board is **8 MB flash / 2 MB PSRAM** (ESP32-S3-MINI-1-N8R2) — confirm
+with `esptool flash_id`. A dual-OTA layout with **2 MB app slots** (ample;
+the firmware is well under that) leaves a **~3.9 MB LittleFS** partition.
 Current-state record ≈ 250 B/spool; history event ≈ 120 B; ~20 events per
 spool lifetime ≈ 2.5 KB/spool with full history.
 
-| Counting… | Per unit | Fits in 4 MB LittleFS |
+| Counting… | Per unit | Fits in ~3.9 MB LittleFS |
 |---|---|---|
-| Registered spools, current state only | ~250 B | **~16,000** |
-| Spools with full lifetime history | ~2.5 KB | **~1,600** |
-| Raw history events | ~120 B | **~35,000** |
+| Registered spools, current state only | ~250 B | **~15,000** |
+| Spools with full lifetime history | ~2.5 KB | **~1,550** |
+| Raw history events | ~120 B | **~34,000** |
 | Spool-ID counter (NVS `uint32`) | 4 B | **4.29 billion** (never the limit) |
 
-With SD archiving the working set stays on flash and older history rolls
-to the card (GBs) — pushing the practical ceiling to hundreds of
-thousands of spools, bounded by the card, not the device. Levers for more
-headroom: an 8 MB partition (doubles everything) or a slimmer log line
+Indices live in RAM/PSRAM (2 MB) — ~250 B/spool → thousands of records fit
+easily. With SD archiving the working set stays on flash and older history
+rolls to the card (GBs) — pushing the practical ceiling to hundreds of
+thousands of spools, bounded by the card, not the device. Headroom lever:
+a slimmer log line
 (`used_g` is derivable from `gross − tare`).
 
 ### Event log line schema (NDJSON)

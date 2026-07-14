@@ -19,14 +19,18 @@ torn-tail skip verified against a Python mirror; brace/paren balance clean.
 **Not yet compiled/flashed** (no PlatformIO here) — 1.9 is on-hardware
 verification: run the serial script, power-cycle, confirm the milestone.
 
-**⚠ Flash-size discrepancy to resolve (Phase 0):** the board JSON
-(`boards/sparkfun_esp32s3_thing_plus.json`) declares **8 MB** flash, but
-the capacity analysis and the locked "4 MB LittleFS + dual-OTA" partition
-decision assumed **16 MB** (the DEV-21230 ships with 16 MB). If the board
-is really 16 MB, fix the JSON and the 4 MB+dual-OTA CSV fits. If it's 8 MB,
-dual-OTA + 4 MB FS won't fit — revisit (e.g. ~2 MB apps + ~3.5 MB FS).
-Until then, `storeBegin()` mounts LittleFS on the **default** FS partition,
-which is fine for Phase 1 serial testing.
+**Flash size — RESOLVED (Phase 0 partition CSV still to write):** the
+board is **8 MB flash / 2 MB PSRAM** (ESP32-S3-MINI-1-N8R2 — the board
+JSON's 8 MB is correct; my earlier "16 MB / 8 MB PSRAM" was wrong).
+**Confirm with `esptool flash_id`** before cutting the CSV (one search
+snippet mentioned a 4 MB N4R2 variant — unlikely given the JSON, but a 4 MB
+board would not fit dual-OTA + a useful FS).
+
+Good news: the locked "4 MB LittleFS + dual-OTA" decision **still fits in
+8 MB** — 2 MB app slots (firmware is well under that) + ~3.9 MB LittleFS.
+Capacity is essentially unchanged (~1,550 spools w/ full history). Until
+the CSV lands, `storeBegin()` mounts LittleFS on the **default** FS
+partition — fine for Phase 1 serial testing.
 
 ---
 
