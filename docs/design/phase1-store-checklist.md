@@ -26,11 +26,10 @@ JSON's 8 MB is correct; my earlier "16 MB / 8 MB PSRAM" was wrong).
 snippet mentioned a 4 MB N4R2 variant — unlikely given the JSON, but a 4 MB
 board would not fit dual-OTA + a useful FS).
 
-Good news: the locked "4 MB LittleFS + dual-OTA" decision **still fits in
-8 MB** — 2 MB app slots (firmware is well under that) + ~3.9 MB LittleFS.
-Capacity is essentially unchanged (~1,550 spools w/ full history). Until
-the CSV lands, `storeBegin()` mounts LittleFS on the **default** FS
-partition — fine for Phase 1 serial testing.
+Partition (`partitions.csv`): **no OTA** (panel USB is full-function, so
+firmware flashes over USB) → single 3 MB app + **4.88 MB LittleFS**
+(~1,900 spools w/ full history). `storeBegin()` mounts LittleFS on the
+`spiffs`-labelled partition.
 
 ---
 

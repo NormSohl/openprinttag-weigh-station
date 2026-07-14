@@ -42,8 +42,8 @@ spool ID).
 
 ### Phase 0 — Scaffolding & hardware gate
 - ✅ **Partition table** (`partitions.csv`, wired via
-  `board_build.partitions`): 8 MB = 2 MB×2 OTA app slots + 3.88 MB LittleFS
-  (`spiffs` label) + nvs/otadata/coredump. Layout validated (contiguous,
+  `board_build.partitions`): 8 MB = single 3 MB `factory` app + 4.88 MB
+  LittleFS (`spiffs` label) + nvs/coredump. Layout validated (contiguous,
   ends at 0x800000). *Confirm 8 MB with `esptool flash_id` before flashing.*
 - ✅ Build-time decisions locked (see Decisions section).
 - ☐ **Wire + bring up the SD** on the ESP32-S3's second SPI host; read/write
@@ -125,9 +125,13 @@ Phase 0 → 1 → 2 unlock the local core; **Phase 4 is the payoff** (inventory
    NFC/scale/display tasks and serves assets + concurrent clients well.
    → add the lib dependency in `platformio.ini` at Phase 0/4; the current
    synchronous `WebServer` config page is replaced.
-2. **LittleFS partition: 4 MB, dual-OTA retained.** Custom partition CSV
-   with two app slots + a 4 MB `littlefs` data partition. Firmware can
-   update over WiFi; ~1,600 spools of full history is ample.
+2. **Single app slot (no OTA) + ~4.9 MB LittleFS.** The panel USB-C is
+   full-function, so firmware flashes over USB — OTA's second 2 MB app
+   slot isn't worth its cost. One 3 MB `factory` app (headroom) + 4.88 MB
+   LittleFS (~1,900 spools w/ history). Simpler; no OTA path to build.
+   *(Revised from the earlier dual-OTA choice once the panel port was
+   confirmed full-function. Note: changing the partition scheme later needs
+   a USB reflash to repartition.)*
 3. **Network: station + AP fallback.** Join lab WiFi if configured
    (`weighstation.local`); otherwise bring up the `WeighStation` SoftAP.
    `net.*` owns this.
@@ -136,7 +140,7 @@ Phase 0 → 1 → 2 unlock the local core; **Phase 4 is the payoff** (inventory
    details in the Phase 4 web form. No interim data-entry UI.
 
 These resolve the corresponding open questions in `sd-local-ecosystem.md`
-(web stack, partition size, AP mode).
+(web stack, partition scheme, AP mode).
 
 ## Out of scope (per design doc)
 Spoolman, resistive touch, physical keyboard, SMTP, vendor/API ordering,

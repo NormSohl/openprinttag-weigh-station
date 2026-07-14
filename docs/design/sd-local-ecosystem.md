@@ -73,16 +73,16 @@ rotate                      # log rotation bookkeeping
 ### Capacity
 
 The board is **8 MB flash / 2 MB PSRAM** (ESP32-S3-MINI-1-N8R2) — confirm
-with `esptool flash_id`. A dual-OTA layout with **2 MB app slots** (ample;
-the firmware is well under that) leaves a **~3.9 MB LittleFS** partition.
+with `esptool flash_id`. No OTA (firmware flashes over the full-function
+panel USB), so a single 3 MB app leaves a **4.88 MB LittleFS** partition.
 Current-state record ≈ 250 B/spool; history event ≈ 120 B; ~20 events per
 spool lifetime ≈ 2.5 KB/spool with full history.
 
-| Counting… | Per unit | Fits in ~3.9 MB LittleFS |
+| Counting… | Per unit | Fits in 4.88 MB LittleFS |
 |---|---|---|
-| Registered spools, current state only | ~250 B | **~15,000** |
-| Spools with full lifetime history | ~2.5 KB | **~1,550** |
-| Raw history events | ~120 B | **~34,000** |
+| Registered spools, current state only | ~250 B | **~19,000** |
+| Spools with full lifetime history | ~2.5 KB | **~1,900** |
+| Raw history events | ~120 B | **~42,000** |
 | Spool-ID counter (NVS `uint32`) | 4 B | **4.29 billion** (never the limit) |
 
 Indices live in RAM/PSRAM (2 MB) — ~250 B/spool → thousands of records fit
@@ -339,7 +339,7 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `web_app.*` | **new/expanded** — full app (dashboard, onboarding, config CRUD, reorder/CSV, backup export/import); `/web/` assets served off LittleFS |
 | recovery page | **new** — minimal UI embedded in firmware for the no-card / blank-flash bootstrap + restore floor |
 | `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host), LittleFS partition + paths |
-| partition table | **new** — carve a ~4 MB LittleFS data partition (see Capacity) |
+| partition table | **new** — single 3 MB app + 4.88 MB LittleFS (no OTA; see Capacity) |
 
 ## SD interface — RESOLVED
 
@@ -379,7 +379,7 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
   to keep — trades backup freshness/depth against card wear and space.
 
 Resolved (see `implementation-plan.md` → Decisions LOCKED): network mode
-= **station + AP fallback**; LittleFS partition = **4 MB, dual-OTA**;
+= **station + AP fallback**; partition = **single app, no OTA, 4.88 MB FS**;
 web stack = **ESPAsyncWebServer**.
 
 ## Explicitly out of scope
