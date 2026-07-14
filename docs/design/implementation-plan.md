@@ -115,21 +115,24 @@ Phase 0 → 1 → 2 unlock the local core; **Phase 4 is the payoff** (inventory
                    └─── 7
 ```
 
-## Decisions to lock
+## Decisions (LOCKED)
 
-1. **Web stack:** keep Arduino `WebServer` (synchronous, already in tree,
-   simplest) vs move to `ESPAsyncWebServer` (non-blocking, better at serving
-   assets + concurrent clients, won't stall the NFC/scale tasks).
-   *Recommendation: ESPAsyncWebServer* — the app grows well beyond the
-   current config page and shouldn't block the display/NFC loop.
-2. **LittleFS partition size:** 4 MB (keeps dual-OTA) vs 8 MB (more history
-   before rotation, single app slot). *Recommendation: 4 MB* unless OTA is
-   dropped.
-3. **SoftAP-only vs station + AP** (design open question): AP-always makes
-   it infrastructure-free; station adds lab-network reach.
-   *Recommendation: both — station if configured, AP fallback.*
-4. **Onboarding during cutover (Phase 2):** stubs recorded locally with a
-   `needs_onboarding` flag, completed via the Phase 4 form. (No interim UI.)
+1. **Web stack: `ESPAsyncWebServer`.** Non-blocking; won't stall the
+   NFC/scale/display tasks and serves assets + concurrent clients well.
+   → add the lib dependency in `platformio.ini` at Phase 0/4; the current
+   synchronous `WebServer` config page is replaced.
+2. **LittleFS partition: 4 MB, dual-OTA retained.** Custom partition CSV
+   with two app slots + a 4 MB `littlefs` data partition. Firmware can
+   update over WiFi; ~1,600 spools of full history is ample.
+3. **Network: station + AP fallback.** Join lab WiFi if configured
+   (`weighstation.local`); otherwise bring up the `WeighStation` SoftAP.
+   `net.*` owns this.
+4. **Cutover onboarding: local stub + `needs_onboarding` flag.** New/blank
+   tags register a stub locally during Phases 2–3; a person completes the
+   details in the Phase 4 web form. No interim data-entry UI.
+
+These resolve the corresponding open questions in `sd-local-ecosystem.md`
+(web stack, partition size, AP mode).
 
 ## Out of scope (per design doc)
 Spoolman, resistive touch, physical keyboard, SMTP, vendor/API ordering,

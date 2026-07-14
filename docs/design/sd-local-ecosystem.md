@@ -372,13 +372,13 @@ for storage at all. Costs 4 GPIOs, which the S3 has spare.
 
 ## Open questions
 
-- Keep station-mode WiFi at all, or SoftAP-only? SoftAP-only is the
-  simplest "ecosystem" but loses remote access from the lab network.
 - Snapshot cadence + retention: when to write a verified snapshot (after
   onboarding, on card insert, periodic) and how many dated history files
   to keep — trades backup freshness/depth against card wear and space.
-- LittleFS partition size (4 MB default vs 8 MB) — depends on whether we
-  keep dual-OTA app slots.
+
+Resolved (see `implementation-plan.md` → Decisions LOCKED): network mode
+= **station + AP fallback**; LittleFS partition = **4 MB, dual-OTA**;
+web stack = **ESPAsyncWebServer**.
 
 ## Explicitly out of scope
 
