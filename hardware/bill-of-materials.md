@@ -13,8 +13,7 @@ Everything needed to build one weigh station, beyond the fasteners
 | Load cell | TAL220B, 5kg, 55×12.7×12.7mm | 1 | Single-bolt mount, ~40mm hole spacing |
 | TFT display | Hosyond 3.5" ILI9488 SPI TFT, 480×320, resistive touch (MSP3520-type) | 1 | Amazon (Hosyond Store, sold by HONGXINBAORUI), ~$17.99; incl. stylus. SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17. Has on-board microSD slot + resistive touch (T_xx pins) — neither wired yet |
 | Piezo buzzer | Passive, GPIO 14 | 1 | Feedback tones |
-| USB-C breakout | Power input only | 1 | 40×70mm, mounted on dedicated floor bosses |
-| USB-C panel-mount cable | Extension, panel-mount | 1 | Replaces original breakout-board plan |
+| USB-C panel-mount cable | Full-function extension, panel-mount | 1 | Routes the ESP32's **native USB-C** to the panel — the single port for the whole unit: power, serial console, and firmware flashing (no OTA needed). Supersedes the earlier power-only USB-C breakout board. |
 
 ## Mechanical — Printed Parts
 
@@ -61,9 +60,6 @@ quantities yet:
 
 - **NAU7802 mounting screws/board hole size** — not measured against
   the actual board; assumed M3, may be M2 (see fastener schedule notes)
-- **USB-C breakout board hole size** — not measured against the actual
-  board (PN5180-style 40×70mm board pocket sized, but mounting holes
-  for the USB breakout itself haven't been confirmed)
 - **Rubber feet** — base has recesses for them (4 corners) but no
   spec/source chosen yet
 - **Spoolman host hardware** — ruled out on Synology NAS (no Docker
