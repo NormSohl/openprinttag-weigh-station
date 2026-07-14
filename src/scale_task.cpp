@@ -3,6 +3,7 @@
 #include <SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h>
 #include "config.h"
 #include "device_state.h"
+#include "store.h"   // route store test commands (EV / DUMP / …) here too
 
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
@@ -40,6 +41,9 @@ static void handleSerialCommand(NAU7802& nau) {
             Serial.printf("[scale] Cal factor set: %.4f (for %.1fg)\n",
                           nau.getCalibrationFactor(), knownGrams);
         }
+    } else {
+        // Not a scale command — try the store test harness (Phase 1).
+        storeSerialCommand(cmd);
     }
 }
 

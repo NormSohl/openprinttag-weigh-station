@@ -11,6 +11,23 @@ over serial → indices correct → power-cycle → indices identical (rebuilt
 from log) → append a deliberately torn line → recovery skips it and the
 rest is intact.
 
+## Progress
+
+**Code landed** (`src/store.h`, `src/store.cpp`, wired into `main.cpp` +
+`scale_task.cpp` serial): tasks **1.1–1.8 implemented**. CRC round-trip and
+torn-tail skip verified against a Python mirror; brace/paren balance clean.
+**Not yet compiled/flashed** (no PlatformIO here) — 1.9 is on-hardware
+verification: run the serial script, power-cycle, confirm the milestone.
+
+**⚠ Flash-size discrepancy to resolve (Phase 0):** the board JSON
+(`boards/sparkfun_esp32s3_thing_plus.json`) declares **8 MB** flash, but
+the capacity analysis and the locked "4 MB LittleFS + dual-OTA" partition
+decision assumed **16 MB** (the DEV-21230 ships with 16 MB). If the board
+is really 16 MB, fix the JSON and the 4 MB+dual-OTA CSV fits. If it's 8 MB,
+dual-OTA + 4 MB FS won't fit — revisit (e.g. ~2 MB apps + ~3.5 MB FS).
+Until then, `storeBegin()` mounts LittleFS on the **default** FS partition,
+which is fine for Phase 1 serial testing.
+
 ---
 
 ## Design details to fix first

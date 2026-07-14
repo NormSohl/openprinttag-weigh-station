@@ -4,6 +4,7 @@
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
+#include "store.h"   // local-storage core (redesign Phase 1)
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -51,6 +52,15 @@ void setup() {
     gWeightMutex = xSemaphoreCreateMutex();
     gTagMutex = xSemaphoreCreateMutex();
     gSpiMutex = xSemaphoreCreateMutex();
+
+    // Local-storage core (LittleFS log + indices + NVS counter). Headless in
+    // Phase 1 — driven via the serial harness (EV / DUMP / REBUILD / …).
+    if (storeBegin())
+        Serial.printf("[store] ready: %u spools, %u log lines, next id #%u\n",
+                      (unsigned)storeSpoolCount(), (unsigned)storeLogLineCount(),
+                      (unsigned)storePeekSpoolId());
+    else
+        Serial.println("[store] LittleFS mount FAILED");
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
