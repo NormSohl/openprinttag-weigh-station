@@ -23,8 +23,21 @@ static TFT_eSPI          tft;
 static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // ── Buzzer helpers ────────────────────────────────────────────────────────────
+// The LEDC API changed between arduino-esp32 2.x (channel-based) and 3.x
+// (pin-based). Support both so CI (currently 2.x) and newer cores both build.
+#if defined(ESP_ARDUINO_VERSION) && ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+  #define BZ_ATTACH()  ledcAttach(BUZZER_PIN, 4000, 8)
+  #define BZ_TONE(hz)  ledcWriteTone(BUZZER_PIN, (hz))
+  #define BZ_OFF()     ledcWriteTone(BUZZER_PIN, 0)
+#else
+  static const uint8_t BUZZER_CH = 0;
+  #define BZ_ATTACH()  do { ledcSetup(BUZZER_CH, 4000, 8); ledcAttachPin(BUZZER_PIN, BUZZER_CH); } while (0)
+  #define BZ_TONE(hz)  ledcWriteTone(BUZZER_CH, (hz))
+  #define BZ_OFF()     ledcWrite(BUZZER_CH, 0)
+#endif
+
 static void bzTone(uint32_t hz, uint32_t ms) {
-    ledcWriteTone(BUZZER_PIN, hz);
+    BZ_TONE(hz);
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
@@ -45,7 +58,7 @@ static void buzz(DeviceState prev, DeviceState curr) {
         break;
     case DeviceState::AwaitingFormatConfirm:
         bzTone(880, 60);                                          // A5 double-pip
-        ledcWriteTone(BUZZER_PIN, 0);
+        BZ_OFF();
         vTaskDelay(pdMS_TO_TICKS(50));
         bzTone(880, 60);
         break;
@@ -67,7 +80,7 @@ static void buzz(DeviceState prev, DeviceState curr) {
     default:
         break;
     }
-    ledcWriteTone(BUZZER_PIN, 0);
+    BZ_OFF();
 }
 
 // ── Layout helpers ────────────────────────────────────────────────────────────
@@ -111,7 +124,7 @@ void displayTask(void* param) {
     pixel.setBrightness(80);
     pixel.show();
 
-    ledcAttach(BUZZER_PIN, 4000, 8);
+    BZ_ATTACH();
 
     xSemaphoreTake(gSpiMutex, portMAX_DELAY);
     tft.init();
