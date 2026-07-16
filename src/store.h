@@ -100,6 +100,8 @@ uint32_t storeCrc32(const uint8_t* data, size_t len);
 void storeNowIso(char* buf, size_t buflen);
 
 // ── Serial test harness (Phase 1) ─────────────────────────────────────────────
-// Handles one command line: EV / DUMP / REBUILD / LOGSTATS / TORN / WIPE.
-// Returns true if the line was a store command.
+// Handles one command line and returns true if it was a store command:
+//   EV onboard <uuid> <vendor> <material> | EV weigh <uuid> <gross_g>
+//   DUMP spools | DUMP inv | REBUILD | LOGSTATS | TORN | WIPE
+//   SEED <spools> <events_per_spool>   — bulk-fill for capacity testing
 bool storeSerialCommand(const String& line);

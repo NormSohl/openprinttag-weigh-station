@@ -5,6 +5,8 @@
 #include <time.h>
 #include <string.h>
 #include <vector>
+#include <unordered_map>
+#include <string>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -12,7 +14,10 @@
 static const char*        LOG_PATH = "/log/events.ndjson";
 static SemaphoreHandle_t  sMutex   = nullptr;
 static std::vector<SpoolRecord>  sSpools;
+static std::unordered_map<std::string, size_t> sByUuid;   // uuid → sSpools index (O(1) lookup)
 static std::vector<MatInventory> sInv;
+static bool               sInvDirty = true;   // rebuild sInv lazily on next query
+static bool               sLogEndsNL = true;  // does the log end with a newline?
 static uint32_t           sNextId  = 1;
 
 // RAII lock. No public function that takes the lock calls another that does,
@@ -145,9 +150,8 @@ static bool decodeLine(const String& line, StoreEvent& e) {
 
 // ── Index maintenance (helpers assume the caller holds the lock) ──────────────
 static int findByUuid_(const char* uuid) {
-    for (size_t i = 0; i < sSpools.size(); i++)
-        if (!strcmp(sSpools[i].uuid, uuid)) return (int)i;
-    return -1;
+    auto it = sByUuid.find(uuid);
+    return (it == sByUuid.end()) ? -1 : (int)it->second;
 }
 
 static void applyEvent_(const StoreEvent& e) {
@@ -160,7 +164,9 @@ static void applyEvent_(const StoreEvent& e) {
         r.valid = true;
         sSpools.push_back(r);
         idx = (int)sSpools.size() - 1;
+        sByUuid[e.uuid] = (size_t)idx;   // vector indices are stable (append-only)
     }
+    sInvDirty = true;                    // inventory recomputed lazily
     SpoolRecord& r = sSpools[idx];
     if (e.spool) r.spool = e.spool;
     strlcpy(r.last_ts, e.ts, sizeof(r.last_ts));
@@ -185,6 +191,7 @@ static void applyEvent_(const StoreEvent& e) {
 
 static void rebuildInventory_() {
     sInv.clear();
+    // Materials are few (dozens); linear bucket search is fine.
     for (auto& r : sSpools) {
         if (!r.valid || r.material[0] == 0) continue;
         int mi = -1;
@@ -201,10 +208,15 @@ static void rebuildInventory_() {
     }
 }
 
+static void ensureInventory_() {
+    if (sInvDirty) { rebuildInventory_(); sInvDirty = false; }
+}
+
 // ── Log ───────────────────────────────────────────────────────────────────────
 bool storeRebuildIndices() {
     Lock lk;
     sSpools.clear();
+    sByUuid.clear();
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
         while (f.available()) {
@@ -217,7 +229,7 @@ bool storeRebuildIndices() {
         }
         f.close();
     }
-    rebuildInventory_();
+    sInvDirty = true;   // inventory rebuilt lazily on next query
     return true;
 }
 
@@ -227,24 +239,19 @@ bool storeAppendEvent(const StoreEvent& in) {
     String line = encodeLine(e);
 
     Lock lk;
-    // If the file doesn't end with a newline (torn tail from a prior power
-    // cut), start on a fresh line so our record stays parseable.
-    bool needNL = false;
-    File rf = LittleFS.open(LOG_PATH, "r");
-    if (rf) {
-        if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') needNL = true; }
-        rf.close();
-    }
     File f = LittleFS.open(LOG_PATH, "a");
     if (!f) return false;
-    if (needNL) f.print('\n');
+    // If the file ended without a newline (torn tail from a prior power cut),
+    // start on a fresh line so our record stays parseable. Tracked in a flag
+    // so we don't re-read the file on every append.
+    if (!sLogEndsNL) f.print('\n');
     f.print(line);
     f.print('\n');
     f.flush();
     f.close();
+    sLogEndsNL = true;
 
-    applyEvent_(e);
-    rebuildInventory_();
+    applyEvent_(e);   // marks inventory dirty; rebuilt lazily on next query
     return true;
 }
 
@@ -303,9 +310,10 @@ bool storeSpoolAt(size_t idx, SpoolRecord& out) {
     out = sSpools[idx];
     return true;
 }
-size_t storeInventoryCount() { Lock lk; return sInv.size(); }
+size_t storeInventoryCount() { Lock lk; ensureInventory_(); return sInv.size(); }
 bool storeInventoryAt(size_t idx, MatInventory& out) {
     Lock lk;
+    ensureInventory_();
     if (idx >= sInv.size()) return false;
     out = sInv[idx];
     return true;
@@ -321,6 +329,13 @@ bool storeBegin() {
     sNextId = p.getUInt("counter", 1);
     p.end();
     storeRebuildIndices();
+    // Prime the newline flag: does the existing log end cleanly?
+    sLogEndsNL = true;
+    File rf = LittleFS.open(LOG_PATH, "r");
+    if (rf) {
+        if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
+        rf.close();
+    }
     return true;
 }
 
@@ -409,13 +424,48 @@ bool storeSerialCommand(const String& lineIn) {
             f.print("{\"ts\":\"2026-01-01T00:00:00Z\",\"ev\":\"weigh\",\"uuid\":\"deadbeef\",\"spool\":999,\"gross_g\":123.4");
             f.close();
         }
+        sLogEndsNL = false;   // next append will heal it with a leading newline
         Serial.println("[store] appended a torn (crc-less, newline-less) tail line");
         return true;
     }
     if (cmd == "WIPE") {
         LittleFS.remove(LOG_PATH);
+        sLogEndsNL = true;
         storeRebuildIndices();
         Serial.println("[store] log wiped");
+        return true;
+    }
+    if (cmd == "SEED") {
+        uint32_t nsp = (uint32_t)tok(line, pos).toInt();
+        uint32_t nev = (uint32_t)tok(line, pos).toInt();
+        if (nev == 0) nev = 5;
+        const char* vends[] = {"Prusament", "Hatchbox", "Overture", "Generic"};
+        const char* mats[]  = {"PLA", "PETG", "ASA", "TPU"};
+        uint32_t t0 = millis();
+        for (uint32_t i = 0; i < nsp; i++) {
+            char uuid[33];
+            snprintf(uuid, sizeof(uuid), "%08x%08x%08x%08x", 0x5EEDu, 0u, 0u, (unsigned)i);
+            StoreEvent e; e.ev = StoreEv::Onboard;
+            strlcpy(e.uuid, uuid, sizeof(e.uuid));
+            strlcpy(e.vendor, vends[i & 3], sizeof(e.vendor));
+            strlcpy(e.material, mats[i & 3], sizeof(e.material));
+            e.dia = 1.75f; e.nom_g = 1000.0f; e.empty_g = 200.0f; e.needs_ob = false;
+            e.spool = storeNextSpoolId();
+            storeAppendEvent(e);
+            for (uint32_t j = 0; j < nev; j++) {
+                StoreEvent w; w.ev = StoreEv::Weigh;
+                strlcpy(w.uuid, uuid, sizeof(w.uuid));
+                w.spool = e.spool;
+                w.gross_g = 1200.0f - (float)j * (900.0f / (float)nev);
+                w.remaining_g = w.gross_g - 200.0f;
+                w.used_g = 1000.0f - w.remaining_g;
+                storeAppendEvent(w);
+            }
+        }
+        Serial.printf("[store] SEED %u spools x %u events done in %u ms — now %u lines / %u bytes, %u spools\n",
+                      (unsigned)nsp, (unsigned)nev, (unsigned)(millis() - t0),
+                      (unsigned)storeLogLineCount(), (unsigned)storeLogBytes(),
+                      (unsigned)storeSpoolCount());
         return true;
     }
     return false;
