@@ -3,7 +3,6 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
-#include <WiFiManager.h>
 #include <string.h>
 #include "config.h"
 #include "device_state.h"
@@ -347,10 +346,11 @@ void webAppBegin() {
             "<!DOCTYPE html><body><h2>Resetting WiFi&hellip;</h2>"
             "<p>Credentials cleared; the device is restarting.</p>"
             "<p>Connect to <b>WeighStation-Setup</b> to reconfigure.</p></body>");
-        // Brief delay lets the response flush before we reboot.
-        WiFiManager wm;
-        wm.resetSettings();
-        delay(400);
+        // Erase stored WiFi credentials (equivalent to WiFiManager::resetSettings)
+        // without pulling in WebServer.h, whose HTTP_* enum clashes with the async
+        // server's. syncTask's autoConnect reopens the portal on the next boot.
+        WiFi.disconnect(true, true);   // wifioff=true, eraseap=true
+        delay(400);                    // let the response flush before reboot
         ESP.restart();
     });
 
