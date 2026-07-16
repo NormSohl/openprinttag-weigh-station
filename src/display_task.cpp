@@ -254,7 +254,7 @@ void displayTask(void* param) {
                 title("New spool found", TFT_CYAN);
                 row(2, snap.brand_name[0]    ? snap.brand_name    : "Unknown brand",    TFT_WHITE);
                 row(3, snap.material_name[0] ? snap.material_name : "Unknown material", TFT_WHITE);
-                row(4, "Adding to Spoolman...", TFT_DARKGREY);
+                row(4, "Registering spool...", TFT_DARKGREY);
                 pixelColor = pixel.Color(0, 50, 50);
                 break;
 
@@ -271,7 +271,7 @@ void displayTask(void* param) {
                 if (needsOnboarding) {
                     title("Registered!", TFT_YELLOW);
                     if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
-                    row(3, "Edit details in Spoolman", TFT_DARKGREY);
+                    row(3, "Add details in web app", TFT_DARKGREY);
                     rowf(5, TFT_WHITE, "%.0f g", remaining);
                     pixelColor = pixel.Color(50, 50, 0);
                 } else {
@@ -281,7 +281,7 @@ void displayTask(void* param) {
                     strlcpy(matLine, snap.material_name[0] ? snap.material_name : "Unknown", sizeof(matLine));
                     row(2, matLine, TFT_WHITE);
                     rowf(3, TFT_GREEN, "%.0f g remaining", remaining);
-                    row(5, "Synced", TFT_DARKGREY);
+                    row(5, "Saved locally", TFT_DARKGREY);
                     pixelColor = pixel.Color(0, 80, 0);
                 }
                 break;
