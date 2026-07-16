@@ -141,31 +141,55 @@ static String serStock() {
 static void seedVendors() {
     sVendors = {"Prusament", "Hatchbox", "Overture", "Polymaker", "Generic"};
 }
+// Explicit builders — GCC 8 (esp32 core) rejects push_back({...}) for these
+// aggregates (char arrays / nested array members).
+static void addMat(const char* name, const char* abbr, float dia,
+                   int16_t pmin, int16_t pmax, int16_t bmin, int16_t bmax) {
+    CfgMaterial m{};
+    strlcpy(m.name, name, sizeof(m.name));
+    strlcpy(m.abbr, abbr, sizeof(m.abbr));
+    m.dia = dia;
+    m.print_min = pmin; m.print_max = pmax;
+    m.bed_min = bmin;   m.bed_max = bmax;
+    sMaterials.push_back(m);
+}
+static void addProf(const char* label, float full, float empty) {
+    CfgProfile p{};
+    strlcpy(p.label, label, sizeof(p.label));
+    p.nominal_full_g = full; p.empty_g = empty;
+    sProfiles.push_back(p);
+}
+static void addColor(const char* name, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    CfgColor c{};
+    strlcpy(c.name, name, sizeof(c.name));
+    c.rgba[0] = r; c.rgba[1] = g; c.rgba[2] = b; c.rgba[3] = a;
+    sColors.push_back(c);
+}
+
 static void seedMaterials() {
     sMaterials.clear();
-    // name, abbr, cls, type, dia, print_min/max, bed_min/max
-    sMaterials.push_back({"PLA",  "PLA",  0, 0, 1.75f, 190, 220, 50, 60});
-    sMaterials.push_back({"PETG", "PETG", 0, 0, 1.75f, 230, 250, 70, 85});
-    sMaterials.push_back({"ASA",  "ASA",  0, 0, 1.75f, 240, 260, 90, 110});
-    sMaterials.push_back({"ABS",  "ABS",  0, 0, 1.75f, 230, 250, 90, 110});
-    sMaterials.push_back({"TPU",  "TPU",  0, 0, 1.75f, 210, 230, 30, 50});
+    addMat("PLA",  "PLA",  1.75f, 190, 220, 50, 60);
+    addMat("PETG", "PETG", 1.75f, 230, 250, 70, 85);
+    addMat("ASA",  "ASA",  1.75f, 240, 260, 90, 110);
+    addMat("ABS",  "ABS",  1.75f, 230, 250, 90, 110);
+    addMat("TPU",  "TPU",  1.75f, 210, 230, 30, 50);
 }
 static void seedProfiles() {
     sProfiles.clear();
-    sProfiles.push_back({"Prusament 1kg",   1000.0f, 201.0f});
-    sProfiles.push_back({"Generic 1kg",     1000.0f, 200.0f});
-    sProfiles.push_back({"Generic 0.75kg",   750.0f, 175.0f});
-    sProfiles.push_back({"Generic 0.5kg",    500.0f, 150.0f});
+    addProf("Prusament 1kg",  1000.0f, 201.0f);
+    addProf("Generic 1kg",    1000.0f, 200.0f);
+    addProf("Generic 0.75kg",  750.0f, 175.0f);
+    addProf("Generic 0.5kg",   500.0f, 150.0f);
 }
 static void seedColors() {
     sColors.clear();
-    sColors.push_back({"Black",       {30, 30, 30, 255}});
-    sColors.push_back({"White",       {245, 245, 245, 255}});
-    sColors.push_back({"Prusa Orange",{227, 111, 17, 255}});
-    sColors.push_back({"Red",         {200, 30, 30, 255}});
-    sColors.push_back({"Green",       {40, 160, 60, 255}});
-    sColors.push_back({"Blue",        {40, 80, 200, 255}});
-    sColors.push_back({"Grey",        {130, 130, 130, 255}});
+    addColor("Black",        30,  30,  30,  255);
+    addColor("White",        245, 245, 245, 255);
+    addColor("Prusa Orange", 227, 111, 17,  255);
+    addColor("Red",          200, 30,  30,  255);
+    addColor("Green",        40,  160, 60,  255);
+    addColor("Blue",         40,  80,  200, 255);
+    addColor("Grey",         130, 130, 130, 255);
 }
 static void seedStock() { sStock.clear(); }   // empty — user defines standard stock
 
