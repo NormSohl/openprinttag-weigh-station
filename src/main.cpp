@@ -4,7 +4,8 @@
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
-#include "store.h"   // local-storage core (redesign Phase 1)
+#include "store.h"          // local-storage core (redesign Phase 1)
+#include "config_store.h"   // config catalog (redesign Phase 3)
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -61,6 +62,13 @@ void setup() {
                       (unsigned)storePeekSpoolId());
     else
         Serial.println("[store] LittleFS mount FAILED");
+
+    // Config catalog (vendors/materials/profiles/colors/stock-items on LittleFS).
+    cfgBegin();
+    Serial.printf("[cfg] ready: %u vendors, %u materials, %u profiles, %u colors, %u stock\n",
+                  (unsigned)cfgVendorCount(), (unsigned)cfgMaterialCount(),
+                  (unsigned)cfgProfileCount(), (unsigned)cfgColorCount(),
+                  (unsigned)cfgStockCount());
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
