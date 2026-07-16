@@ -1,14 +1,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
-#include <ESPmDNS.h>
-#include <WebServer.h>
 #include <esp_random.h>
 #include <string.h>
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
 #include "store.h"
+#include "web_app.h"
 
 // ── Shared globals ────────────────────────────────────────────────────────────
 extern volatile DeviceState gState;
@@ -98,51 +97,6 @@ static void identityFromMain(const OptMain& m, StoreEvent& e) {
     e.nom_g   = m.nominal_netto_full_weight;   // label weight; actual stays on the tag
 }
 
-// ── Minimal status web server ─────────────────────────────────────────────────
-// The full inventory / onboarding app lands in Phase 4 (ESPAsyncWebServer).
-// For now: a status page plus the WiFi-reset endpoint, so a cabinet-installed
-// unit can still be re-provisioned without physical access.
-
-static WebServer sWeb(80);
-
-static void startWebServer() {
-    if (MDNS.begin(DEVICE_HOSTNAME))
-        MDNS.addService("http", "tcp", 80);
-
-    sWeb.on("/", HTTP_GET, []() {
-        String page =
-            "<!DOCTYPE html><html><head>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>Weigh Station</title></head><body>"
-            "<h2>Weigh Station</h2>"
-            "<p>Local inventory: <b>" + String((unsigned)storeSpoolCount()) + "</b> spools, "
-            + String((unsigned)storeLogLineCount()) + " log entries.</p>"
-            "<p>Next spool ID: #" + String((unsigned)storePeekSpoolId()) + "</p>"
-            "<hr>"
-            "<p><a href='/reset'>Reset WiFi credentials</a> &mdash; "
-            "clears stored WiFi and reopens the setup portal.</p>"
-            "</body></html>";
-        sWeb.send(200, "text/html", page);
-    });
-
-    sWeb.on("/reset", HTTP_GET, []() {
-        sWeb.send(200, "text/html",
-            "<!DOCTYPE html><html><body>"
-            "<h2>Resetting WiFi&hellip;</h2>"
-            "<p>WiFi credentials cleared. Device is restarting.</p>"
-            "<p>Connect to <b>WeighStation-Setup</b> to reconfigure.</p>"
-            "</body></html>");
-        sWeb.stop();
-        vTaskDelay(pdMS_TO_TICKS(500));
-        WiFiManager wm;
-        wm.resetSettings();
-        ESP.restart();
-    });
-
-    sWeb.begin();
-    Serial.printf("Web UI: http://%s.local/\n", DEVICE_HOSTNAME);
-}
-
 // ── Task ──────────────────────────────────────────────────────────────────────
 
 void syncTask(void* param) {
@@ -175,15 +129,14 @@ void syncTask(void* param) {
     } else {
         setState(DeviceState::Idle);
     }
-    // The web UI runs regardless of station vs AP mode.
-    startWebServer();
+    // The web app runs regardless of station vs AP mode.
+    webAppBegin();
 
     // Per-tag state, valid while a spool is on the scale.
     int     sSpoolId  = -1;
     OptMain sSnapshot = {};
 
     for (;;) {
-        sWeb.handleClient();
         DeviceState state = getState();
 
         // ── Quiescent / boot states ───────────────────────────────────────────
