@@ -339,6 +339,67 @@ bool storeBegin() {
     return true;
 }
 
+// ── Backup / restore (host export/import) ─────────────────────────────────────
+const char* storeLogPath() { return LOG_PATH; }
+
+bool storeImportLogFile(const char* stagingPath) {
+    // 1) Validate staging first — never destroy a good log for a bad upload.
+    uint32_t maxId = 0;
+    size_t   good  = 0;
+    {
+        Lock lk;
+        File f = LittleFS.open(stagingPath, "r");
+        if (!f) return false;
+        while (f.available()) {
+            String line = f.readStringUntil('\n');
+            line.trim();
+            if (line.length() == 0) continue;
+            StoreEvent e;
+            if (decodeLine(line, e)) { good++; if (e.spool > maxId) maxId = e.spool; }
+        }
+        f.close();
+    }
+    if (good == 0) return false;
+
+    // 2) Promote staging → live log (rename is cheap; byte-copy fallback).
+    {
+        Lock lk;
+        LittleFS.remove(LOG_PATH);
+        if (!LittleFS.rename(stagingPath, LOG_PATH)) {
+            File in  = LittleFS.open(stagingPath, "r");
+            File out = LittleFS.open(LOG_PATH, "w");
+            if (in && out) {
+                uint8_t buf[256];
+                while (in.available()) { size_t n = in.read(buf, sizeof(buf)); out.write(buf, n); }
+            }
+            if (in)  in.close();
+            if (out) out.close();
+            LittleFS.remove(stagingPath);
+        }
+    }
+
+    // 3) Rebuild indices (takes the lock itself) and re-prime the newline flag.
+    storeRebuildIndices();
+    {
+        Lock lk;
+        sLogEndsNL = true;
+        File rf = LittleFS.open(LOG_PATH, "r");
+        if (rf) {
+            if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
+            rf.close();
+        }
+        // 4) Advance the ID counter past the highest imported id (no reuse).
+        Preferences p;
+        p.begin("store", false);
+        uint32_t cur  = p.getUInt("counter", 1);
+        uint32_t want = maxId + 1;
+        if (want > cur) { p.putUInt("counter", want); sNextId = want; }
+        else            { sNextId = cur; }
+        p.end();
+    }
+    return true;
+}
+
 // ── Serial test harness ───────────────────────────────────────────────────────
 static String tok(const String& s, int& pos) {
     while (pos < (int)s.length() && s[pos] == ' ') pos++;

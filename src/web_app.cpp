@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
 #include <string.h>
 #include "config.h"
 #include "device_state.h"
@@ -73,6 +74,7 @@ static String head(const char* title) {
          "<a href='/onboard'>Onboard</a>"
          "<a href='/reorder'>Reorder</a>"
          "<a href='/config'>Config</a>"
+         "<a href='/backup'>Backup</a>"
          "</span></header><main>";
     return h;
 }
@@ -450,6 +452,65 @@ static void handleApiConfigSave(AsyncWebServerRequest* req) {
     req->redirect("/config");
 }
 
+// ── Backup / restore (host download + upload; SD snapshots are hardware-gated) ─
+static const char* IMPORT_STAGING = "/log/import.staging";
+
+static void handleBackupPage(AsyncWebServerRequest* req) {
+    String p = head("Backup");
+    p += "<h3>Backup &amp; restore</h3>";
+    p += "<div class='card'><label style='margin-top:0'>Download</label>"
+         "<p class='muted'>The event log is the source of truth &mdash; download it "
+         "to your machine as an off-device backup.</p>"
+         "<a href='/export'><button type='button'>Download event log</button></a></div>";
+    p += "<div class='card'><label style='margin-top:0'>Restore</label>"
+         "<p class='muted'>Upload a previously downloaded log to replace the current "
+         "one. The upload is validated first; a bad file leaves your data untouched.</p>"
+         "<form method='POST' action='/import' enctype='multipart/form-data'>"
+         "<input type='file' name='file' accept='.ndjson,text/plain'>"
+         "<div><button type='submit'>Upload &amp; restore</button></div>"
+         "</form></div>";
+    p += "<p class='muted'>Config tables back up separately via the "
+         "<a href='/config' style='color:#8f8'>Config</a> page (copy the JSON). "
+         "SD-card snapshots arrive once the card is wired.</p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleExport(AsyncWebServerRequest* req) {
+    if (!LittleFS.exists(storeLogPath())) {
+        req->send(200, "application/x-ndjson", "");   // nothing logged yet
+        return;
+    }
+    AsyncWebServerResponse* r =
+        req->beginResponse(LittleFS, storeLogPath(), "application/x-ndjson", false);
+    r->addHeader("Content-Disposition", "attachment; filename=weighstation-log.ndjson");
+    req->send(r);
+}
+
+// Streams the multipart upload to a staging file, chunk by chunk.
+static void handleImportUpload(AsyncWebServerRequest* req, const String& filename,
+                               size_t index, uint8_t* data, size_t len, bool final) {
+    File f = LittleFS.open(IMPORT_STAGING, index == 0 ? "w" : "a");
+    if (f) { f.write(data, len); f.close(); }
+}
+
+// Called after the upload completes: validate + promote, or reject.
+static void handleImportDone(AsyncWebServerRequest* req) {
+    bool ok = storeImportLogFile(IMPORT_STAGING);
+    LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
+    if (ok) {
+        String p = head("Restore");
+        p += "<div class='card'><p>Restore complete &mdash; "
+             + String((unsigned)storeSpoolCount()) + " spools, "
+             + String((unsigned)storeLogLineCount()) + " log entries.</p>"
+             "<a href='/'><button type='button'>Back to inventory</button></a></div>";
+        p += FOOT;
+        req->send(200, "text/html", p);
+    } else {
+        req->send(400, "text/plain", "Import failed: no valid records in the uploaded file");
+    }
+}
+
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void webAppBegin() {
     if (MDNS.begin(DEVICE_HOSTNAME))
@@ -464,6 +525,9 @@ void webAppBegin() {
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
     sServer.on("/config",      HTTP_GET,  handleConfig);
     sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);
+    sServer.on("/backup",      HTTP_GET,  handleBackupPage);
+    sServer.on("/export",      HTTP_GET,  handleExport);
+    sServer.on("/import",      HTTP_POST, handleImportDone, handleImportUpload);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.

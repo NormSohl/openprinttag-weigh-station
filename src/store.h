@@ -99,6 +99,15 @@ uint32_t storeCrc32(const uint8_t* data, size_t len);
 // (year >= 2020), otherwise a boot-relative "1970-…" stamp (flagged upstream).
 void storeNowIso(char* buf, size_t buflen);
 
+// ── Backup / restore (host export/import) ─────────────────────────────────────
+// Path of the raw event log on LittleFS — serve it directly for download.
+const char* storeLogPath();
+// Replace the live log with the file at `stagingPath` (a previously uploaded
+// backup), after verifying it has >=1 well-formed line. Rebuilds indices and
+// advances the spool-ID counter past the highest imported id. Returns false —
+// leaving the current log untouched — if staging is empty/unparseable.
+bool storeImportLogFile(const char* stagingPath);
+
 // ── Serial test harness (Phase 1) ─────────────────────────────────────────────
 // Handles one command line and returns true if it was a store command:
 //   EV onboard <uuid> <vendor> <material> | EV weigh <uuid> <gross_g>
