@@ -16,6 +16,8 @@ extern SemaphoreHandle_t    gTagMutex;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern SemaphoreHandle_t    gSpiMutex;
+extern char                 gWebAddr[48];
+extern char                 gApSsid[24];
 
 // TFT_eSPI configured via include/User_Setup.h (ILI9488, 480x320).
 // Landscape rotation (setRotation(1)): width=480, height=320.
@@ -73,9 +75,6 @@ static void buzz(DeviceState prev, DeviceState curr) {
             bzTone(523, 60); bzTone(659, 60);
             bzTone(784, 60); bzTone(880, 100);                   // C5-E5-G5-A5
         }
-        break;
-    case DeviceState::SpoolmanUnreachable:
-        bzTone(392, 100); bzTone(330, 200);                      // G4-E4 warning drop
         break;
     default:
         break;
@@ -212,15 +211,22 @@ void displayTask(void* param) {
 
             case DeviceState::Idle:
                 title("Seattle Makers", TFT_GREEN);
-                row(2, "Weigh Station", TFT_WHITE);
-                row(4, "Place spool to begin", TFT_DARKGREY);
+                row(2, "Place spool to begin", TFT_WHITE);
+                if (gWebAddr[0]) {
+                    row(5, "Web app:", TFT_DARKGREY);
+                    rowf(6, TFT_CYAN, "http://%s", gWebAddr);
+                }
                 pixelColor = pixel.Color(0, 20, 0);
                 break;
 
             case DeviceState::IdleNoWiFi:
-                title("No WiFi", tft.color565(220, 100, 0));
-                row(2, "Working offline", TFT_WHITE);
-                row(4, "Place spool to weigh", TFT_DARKGREY);
+                title("Weigh Station", tft.color565(220, 140, 0));
+                row(2, "Place spool to weigh", TFT_WHITE);
+                if (gApSsid[0]) {
+                    row(4, "Join WiFi:", TFT_DARKGREY);
+                    rowf(5, TFT_CYAN, "%s", gApSsid);
+                    rowf(6, TFT_CYAN, "http://%s", gWebAddr);
+                }
                 pixelColor = pixel.Color(40, 15, 0);
                 break;
 
@@ -290,18 +296,6 @@ void displayTask(void* param) {
                 title("Updating tag...", TFT_YELLOW);
                 pixelColor = pixel.Color(50, 50, 0);
                 break;
-
-            case DeviceState::SpoolmanUnreachable: {
-                title("Spoolman offline", tft.color565(220, 80, 0));
-                char rbuf[32];
-                snprintf(rbuf, sizeof(rbuf), "%.0f g (local)", remaining);
-                row(2, rbuf, TFT_WHITE);
-                row(3, "Will sync when reachable", TFT_DARKGREY);
-                row(5, "Fix URL at:", TFT_DARKGREY);
-                row(6, DEVICE_HOSTNAME ".local", TFT_WHITE);
-                pixelColor = pixel.Color(80, 30, 0);
-                break;
-            }
 
             default:
                 break;

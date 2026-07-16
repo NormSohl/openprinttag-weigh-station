@@ -21,6 +21,8 @@ extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
+extern char                 gWebAddr[48];
+extern char                 gApSsid[24];
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -122,11 +124,17 @@ void syncTask(void* param) {
         }
     }
 
-    // Join lab WiFi if provisioned; otherwise fall back to the SoftAP so the
+    // Join lab WiFi if provisioned; otherwise fall back to our own SoftAP so the
     // device stays usable (and the web app reachable) with no infrastructure.
     if (!wm.autoConnect("WeighStation-Setup")) {
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP("WeighStation");
+        strlcpy(gApSsid, "WeighStation", sizeof(gApSsid));
+        WiFi.softAPIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
         setState(DeviceState::IdleNoWiFi);
     } else {
+        gApSsid[0] = '\0';
+        snprintf(gWebAddr, sizeof(gWebAddr), "%s.local", DEVICE_HOSTNAME);
         setState(DeviceState::Idle);
     }
     // The web app runs regardless of station vs AP mode.
@@ -155,9 +163,13 @@ void syncTask(void* param) {
             case DeviceState::IdleNoWiFi:
                 sSpoolId = -1; sSnapshot = {};
                 gSpoolId = -1; gSpoolNeedsOnboarding = false;
-                // If station WiFi recovers while we're offline, upgrade to Idle.
-                if (state == DeviceState::IdleNoWiFi && WiFi.status() == WL_CONNECTED)
+                // If station WiFi comes up later, upgrade to Idle and switch the
+                // shown address from the SoftAP IP to the mDNS hostname.
+                if (state == DeviceState::IdleNoWiFi && WiFi.status() == WL_CONNECTED) {
+                    gApSsid[0] = '\0';
+                    snprintf(gWebAddr, sizeof(gWebAddr), "%s.local", DEVICE_HOSTNAME);
                     setState(DeviceState::Idle);
+                }
                 vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
                 continue;
 
@@ -345,7 +357,7 @@ void syncTask(void* param) {
             continue;
         }
 
-        // Any legacy Spoolman-era state falls through to a slow idle poll.
+        // Any unhandled state falls through to a slow idle poll.
         vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
     }
 }

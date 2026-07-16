@@ -157,8 +157,8 @@ void nfcTask(void* param) {
                     gTagMain = main;
                     gTagAux  = aux;
                     xSemaphoreGive(gTagMutex);
-                    // syncTask resolves instance_uuid against Spoolman and transitions
-                    // to WeighingAndSync (known spool) or ForeignTagFound (unregistered)
+                    // syncTask resolves instance_uuid against the local store and
+                    // transitions to WeighingAndSync (known) or ForeignTagFound (new)
                     setState(DeviceState::ValidTagFound);
                 }
             }
@@ -226,8 +226,8 @@ void nfcTask(void* param) {
             gTagAux  = {};
             xSemaphoreGive(gTagMutex);
 
-            // syncTask sees the nil UUID, creates the stub Spool in Spoolman, and
-            // transitions to WeighingAndSync once the record exists.
+            // syncTask sees the nil UUID, mints a local stub record, and
+            // transitions on once the record exists.
             setState(DeviceState::ValidTagFound);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -241,7 +241,7 @@ void nfcTask(void* param) {
         }
 
         // ── ForeignTagFound / RegisteringForeignTag / ValidTagFound ───────────
-        // syncTask owns the Spoolman side of these transitions.
+        // syncTask owns the store/record side of these transitions.
         // If the tag is removed before syncTask finishes, abandon and go idle.
         if (state == DeviceState::ForeignTagFound
             || state == DeviceState::RegisteringForeignTag
@@ -251,7 +251,7 @@ void nfcTask(void* param) {
             continue;
         }
 
-        // ── Present / WeighingAndSync / SpoolmanUnreachable / Reconciling ─────
+        // ── Present / WeighingAndSync / Reconciling ───────────────────────────
         if (!tagPresent) {
             if (++missCount >= 2) {
                 missCount = 0;

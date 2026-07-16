@@ -31,12 +31,18 @@ volatile bool gWriteAuxPending  = false;
 // Both tasks must take this mutex before any SPI transaction.
 SemaphoreHandle_t gSpiMutex = nullptr;
 
-// Spoolman spool ID for the tag currently on the scale (-1 = none / unknown).
+// Local spool ID for the tag currently on the scale (-1 = none / unknown).
 // Set by syncTask; read by displayTask for the "Spool #N" line.
 volatile int  gSpoolId             = -1;
-// True while the spool's Spoolman record still has needs_onboarding=true.
-// Drives the "Registered! Edit in Spoolman" display variant.
+// True while the spool's local record still has needs_onboarding=true.
+// Drives the "Registered! add details in web app" display variant.
 volatile bool gSpoolNeedsOnboarding = false;
+
+// Web-UI reachability, set by syncTask once the network is up and shown on the
+// idle screen so anyone can find the app. gApSsid is non-empty only in SoftAP
+// fallback (join that SSID, then browse to gWebAddr).
+char gWebAddr[48] = {};
+char gApSsid[24]  = {};
 
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);

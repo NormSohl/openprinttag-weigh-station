@@ -18,5 +18,4 @@ enum class DeviceState : uint8_t {
     WeighingAndSync,
     Present,
     ReconcilingMainSection,
-    SpoolmanUnreachable,
 };
