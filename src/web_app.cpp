@@ -71,6 +71,8 @@ static String head(const char* title) {
          "<a href='/'>Inventory</a>"
          "<a href='/spools'>Spools</a>"
          "<a href='/onboard'>Onboard</a>"
+         "<a href='/reorder'>Reorder</a>"
+         "<a href='/config'>Config</a>"
          "</span></header><main>";
     return h;
 }
@@ -327,6 +329,127 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     req->redirect("/");
 }
 
+// ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
+struct OnHand { uint16_t count; float grams; };
+
+// Sum active spools that match a stock item's identity. Matching is by vendor +
+// material (exact) — the reliable subset of the design's optional color/diameter
+// keys; a one-off spool not in the catalog never generates reorder noise.
+static OnHand rollUp(const CfgStock& s) {
+    OnHand oh{0, 0.0f};
+    size_t n = storeSpoolCount();
+    SpoolRecord r;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeSpoolAt(i, r)) continue;
+        if (strcmp(r.vendor, s.vendor) == 0 && strcmp(r.material, s.material) == 0
+                && r.remaining_g > 1.0f) {
+            oh.count++;
+            oh.grams += r.remaining_g;
+        }
+    }
+    return oh;
+}
+
+// Below threshold? min_spools takes precedence; else min_grams; else "empty".
+static bool belowThreshold(const CfgStock& s, const OnHand& oh) {
+    if (s.min_spools > 0) return oh.count < s.min_spools;
+    if (s.min_grams  > 0) return oh.grams < s.min_grams;
+    return oh.count < 1;
+}
+
+static void handleReorder(AsyncWebServerRequest* req) {
+    bool csv = req->hasParam("format") &&
+               req->getParam("format")->value() == "csv";
+
+    if (csv) {
+        String out = "vendor,material,color,diameter,sku,gtin,pack_qty,"
+                     "on_hand_spools,on_hand_g,min_spools,min_grams\n";
+        CfgStock s;
+        for (size_t i = 0; i < cfgStockCount(); i++) {
+            if (!cfgStockAt(i, s)) continue;
+            OnHand oh = rollUp(s);
+            if (!belowThreshold(s, oh)) continue;
+            out += String(s.vendor) + "," + s.material + "," + s.color + ","
+                 + String(s.dia, 2) + "," + s.sku + "," + s.gtin + ","
+                 + String(s.pack_qty) + "," + String(oh.count) + ","
+                 + String(oh.grams, 0) + "," + String(s.min_spools) + ","
+                 + String(s.min_grams, 0) + "\n";
+        }
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/csv", out);
+        resp->addHeader("Content-Disposition", "attachment; filename=reorder.csv");
+        req->send(resp);
+        return;
+    }
+
+    String p = head("Reorder");
+    p += "<h3>Reorder list</h3>";
+    p += "<p class='muted'>Standard-stock items at or below their threshold. "
+         "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
+         "to place the order.</p>";
+    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
+         "<th>On hand</th><th>Threshold</th></tr>";
+    CfgStock s;
+    int flagged = 0;
+    for (size_t i = 0; i < cfgStockCount(); i++) {
+        if (!cfgStockAt(i, s)) continue;
+        OnHand oh = rollUp(s);
+        if (!belowThreshold(s, oh)) continue;
+        flagged++;
+        String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
+                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " g")
+                   : String("empty");
+        p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
+           + esc(s.color) + "</td><td>" + String(oh.count) + " spool(s), "
+           + String(oh.grams, 0) + " g</td><td>" + thr + "</td></tr>";
+    }
+    if (flagged == 0)
+        p += "<tr><td colspan='5' class='muted'>Everything is above threshold "
+             "(or no stock items configured)</td></tr>";
+    p += "</table>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+// ── Config catalog editor (raw-JSON round-trip per table) ─────────────────────
+static void configTableForm(String& p, const char* label, const char* which) {
+    p += "<div class='card'><label style='margin-top:0'>" + String(label) + "</label>";
+    p += "<form method='POST' action='/api/config'>";
+    p += "<input type='hidden' name='which' value='" + String(which) + "'>";
+    p += "<textarea name='json' rows='6' style='width:100%;font-family:monospace;"
+         "font-size:13px;background:#222;color:#8f8;border:1px solid #444;border-radius:5px'>";
+    p += esc(cfgTableJson(which).c_str());
+    p += "</textarea>";
+    p += "<div><button type='submit'>Save " + String(label) + "</button></div>";
+    p += "</form></div>";
+}
+
+static void handleConfig(AsyncWebServerRequest* req) {
+    String p = head("Config");
+    p += "<h3>Config catalog</h3>";
+    p += "<p class='muted'>Edit the reference tables that drive onboarding and "
+         "reordering. Each is a JSON array; Save validates and persists it.</p>";
+    configTableForm(p, "Vendors",        "vendors");
+    configTableForm(p, "Materials",      "materials");
+    configTableForm(p, "Spool profiles", "spool-profiles");
+    configTableForm(p, "Colors",         "colors");
+    configTableForm(p, "Stock items",    "stock-items");
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleApiConfigSave(AsyncWebServerRequest* req) {
+    const AsyncWebParameter* pw = req->getParam("which", true);
+    const AsyncWebParameter* pj = req->getParam("json", true);
+    if (!pw || !pj) { req->send(400, "text/plain", "missing which/json"); return; }
+    String which = pw->value();
+    if (!cfgReplaceTable(which.c_str(), pj->value())) {
+        req->send(400, "text/plain", "invalid JSON for " + which);
+        return;
+    }
+    cfgSave(which.c_str());
+    req->redirect("/config");
+}
+
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void webAppBegin() {
     if (MDNS.begin(DEVICE_HOSTNAME))
@@ -338,6 +461,9 @@ void webAppBegin() {
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
+    sServer.on("/reorder",     HTTP_GET,  handleReorder);
+    sServer.on("/config",      HTTP_GET,  handleConfig);
+    sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.
