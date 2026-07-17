@@ -18,6 +18,7 @@ extern volatile bool        gSpoolNeedsOnboarding;
 extern SemaphoreHandle_t    gSpiMutex;
 extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
+extern volatile bool        gScaleCalibrated;
 
 // TFT_eSPI configured via include/User_Setup.h (ILI9488, 480x320).
 // Landscape rotation (setRotation(1)): width=480, height=320.
@@ -137,6 +138,7 @@ void displayTask(void* param) {
     bool        blinkOn    = false;
     TickType_t  lastBlink  = 0;
     int         lastCount  = -1;
+    bool        lastCal    = gScaleCalibrated;
 
     for (;;) {
         xSemaphoreTake(gStateMutex, portMAX_DELAY);
@@ -164,6 +166,17 @@ void displayTask(void* param) {
             }
         }
         prevState = state;
+
+        // Calibration flips asynchronously (CAL over serial). Force a clean
+        // redraw so the idle "not calibrated" banner appears/clears immediately.
+        bool calNow = gScaleCalibrated;
+        if (calNow != lastCal) {
+            lastCal = calNow;
+            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            cls();
+            xSemaphoreGive(gSpiMutex);
+            rendered = false;
+        }
 
         xSemaphoreTake(gTagMutex, portMAX_DELAY);
         OptMain      snap    = gTagMain;
@@ -212,6 +225,10 @@ void displayTask(void* param) {
             case DeviceState::Idle:
                 title("Seattle Makers", TFT_GREEN);
                 row(2, "Place spool to begin", TFT_WHITE);
+                if (!gScaleCalibrated) {
+                    row(3, "Scale not calibrated", tft.color565(220, 140, 0));
+                    row(4, "Send CAL <g> over USB", tft.color565(220, 140, 0));
+                }
                 if (gWebAddr[0]) {
                     row(5, "Web app:", TFT_DARKGREY);
                     rowf(6, TFT_CYAN, "http://%s", gWebAddr);
@@ -222,6 +239,8 @@ void displayTask(void* param) {
             case DeviceState::IdleNoWiFi:
                 title("Weigh Station", tft.color565(220, 140, 0));
                 row(2, "Place spool to weigh", TFT_WHITE);
+                if (!gScaleCalibrated)
+                    row(3, "Uncalibrated: CAL/USB", tft.color565(220, 140, 0));
                 if (gApSsid[0]) {
                     row(4, "Join WiFi:", TFT_DARKGREY);
                     rowf(5, TFT_CYAN, "%s", gApSsid);

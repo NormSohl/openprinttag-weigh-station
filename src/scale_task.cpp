@@ -8,6 +8,7 @@
 
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
+extern volatile bool        gScaleCalibrated;
 
 // ── Serial calibration helpers ────────────────────────────────────────────────
 // Commands accepted over Serial at 115200 baud:
@@ -39,6 +40,7 @@ static void handleSerialCommand(NAU7802& nau) {
         if (knownGrams > 0) {
             nau.calculateCalibrationFactor(knownGrams, 32);
             saveCalibration(nau);
+            gScaleCalibrated = true;   // clears the idle-screen "run CAL" banner
             Serial.printf("[scale] Cal factor set: %.4f (for %.1fg)\n",
                           nau.getCalibrationFactor(), knownGrams);
         }
@@ -65,6 +67,7 @@ void scaleTask(void* param) {
     Preferences prefs;
     prefs.begin("scale", true);
     bool hasStoredCal = prefs.getBool("valid", false);
+    gScaleCalibrated = hasStoredCal;
     if (hasStoredCal) {
         nau.setZeroOffset((int32_t)prefs.getInt("zero", 0));
         nau.setCalibrationFactor(prefs.getFloat("cal", SCALE_CAL_FACTOR));
