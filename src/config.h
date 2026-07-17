@@ -42,11 +42,8 @@
 // The /reset endpoint clears WiFi credentials and reboots into the portal.
 #define DEVICE_HOSTNAME  "weighstation"
 
-// ── Spoolman ──────────────────────────────────────────────────
-#define SPOOLMAN_BASE_URL  "http://spoolman.local:7912"
-
 // ── Behaviour constants ───────────────────────────────────────
-#define SPOOLMAN_POLL_MS       1000  // reconciliation cadence (~1 Hz)
+#define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing

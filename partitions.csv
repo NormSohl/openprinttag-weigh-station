@@ -1,0 +1,19 @@
+# ESP32-S3-MINI-1-N8R2 — 8 MB flash. Single app (no OTA) + LittleFS.
+# The panel USB-C is full-function, so firmware is flashed over USB and OTA
+# (which needs a second 2 MB app slot) isn't worth its cost. The freed
+# space goes to the filesystem. The FS partition is named "spiffs" so
+# LittleFS.begin() finds it by default. See docs/design/implementation-plan.md.
+#
+# Layout (offsets/sizes in bytes):
+#   nvs        28 KB   config/counters (Preferences: "store", "scale", …)
+#   factory     3 MB   firmware (generous headroom; build is well under)
+#   spiffs   ~4.9 MB   LittleFS: /log, /index, /config, /web
+#   coredump   64 KB   crash dumps
+#   -------------------------------------------------------------
+#   total       8 MB   (ends exactly at 0x800000)
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x7000,
+factory,    app,  factory,  0x10000,   0x300000,
+spiffs,     data, spiffs,   0x310000,  0x4E0000,
+coredump,   data, coredump, 0x7F0000,  0x10000,

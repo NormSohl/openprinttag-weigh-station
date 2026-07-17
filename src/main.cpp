@@ -4,6 +4,8 @@
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
+#include "store.h"          // local-storage core (redesign Phase 1)
+#include "config_store.h"   // config catalog (redesign Phase 3)
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -29,12 +31,18 @@ volatile bool gWriteAuxPending  = false;
 // Both tasks must take this mutex before any SPI transaction.
 SemaphoreHandle_t gSpiMutex = nullptr;
 
-// Spoolman spool ID for the tag currently on the scale (-1 = none / unknown).
+// Local spool ID for the tag currently on the scale (-1 = none / unknown).
 // Set by syncTask; read by displayTask for the "Spool #N" line.
 volatile int  gSpoolId             = -1;
-// True while the spool's Spoolman record still has needs_onboarding=true.
-// Drives the "Registered! Edit in Spoolman" display variant.
+// True while the spool's local record still has needs_onboarding=true.
+// Drives the "Registered! add details in web app" display variant.
 volatile bool gSpoolNeedsOnboarding = false;
+
+// Web-UI reachability, set by syncTask once the network is up and shown on the
+// idle screen so anyone can find the app. gApSsid is non-empty only in SoftAP
+// fallback (join that SSID, then browse to gWebAddr).
+char gWebAddr[48] = {};
+char gApSsid[24]  = {};
 
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);
@@ -51,6 +59,22 @@ void setup() {
     gWeightMutex = xSemaphoreCreateMutex();
     gTagMutex = xSemaphoreCreateMutex();
     gSpiMutex = xSemaphoreCreateMutex();
+
+    // Local-storage core (LittleFS log + indices + NVS counter). Headless in
+    // Phase 1 — driven via the serial harness (EV / DUMP / REBUILD / …).
+    if (storeBegin())
+        Serial.printf("[store] ready: %u spools, %u log lines, next id #%u\n",
+                      (unsigned)storeSpoolCount(), (unsigned)storeLogLineCount(),
+                      (unsigned)storePeekSpoolId());
+    else
+        Serial.println("[store] LittleFS mount FAILED");
+
+    // Config catalog (vendors/materials/profiles/colors/stock-items on LittleFS).
+    cfgBegin();
+    Serial.printf("[cfg] ready: %u vendors, %u materials, %u profiles, %u colors, %u stock\n",
+                  (unsigned)cfgVendorCount(), (unsigned)cfgMaterialCount(),
+                  (unsigned)cfgProfileCount(), (unsigned)cfgColorCount(),
+                  (unsigned)cfgStockCount());
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
