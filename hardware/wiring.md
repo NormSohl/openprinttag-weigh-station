@@ -69,7 +69,7 @@ board photo: [`docs/datasheets/display-hosyond-ili9488.md`](../docs/datasheets/d
 | CS | GPIO 15 | TFT chip select |
 | DC (RS) | GPIO 16 | data/command select |
 | RST | GPIO 17 | reset |
-| LED | 3.3V | backlight enable (tie high for always-on) |
+| LED (panel backlight) | 3.3V | display's built-in backlight; tie high for always-on |
 | VCC | 3.3V | |
 | GND | GND | |
 
