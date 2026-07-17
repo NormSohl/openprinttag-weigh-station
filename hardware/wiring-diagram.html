@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Filament Scale — Wiring &amp; Pinout</title>
+</head>
+<body>
+<style>
+  :root{
+    --paper:#f6f5f1; --card:#ffffff; --ink:#1b1e24; --muted:#5b626d;
+    --line:#dcdad2; --accent:#1f6f8b; --accent-2:#134f66; --accent-soft:#e7eff2;
+    --flag:#8f5410; --flag-bg:#f6e9d0; --flag-line:#d8b877;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --paper:#14171c; --card:#1b1f26; --ink:#e9eaed; --muted:#98a1ac;
+      --line:#2a2f38; --accent:#6cb6cf; --accent-2:#9ad2e6; --accent-soft:#16242b;
+      --flag:#e2a950; --flag-bg:#2b2113; --flag-line:#4a3a1c; }
+  }
+  :root[data-theme="light"]{
+    --paper:#f6f5f1; --card:#ffffff; --ink:#1b1e24; --muted:#5b626d; --line:#dcdad2;
+    --accent:#1f6f8b; --accent-2:#134f66; --accent-soft:#e7eff2;
+    --flag:#8f5410; --flag-bg:#f6e9d0; --flag-line:#d8b877;
+  }
+  :root[data-theme="dark"]{
+    --paper:#14171c; --card:#1b1f26; --ink:#e9eaed; --muted:#98a1ac; --line:#2a2f38;
+    --accent:#6cb6cf; --accent-2:#9ad2e6; --accent-soft:#16242b;
+    --flag:#e2a950; --flag-bg:#2b2113; --flag-line:#4a3a1c;
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:var(--sans);line-height:1.5;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:880px;margin:0 auto;padding:40px 24px 72px;}
+
+  .masthead{display:flex;justify-content:space-between;align-items:flex-end;
+    gap:24px;border-bottom:2px solid var(--accent);padding-bottom:18px;margin-bottom:8px;}
+  .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent-2);font-weight:600;margin:0 0 6px;}
+  h1{font-size:29px;line-height:1.1;margin:0;font-weight:700;text-wrap:balance;
+    letter-spacing:-.01em;}
+  .sub{color:var(--muted);font-size:14.5px;margin:8px 0 0;max-width:52ch;}
+  .btn{font-family:var(--sans);font-size:13.5px;font-weight:600;cursor:pointer;
+    white-space:nowrap;color:#fff;background:var(--accent);border:0;border-radius:8px;
+    padding:10px 16px;}
+  .btn:hover{background:var(--accent-2);}
+  .btn:focus-visible{outline:3px solid var(--accent-soft);outline-offset:2px;}
+
+  .meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:12.5px;
+    margin:14px 0 34px;}
+  .meta b{color:var(--ink);font-weight:600;}
+
+  section{margin:0 0 30px;}
+  h2{font-size:13px;letter-spacing:.13em;text-transform:uppercase;color:var(--accent-2);
+    font-weight:700;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line);}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:6px 4px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  .diagram{padding:20px 18px 10px;}
+  .diagram svg{width:100%;height:auto;display:block;color:var(--accent);}
+  .diagram .edge{stroke:currentColor;fill:none;}
+  .diagram .node{fill:var(--card);stroke:var(--line);stroke-width:1.5px;}
+  .diagram .ntitle{fill:var(--ink);font-family:var(--sans);font-weight:700;}
+  .diagram .nsub{fill:var(--muted);font-family:var(--sans);}
+  .diagram .elabel{fill:var(--muted);stroke:var(--card);stroke-width:4px;
+    paint-order:stroke;font-family:var(--mono);font-size:12.5px;}
+  .diagram .badge-bg{fill:var(--flag-bg);stroke:var(--flag-line);}
+  .diagram .badge-tx{fill:var(--flag);font-family:var(--sans);font-weight:700;}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 20px;padding:6px 8px 12px;
+    font-size:12.5px;color:var(--muted);}
+  .legend span{display:inline-flex;align-items:center;gap:7px;}
+  .swatch-line{width:22px;height:0;border-top:3px solid var(--accent);border-radius:2px;}
+  .swatch-line.dash{border-top-style:dashed;}
+  .cap{color:var(--muted);font-size:12.5px;margin:10px 2px 0;}
+
+  .scroll{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  caption{text-align:left;font-weight:700;font-size:15px;padding:12px 12px 2px;
+    display:flex;align-items:center;gap:10px;}
+  .pill{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--accent-2);background:var(--accent-soft);
+    border-radius:999px;padding:3px 9px;}
+  thead th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;text-align:left;
+    padding:9px 12px;border-bottom:1px solid var(--line);}
+  tbody td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:nth-child(even){background:color-mix(in srgb,var(--paper) 55%,transparent);}
+  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-size:13px;font-weight:600;}
+  .arrow{color:var(--muted);padding:0 2px;}
+  td .note{color:var(--muted);font-size:12.5px;}
+
+  .flag{display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
+    font-size:11px;font-weight:700;letter-spacing:.03em;color:var(--flag);
+    background:var(--flag-bg);border:1px solid var(--flag-line);border-radius:6px;
+    padding:2px 7px;white-space:nowrap;}
+  .flag .di{font-size:9px;}
+
+  .wire{display:inline-flex;align-items:center;gap:8px;}
+  .chip{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.35);
+    flex:0 0 auto;}
+
+  .callout{background:var(--flag-bg);border:1px solid var(--flag-line);border-radius:12px;
+    padding:16px 18px;font-size:13.5px;color:var(--ink);}
+  .callout h3{margin:0 0 6px;font-size:14px;color:var(--flag);letter-spacing:.02em;}
+  .callout p{margin:6px 0 0;}
+  .callout code{font-family:var(--mono);font-size:12.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:5px;padding:1px 5px;}
+
+  a{color:var(--accent);}
+  @media (max-width:560px){ .masthead{flex-direction:column;align-items:flex-start;}
+    h1{font-size:24px;} }
+
+  @media print{
+    :root,:root[data-theme="light"],:root[data-theme="dark"]{
+      --paper:#fff;--card:#fff;--ink:#000;--muted:#333;--line:#b9b9b9;
+      --accent:#134f66;--accent-2:#0d3b4d;--accent-soft:#eef4f6;
+      --flag:#6f440c;--flag-bg:#f2e7cf;--flag-line:#c9ab6e;
+    }
+    body{background:#fff;}
+    .wrap{padding:0;max-width:none;}
+    .noprint{display:none!important;}
+    .card,.callout{box-shadow:none;break-inside:avoid;}
+    section{break-inside:avoid;}
+    h2{break-after:avoid;}
+    tbody tr:nth-child(even){background:transparent;}
+    a{color:#000;text-decoration:none;}
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Filament Scale · Bench Reference</p>
+      <h1>Wiring &amp; Connector Pinout</h1>
+      <p class="sub">Source&nbsp;→ destination for the controller and every peripheral,
+        wired as a daisy chain for single-wire crimp terminals.</p>
+    </div>
+    <button class="btn noprint" onclick="window.print()">Print this sheet</button>
+  </header>
+
+  <div class="meta">
+    <span><b>MCU</b> SparkFun Thing Plus ESP32-S3 (DEV-21230)</span>
+    <span><b>Bus</b> PN5180 + TFT share SPI · NAU7802 on I²C/Qwiic</span>
+    <span><b>Matches</b> src/config.h · hardware/netlist.md</span>
+  </div>
+
+  <section>
+    <h2>Topology</h2>
+    <div class="card diagram">
+      <svg viewBox="0 0 820 430" role="img"
+           aria-label="Block diagram: the ESP32-S3 drives a shared SPI bus to the PN5180, which daisy-chains onward to the ILI9488 TFT; the ESP32-S3 also connects to the NAU7802 load-cell ADC over a Qwiic cable, and the NAU7802 reads the full-bridge load cell.">
+        <defs>
+          <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- edges -->
+        <g class="edge" stroke-width="2.5">
+          <line x1="212" y1="220" x2="322" y2="220" marker-end="url(#arw)"/>
+          <line x1="486" y1="220" x2="602" y2="220" marker-end="url(#arw)"/>
+          <line x1="128" y1="272" x2="128" y2="330" marker-end="url(#arw)"/>
+          <line x1="214" y1="372" x2="326" y2="372" marker-end="url(#arw)"/>
+        </g>
+        <path class="edge" d="M128,168 C128,112 692,112 692,168"
+              stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arw)"/>
+
+        <!-- edge labels (haloed) -->
+        <g class="elabel" text-anchor="middle">
+          <text x="267" y="212">shared bus</text>
+          <text x="544" y="212">daisy</text>
+          <text x="410" y="98">CS · DC · RST</text>
+          <text x="150" y="306" text-anchor="start">Qwiic</text>
+          <text x="270" y="364">E± · A±</text>
+        </g>
+
+        <!-- double-crimp badge -->
+        <rect class="badge-bg" x="300" y="278" width="210" height="26" rx="8"/>
+        <text class="badge-tx" x="405" y="295" text-anchor="middle" font-size="12">◆ 5 double-crimp terminals</text>
+
+        <!-- nodes -->
+        <rect class="node" x="42"  y="170" width="170" height="100" rx="11"/>
+        <rect class="node" x="322" y="170" width="164" height="100" rx="11"/>
+        <rect class="node" x="602" y="170" width="176" height="100" rx="11"/>
+        <rect class="node" x="42"  y="330" width="172" height="84"  rx="11"/>
+        <rect class="node" x="326" y="330" width="164" height="84"  rx="11"/>
+
+        <g text-anchor="middle">
+          <text class="ntitle" x="127" y="214" font-size="17">ESP32-S3</text>
+          <text class="nsub"   x="127" y="236" font-size="12.5">Thing Plus · controller</text>
+          <text class="ntitle" x="404" y="214" font-size="17">PN5180</text>
+          <text class="nsub"   x="404" y="236" font-size="12.5">NFC reader</text>
+          <text class="ntitle" x="690" y="214" font-size="17">ILI9488</text>
+          <text class="nsub"   x="690" y="236" font-size="12.5">3.5&quot; TFT display</text>
+          <text class="ntitle" x="128" y="368" font-size="16">NAU7802</text>
+          <text class="nsub"   x="128" y="389" font-size="12.5">load-cell ADC</text>
+          <text class="ntitle" x="408" y="368" font-size="16">Load cell</text>
+          <text class="nsub"   x="408" y="389" font-size="12.5">full bridge</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i class="swatch-line"></i> wire run</span>
+        <span><i class="swatch-line dash"></i> direct control line (from MCU)</span>
+        <span><span class="flag"><i class="di">◆</i> two wires, one terminal</span></span>
+      </div>
+      <p class="cap">Buzzer (GPIO&nbsp;14&nbsp;+ / GND&nbsp;−) and the onboard NeoPixel
+        (GPIO&nbsp;48) &amp; BOOT button (GPIO&nbsp;0) are omitted from the diagram — see tables.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Controller — ESP32-S3 pin map</h2>
+    <div class="card scroll">
+      <table>
+        <caption>Every used pin <span class="pill">source</span></caption>
+        <thead><tr><th>Pin</th><th>Signal</th><th>Goes to</th></tr></thead>
+        <tbody>
+          <tr><td class="m">GPIO 5</td><td>NFC chip-select</td><td>PN5180 · NSS</td></tr>
+          <tr><td class="m">GPIO 6</td><td>NFC busy</td><td>PN5180 · BUSY <span class="note">(active-high)</span></td></tr>
+          <tr><td class="m">GPIO 7</td><td>NFC reset</td><td>PN5180 · RST <span class="note">(active-low)</span></td></tr>
+          <tr><td class="m">GPIO 8</td><td>I²C SDA</td><td>NAU7802 · SDA <span class="note">(Qwiic)</span></td></tr>
+          <tr><td class="m">GPIO 9</td><td>I²C SCL</td><td>NAU7802 · SCL <span class="note">(Qwiic)</span></td></tr>
+          <tr><td class="m">GPIO 14</td><td>Buzzer drive (PWM)</td><td>Buzzer · +</td></tr>
+          <tr><td class="m">GPIO 15</td><td>TFT chip-select</td><td>TFT · CS</td></tr>
+          <tr><td class="m">GPIO 16</td><td>TFT data/command</td><td>TFT · DC (RS)</td></tr>
+          <tr><td class="m">GPIO 17</td><td>TFT reset</td><td>TFT · RESET</td></tr>
+          <tr><td class="m">GPIO 35</td><td>SPI MOSI</td><td>PN5180 · MOSI <span class="arrow">→</span> TFT · SDI <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">GPIO 36</td><td>SPI SCK</td><td>PN5180 · SCK <span class="arrow">→</span> TFT · SCK <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">GPIO 37</td><td>SPI MISO</td><td>PN5180 · MISO <span class="arrow">→</span> TFT · SDO <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">3V3</td><td>+3.3&nbsp;V rail</td><td>PN5180 · 3.3V <span class="arrow">→</span> TFT · VCC <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">GND</td><td>Ground rail</td><td>PN5180 · GND <span class="arrow">→</span> TFT · GND · buzzer −</td></tr>
+          <tr><td class="m">GPIO 48</td><td>WS2812 status pixel</td><td class="note">onboard — no wire</td></tr>
+          <tr><td class="m">GPIO 0</td><td>BOOT / WiFi-reset</td><td class="note">onboard button — no wire</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>PN5180 connector — the daisy junction</h2>
+    <div class="card scroll">
+      <table>
+        <caption>PN5180 NFC <span class="pill">SPI · 3.3&nbsp;V only</span></caption>
+        <thead><tr><th>Pin</th><th>Wire in</th><th>Wire out (onward to TFT)</th><th>Terminal</th></tr></thead>
+        <tbody>
+          <tr><td class="m">NSS</td><td>← GPIO 5</td><td class="note">—</td><td></td></tr>
+          <tr><td class="m">BUSY</td><td>← GPIO 6</td><td class="note">—</td><td></td></tr>
+          <tr><td class="m">RST</td><td>← GPIO 7</td><td class="note">—</td><td></td></tr>
+          <tr><td class="m">MOSI</td><td>← GPIO 35</td><td>→ TFT SDI</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+          <tr><td class="m">SCK</td><td>← GPIO 36</td><td>→ TFT SCK</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+          <tr><td class="m">MISO</td><td>← GPIO 37</td><td>→ TFT SDO</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+          <tr><td class="m">3.3V</td><td>← 3V3</td><td>→ TFT VCC</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+          <tr><td class="m">GND</td><td>← GND</td><td>→ TFT GND</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">All five double-crimp terminals live here. Every other terminal in the
+      build holds a single wire.</p>
+  </section>
+
+  <section>
+    <h2>Display connector — ILI9488 TFT</h2>
+    <div class="card scroll">
+      <table>
+        <caption>ILI9488 3.5&quot; TFT <span class="pill">SPI · shared bus</span></caption>
+        <thead><tr><th>Pin</th><th>From</th></tr></thead>
+        <tbody>
+          <tr><td class="m">SDI (MOSI)</td><td>PN5180 · MOSI <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">SCK</td><td>PN5180 · SCK <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">SDO (MISO)</td><td>PN5180 · MISO <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">CS</td><td>GPIO 15 <span class="note">(direct)</span></td></tr>
+          <tr><td class="m">DC (RS)</td><td>GPIO 16 <span class="note">(direct)</span></td></tr>
+          <tr><td class="m">RESET</td><td>GPIO 17 <span class="note">(direct)</span></td></tr>
+          <tr><td class="m">VCC</td><td>PN5180 · 3.3V <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">LED</td><td>bridge to VCC on the module <span class="note">(panel backlight, always-on)</span></td></tr>
+          <tr><td class="m">GND</td><td>PN5180 · GND <span class="note">(daisy)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Touch pins (T_CLK/T_CS/T_DIN/T_DO/T_IRQ) and the on-board microSD header
+      are left unwired.</p>
+  </section>
+
+  <section>
+    <h2>Scale — NAU7802 &amp; load cell</h2>
+    <div class="card scroll">
+      <table>
+        <caption>NAU7802 ADC <span class="pill">one Qwiic cable</span></caption>
+        <thead><tr><th>Qwiic conductor</th><th>MCU</th><th>NAU7802</th></tr></thead>
+        <tbody>
+          <tr><td class="m">SDA</td><td class="m">GPIO 8</td><td>SDA</td></tr>
+          <tr><td class="m">SCL</td><td class="m">GPIO 9</td><td>SCL</td></tr>
+          <tr><td class="m">+3.3V</td><td class="m">Qwiic 3V3</td><td>3.3V</td></tr>
+          <tr><td class="m">GND</td><td class="m">Qwiic GND</td><td>GND</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card scroll" style="margin-top:14px;">
+      <table>
+        <caption>Load cell → NAU7802 terminal block <span class="pill">4-wire full bridge</span></caption>
+        <thead><tr><th>Wire</th><th>Function</th><th>Terminal</th></tr></thead>
+        <tbody>
+          <tr><td><span class="wire"><span class="chip" style="background:#d0342c"></span>Red <span class="note">(红)</span></span></td><td>Excitation +</td><td class="m">E+</td></tr>
+          <tr><td><span class="wire"><span class="chip" style="background:#20242b"></span>Black <span class="note">(黑)</span></span></td><td>Excitation −</td><td class="m">E−</td></tr>
+          <tr><td><span class="wire"><span class="chip" style="background:#2e9e4f"></span>Green <span class="note">(绿)</span></span></td><td>Signal +</td><td class="m">A+</td></tr>
+          <tr><td><span class="wire"><span class="chip" style="background:#f4f2ec"></span>White <span class="note">(白)</span></span></td><td>Signal −</td><td class="m">A−</td></tr>
+          <tr><td><span class="wire"><span class="chip" style="background:#e0b325"></span>Yellow <span class="note">(黄)</span></span></td><td>Shield / drain</td><td class="m">GND <span class="note">(omit if absent)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Mount force-axis vertical, sealed/potted face down for positive output.
+      Calibrate at 50–80% of rated range via the web <b>Calibrate</b> page.</p>
+  </section>
+
+  <section>
+    <h2>Buzzer</h2>
+    <div class="card scroll">
+      <table>
+        <caption>Passive piezo <span class="pill">PWM · no resistor</span></caption>
+        <thead><tr><th>Buzzer</th><th>To</th></tr></thead>
+        <tbody>
+          <tr><td class="m">+</td><td>GPIO 14</td></tr>
+          <tr><td class="m">−</td><td>GND <span class="note">(a spare MCU GND keeps it off the daisy chain)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Double-crimping</h2>
+    <div class="callout">
+      <h3>◆ Two wires into one terminal</h3>
+      <p>Daisy-chaining moves each branch to the pass-through pin, where an incoming and an
+        outgoing wire meet. Join them by crimping <b>both wires into one terminal</b> — it
+        works when the combined copper fits the barrel (rule of thumb: two conductors about
+        one size class below the terminal's max, e.g. two <code>26 AWG</code> in a
+        <code>22–26 AWG</code> terminal).</p>
+      <p>Strip both, twist together (tin lightly if solid-core), seat fully, crimp, and
+        <b>tug-test each leg separately</b>. If a barrel won't take two: use a pigtail
+        Y-splice (two → one, heat-shrunk) just upstream, or a small 3V3/GND distribution point.
+        Bridging <code>VCC→LED</code> on the display and landing buzzer&nbsp;− on a spare GND
+        keep the whole TFT connector single-wire.</p>
+    </div>
+  </section>
+
+  <p class="meta" style="margin-top:8px;">
+    <span><b>⚠ PN5180 is 3.3&nbsp;V only</b> — never 5&nbsp;V.</span>
+    <span>PN5180 + TFT share MOSI/SCK/MISO; a firmware mutex arbitrates the bus.</span>
+  </p>
+</div>
+</body>
+</html>
