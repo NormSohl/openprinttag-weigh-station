@@ -4,6 +4,7 @@
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
+#include <vector>
 #include <string.h>
 #include "config.h"
 #include "device_state.h"
@@ -102,8 +103,9 @@ static void handleRoot(AsyncWebServerRequest* req) {
         if (storeGetSpool((uint32_t)cur, r)) {
             p += "<div class='card'>";
             p += "<div class='muted'>On the scale now</div>";
-            p += "<div class='big'>#" + String((unsigned)r.spool) + " "
-               + esc(r.material[0] ? r.material : "Unknown") + "</div>";
+            p += "<div class='big'><a href='/spool?id=" + String((unsigned)r.spool)
+               + "' style='color:inherit;text-decoration:none'>#" + String((unsigned)r.spool)
+               + " " + esc(r.material[0] ? r.material : "Unknown") + "</a></div>";
             if (r.needs_ob)
                 p += "<p class='ob'>Needs onboarding &mdash; "
                      "<a href='/onboard' style='color:#fd6'>add details</a></p>";
@@ -145,7 +147,8 @@ static void handleSpools(AsyncWebServerRequest* req) {
         char sw[40];
         snprintf(sw, sizeof(sw), "<span class='sw' style='background:#%02x%02x%02x'></span>",
                  r.rgba[0], r.rgba[1], r.rgba[2]);
-        p += "<tr><td>#" + String((unsigned)r.spool) + "</td><td>" + sw
+        p += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
+           + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>" + sw
            + esc(r.material[0] ? r.material : "Unknown") + "</td><td>" + esc(r.vendor)
            + "</td><td>" + String(r.remaining_g, 0) + " g</td><td>"
            + (r.needs_ob ? "<span class='ob'>needs onboarding</span>" : "")
@@ -177,6 +180,105 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
     }
     j += "]";
     req->send(200, "application/json", j);
+}
+
+// ── Per-spool weigh history + sparkline ───────────────────────────────────────
+struct WeighSeries {
+    std::vector<float>  rem, used, gross;
+    std::vector<String> ts;
+};
+static void collectWeigh(const StoreEvent& e, void* ctx) {
+    WeighSeries* s = (WeighSeries*)ctx;
+    s->rem.push_back(e.remaining_g);
+    s->used.push_back(e.used_g);
+    s->gross.push_back(e.gross_g);
+    s->ts.push_back(String(e.ts));
+}
+
+// Remaining-weight-over-sessions sparkline: one series, so no legend — the title
+// names it and the table below carries exact values. Thin 2px line, recessive
+// baseline, endpoint dot; colour on the mark only, text stays in ink tokens.
+static String sparkline(const std::vector<float>& v) {
+    if (v.size() < 2)
+        return "<p class='muted'>Not enough weigh sessions yet for a trend.</p>";
+    const float W = 320, H = 64, PAD = 6;
+    float lo = v[0], hi = v[0];
+    for (float x : v) { if (x < lo) lo = x; if (x > hi) hi = x; }
+    float span = (hi - lo) > 0.001f ? (hi - lo) : 1.0f;
+    auto X = [&](size_t i){ return PAD + (W - 2*PAD) * (float)i / (v.size() - 1); };
+    auto Y = [&](float val){ return PAD + (H - 2*PAD) * (1.0f - (val - lo) / span); };
+    String pts;
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i) pts += " ";
+        pts += String(X(i), 1) + "," + String(Y(v[i]), 1);
+    }
+    char aria[96];
+    snprintf(aria, sizeof(aria),
+             "Remaining weight over %u weigh sessions, latest %.0f g",
+             (unsigned)v.size(), v.back());
+    String s = "<svg viewBox='0 0 320 64' width='320' style='max-width:100%;height:auto' "
+               "role='img' aria-label='"; s += aria; s += "'>";
+    s += "<line x1='6' y1='58' x2='314' y2='58' stroke='#333' stroke-width='1'/>";
+    s += "<polyline fill='none' stroke='#8f8' stroke-width='2' "
+         "stroke-linejoin='round' stroke-linecap='round' points='" + pts + "'/>";
+    s += "<circle cx='" + String(X(v.size()-1), 1) + "' cy='" + String(Y(v.back()), 1)
+       + "' r='3' fill='#cffccf'/>";
+    s += "</svg>";
+    return s;
+}
+
+static void handleSpoolDetail(AsyncWebServerRequest* req) {
+    if (!req->hasParam("id")) { req->send(400, "text/plain", "missing id"); return; }
+    uint32_t id = (uint32_t)req->getParam("id")->value().toInt();
+    SpoolRecord r;
+    if (!storeGetSpool(id, r)) { req->send(404, "text/plain", "unknown spool"); return; }
+
+    WeighSeries s;
+    storeForEachWeigh(id, collectWeigh, &s);
+
+    if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
+        String out = "ts,gross_g,remaining_g,used_g\n";
+        for (size_t i = 0; i < s.rem.size(); i++)
+            out += s.ts[i] + "," + String(s.gross[i], 1) + ","
+                 + String(s.rem[i], 1) + "," + String(s.used[i], 1) + "\n";
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/csv", out);
+        resp->addHeader("Content-Disposition",
+                        "attachment; filename=spool-" + String(id) + ".csv");
+        req->send(resp);
+        return;
+    }
+
+    String p = head("Spool");
+    char rgb[8];
+    snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
+    p += "<div class='card'>";
+    p += "<div class='big'><span class='sw' style='background:#" + String(rgb)
+       + "'></span>#" + String((unsigned)r.spool) + " "
+       + esc(r.material[0] ? r.material : "Unknown") + "</div>";
+    p += "<p class='muted'>" + esc(r.vendor) + (r.abbr[0] ? " &middot; " + esc(r.abbr) : String())
+       + " &middot; " + String((unsigned)s.rem.size()) + " weigh session(s)</p>";
+    p += "<p class='big'>" + String(r.remaining_g, 0) + " g <span class='muted' "
+         "style='font-size:15px'>remaining &middot; " + String(r.used_g, 0)
+       + " g used</span></p>";
+    p += "</div>";
+
+    p += "<div class='card'><label style='margin-top:0'>Remaining over time</label>";
+    p += sparkline(s.rem);
+    p += "</div>";
+
+    p += "<h3>Weigh history <a href='/spool?id=" + String(id)
+       + "&format=csv' style='font-size:14px;color:#8f8'>(CSV)</a></h3>";
+    p += "<table><tr><th>When (UTC)</th><th>Gross</th><th>Remaining</th><th>Used</th></tr>";
+    if (s.rem.empty())
+        p += "<tr><td colspan='4' class='muted'>No weigh sessions yet</td></tr>";
+    for (size_t k = s.rem.size(); k-- > 0; )   // newest first
+        p += "<tr><td>" + s.ts[k] + "</td><td>" + String(s.gross[k], 0)
+           + " g</td><td>" + String(s.rem[k], 0) + " g</td><td>"
+           + String(s.used[k], 0) + " g</td></tr>";
+    p += "</table>";
+    p += "<p class='muted'><a href='/spools' style='color:#8f8'>&larr; all spools</a></p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
 }
 
 // ── Onboarding form ───────────────────────────────────────────────────────────
@@ -518,6 +620,7 @@ void webAppBegin() {
 
     sServer.on("/",            HTTP_GET,  handleRoot);
     sServer.on("/spools",      HTTP_GET,  handleSpools);
+    sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);

@@ -99,6 +99,13 @@ uint32_t storeCrc32(const uint8_t* data, size_t len);
 // (year >= 2020), otherwise a boot-relative "1970-…" stamp (flagged upstream).
 void storeNowIso(char* buf, size_t buflen);
 
+// ── Per-spool weigh history (analytics) ───────────────────────────────────────
+// Iterate weigh events for one spool, oldest→newest (log order). `cb` is called
+// once per matching event with the caller's `ctx`. Returns the match count.
+// Streams the log line-by-line — no large allocation.
+size_t storeForEachWeigh(uint32_t spool,
+                         void (*cb)(const StoreEvent&, void*), void* ctx);
+
 // ── Backup / restore (host export/import) ─────────────────────────────────────
 // Path of the raw event log on LittleFS — serve it directly for download.
 const char* storeLogPath();

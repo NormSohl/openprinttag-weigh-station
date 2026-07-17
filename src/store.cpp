@@ -339,6 +339,27 @@ bool storeBegin() {
     return true;
 }
 
+// ── Per-spool weigh history (analytics) ───────────────────────────────────────
+size_t storeForEachWeigh(uint32_t spool,
+                         void (*cb)(const StoreEvent&, void*), void* ctx) {
+    Lock lk;
+    File f = LittleFS.open(LOG_PATH, "r");
+    if (!f) return 0;
+    size_t n = 0;
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        StoreEvent e;
+        if (decodeLine(line, e) && e.ev == StoreEv::Weigh && e.spool == spool) {
+            if (cb) cb(e, ctx);
+            n++;
+        }
+    }
+    f.close();
+    return n;
+}
+
 // ── Backup / restore (host export/import) ─────────────────────────────────────
 const char* storeLogPath() { return LOG_PATH; }
 
