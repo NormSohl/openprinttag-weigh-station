@@ -146,6 +146,46 @@ point for the rails.
 > (star topology) — electrically identical. In the daisy chain the second wire of
 > each pair instead runs PN5180→TFT and shares the PN5180 terminal.
 
+### DuPont (0.1 in) connectors
+
+One female terminal per wire, and only one terminal fits a header pin — so the
+pass-through junction still has to merge two wires, and DuPont's small barrels
+(≈26–28 AWG, one wire) make double-crimping fiddly. In order of preference:
+
+1. **Distribution rail (recommended).** A scrap of perfboard carrying, per shared
+   net, a small **bussed group of male header pins — the pins in each group
+   soldered common underneath** (a solder bead across the pads, or a bare bus
+   wire). Each net is fed once from the MCU; every device then taps its *own* pin
+   with a single-wire DuPont jumper. No double-crimps anywhere. Suggested groups:
+   - **GND** ×5 (MCU, PN5180, TFT, buzzer −, spare)
+   - **3V3** ×4 (MCU, PN5180, TFT, spare)
+   - **MOSI / SCK / MISO** ×3 each (MCU, PN5180, TFT)
+
+   > A single header pin still takes only one DuPont — the fan-out comes from the
+   > *group* of commoned pins, not from one pin. Keep the board near the MCU so the
+   > bus stubs stay short.
+2. **Y-splice pigtail.** Join the two wires upstream (solder + heat-shrink), then
+   crimp one terminal — every terminal stays single-wire.
+3. **Double-crimp** — DuPont barrels are tight; only with **28 AWG** for the
+   doubled legs (two 26 AWG won't seat), and tug-test each leg. Least reliable of
+   the three on DuPont.
+
+Secure DuPont housings against back-out (a dab of hot glue) — they work loose
+under handling more than latched connectors.
+
+### Mounting the distribution rail
+
+Put the bus on a small perfboard and fix it to a flat interior wall near the MCU.
+
+| Method | Reprint? | Notes |
+|---|---|---|
+| Double-sided foam tape (VHB) | no | simplest; flat perfboard back to a flat wall |
+| Adhesive-backed nylon PCB standoffs | no | stick to case, screw the perfboard on; removable/serviceable |
+| Printed snap-in holder (glued/taped in) | separate small part | a channel the perfboard slides into; middle ground |
+| M2.5 standoff bosses in the enclosure | yes (SCAD) | screw-mounted; cleanest for a future case revision |
+
+For the already-printed case, foam tape or adhesive standoffs need no reprint.
+
 ---
 
 ## Pins that carry more than one wire

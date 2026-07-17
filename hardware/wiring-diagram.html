@@ -348,6 +348,24 @@
     </div>
   </section>
 
+  <section>
+    <h2>DuPont connectors — use a distribution rail</h2>
+    <div class="callout">
+      <h3>◆ Fan out from a bussed rail, not one pin</h3>
+      <p>A 0.1&Prime; header pin takes only one DuPont terminal, and the barrels are
+        small (≈26–28 AWG), so double-crimping is fiddly. Preferred instead: a scrap of
+        perfboard with a small <b>group of male header pins per shared net, soldered
+        common underneath</b>. Feed each net once from the MCU; every device taps its
+        own pin with a single-wire jumper — no double-crimps. Groups:
+        <b>GND ×5</b>, <b>3V3 ×4</b>, <b>MOSI / SCK / MISO ×3 each</b>. Keep it near the
+        MCU. (Fallbacks: a Y-splice pigtail, or 28 AWG double-crimps.)</p>
+      <p><b>Mounting:</b> perfboard to a flat interior wall near the MCU —
+        <b>double-sided foam tape</b> or adhesive PCB standoffs need no reprint;
+        M2.5 standoff bosses in the enclosure SCAD are the screw-down option for a
+        future case revision. Dab hot glue on DuPont housings so they can't back out.</p>
+    </div>
+  </section>
+
   <p class="meta" style="margin-top:8px;">
     <span><b>⚠ PN5180 is 3.3&nbsp;V only</b> — never 5&nbsp;V.</span>
     <span>PN5180 + TFT share MOSI/SCK/MISO; a firmware mutex arbitrates the bus.</span>
