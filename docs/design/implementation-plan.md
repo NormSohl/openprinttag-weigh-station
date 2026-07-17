@@ -145,3 +145,44 @@ These resolve the corresponding open questions in `sd-local-ecosystem.md`
 ## Out of scope (per design doc)
 Spoolman, resistive touch, physical keyboard, SMTP, vendor/API ordering,
 FRAM. See `sd-local-ecosystem.md`.
+
+## Backlog — post-bringup (Phases 2–7 done; these come after first flash)
+
+Not blockers for board bring-up. Ordered by likely value.
+
+### B1 — Per-spool usage history / analytics view
+The append-only event log **already records** the raw data: every weigh
+session appends one `weigh` line (`ts`, `gross_g`, `remaining_g`, `used_g`)
+and it is never overwritten, so the time series accrues automatically from
+first flash. Nothing on the tag is involved — the tag carries only current
+used/remaining; history lives in the log. Missing piece is the **read side**:
+- `GET /spool/<id>` — filtered log view: the weigh series for one spool
+  (was sketched in Phase 4, not yet implemented).
+- CSV export of the series for spreadsheet analytics.
+- Optional: an on-device remaining-over-time sparkline.
+Build cost is a store query that streams the log filtering by spool/uuid,
+plus a web view. Because the data is already captured, deferring this loses
+no history.
+
+### B2 — Import onboarding catalog from 3dfilamentprofiles.com
+Populate the config tables (vendors/materials/colors/spool-profiles/stock-
+items) from a user's exported filament list, so onboarding is pick-from-your-
+usual-order. **Offline-first:** the user exports on their laptop (their
+account) and uploads the file to the device via a new `/import-3dfp`
+endpoint — no internet or credentials on the ESP32. Verified field mapping
+(from the real dataset schema):
+
+| 3dfilamentprofiles field | → config field | note |
+|---|---|---|
+| `brand_name` | vendors / stock `vendor` | |
+| `material` | materials / stock `material` | |
+| `color` + `rgb` | colors (name + rgba) | `#RRGGBB` → RGBA |
+| `default_properties.temp_min/max` | material print temps | fallback from `properties` |
+| `default_properties.bed_temp_min/max` | material bed temps | |
+| **`spool_weight` (~253 g)** | **profile `empty_g` (tare)** | it's the *empty* spool weight → feeds the scale's remaining calc |
+| `ASIN` | stock reorder reference | Amazon link for the reorder CSV |
+
+Gaps + defaults: no diameter (default 1.75); `spool_weight` is empty, so
+nominal-full defaults to 1000 g (adjustable); no GTIN (ASIN used instead).
+Needs a real `/my/spools` export sample to lock the parser to the export
+schema (which may be flatter than the public API dump).
