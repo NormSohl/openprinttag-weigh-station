@@ -137,8 +137,8 @@
     <div>
       <p class="eyebrow">Filament Scale · Bench Reference</p>
       <h1>Wiring &amp; Connector Pinout</h1>
-      <p class="sub">Source&nbsp;→ destination for the controller and every peripheral,
-        wired as a daisy chain for single-wire crimp terminals.</p>
+      <p class="sub">Source&nbsp;→ destination for the controller and every peripheral;
+        shared nets joined at soldered splices.</p>
     </div>
     <button class="btn noprint" onclick="window.print()">Print this sheet</button>
   </header>
@@ -153,7 +153,7 @@
     <h2>Topology</h2>
     <div class="card diagram">
       <svg viewBox="0 0 820 430" role="img"
-           aria-label="Block diagram: the ESP32-S3 drives a shared SPI bus to the PN5180, which daisy-chains onward to the ILI9488 TFT; the ESP32-S3 also connects to the NAU7802 load-cell ADC over a Qwiic cable, and the NAU7802 reads the full-bridge load cell.">
+           aria-label="Block diagram: the ESP32-S3 drives a shared SPI bus reaching both the PN5180 and the ILI9488 TFT (shared nets joined at soldered splices); the ESP32-S3 also connects to the NAU7802 load-cell ADC over a Qwiic cable, and the NAU7802 reads the full-bridge load cell.">
         <defs>
           <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
             <path d="M0,0 L7,3 L0,6 Z" fill="currentColor"/>
@@ -173,15 +173,15 @@
         <!-- edge labels (haloed) -->
         <g class="elabel" text-anchor="middle">
           <text x="267" y="212">shared bus</text>
-          <text x="544" y="212">daisy</text>
+          <text x="544" y="212">shared bus</text>
           <text x="410" y="98">CS · DC · RST</text>
           <text x="150" y="306" text-anchor="start">Qwiic</text>
           <text x="270" y="364">E± · A±</text>
         </g>
 
-        <!-- double-crimp badge -->
+        <!-- shared-net splice badge -->
         <rect class="badge-bg" x="300" y="278" width="210" height="26" rx="8"/>
-        <text class="badge-tx" x="405" y="295" text-anchor="middle" font-size="12">◆ 5 double-crimp terminals</text>
+        <text class="badge-tx" x="405" y="295" text-anchor="middle" font-size="12">◆ 5 shared-net splices</text>
 
         <!-- nodes -->
         <rect class="node" x="42"  y="170" width="170" height="100" rx="11"/>
@@ -206,7 +206,7 @@
       <div class="legend">
         <span><i class="swatch-line"></i> wire run</span>
         <span><i class="swatch-line dash"></i> direct control line (from MCU)</span>
-        <span><span class="flag"><i class="di">◆</i> two wires, one terminal</span></span>
+        <span><span class="flag"><i class="di">◆</i> soldered splice (shared net)</span></span>
       </div>
       <p class="cap">Buzzer (GPIO&nbsp;14&nbsp;+ / GND&nbsp;−) and the onboard NeoPixel
         (GPIO&nbsp;48) &amp; BOOT button (GPIO&nbsp;0) are omitted from the diagram — see tables.</p>
@@ -229,10 +229,10 @@
           <tr><td class="m">GPIO 15</td><td>TFT chip-select</td><td>TFT · CS</td></tr>
           <tr><td class="m">GPIO 16</td><td>TFT data/command</td><td>TFT · DC (RS)</td></tr>
           <tr><td class="m">GPIO 17</td><td>TFT reset</td><td>TFT · RESET</td></tr>
-          <tr><td class="m">GPIO 35</td><td>SPI MOSI</td><td>PN5180 · MOSI <span class="arrow">→</span> TFT · SDI <span class="note">(daisy)</span></td></tr>
-          <tr><td class="m">GPIO 36</td><td>SPI SCK</td><td>PN5180 · SCK <span class="arrow">→</span> TFT · SCK <span class="note">(daisy)</span></td></tr>
-          <tr><td class="m">GPIO 37</td><td>SPI MISO</td><td>PN5180 · MISO <span class="arrow">→</span> TFT · SDO <span class="note">(daisy)</span></td></tr>
-          <tr><td class="m">3V3</td><td>+3.3&nbsp;V rail</td><td>PN5180 · 3.3V <span class="arrow">→</span> TFT · VCC <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">GPIO 35</td><td>SPI MOSI</td><td>PN5180 · MOSI <span class="arrow">→</span> TFT · SDI <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">GPIO 36</td><td>SPI SCK</td><td>PN5180 · SCK <span class="arrow">→</span> TFT · SCK <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">GPIO 37</td><td>SPI MISO</td><td>PN5180 · MISO <span class="arrow">→</span> TFT · SDO <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">3V3</td><td>+3.3&nbsp;V rail</td><td>PN5180 · 3.3V <span class="arrow">→</span> TFT · VCC <span class="note">(splice)</span></td></tr>
           <tr><td class="m">GND</td><td>Ground rail</td><td>PN5180 · GND <span class="arrow">→</span> TFT · GND · buzzer −</td></tr>
           <tr><td class="m">GPIO 48</td><td>WS2812 status pixel</td><td class="note">onboard — no wire</td></tr>
           <tr><td class="m">GPIO 0</td><td>BOOT / WiFi-reset</td><td class="note">onboard button — no wire</td></tr>
@@ -242,25 +242,25 @@
   </section>
 
   <section>
-    <h2>PN5180 connector — the daisy junction</h2>
+    <h2>PN5180 connector</h2>
     <div class="card scroll">
       <table>
         <caption>PN5180 NFC <span class="pill">SPI · 3.3&nbsp;V only</span></caption>
-        <thead><tr><th>Pin</th><th>Wire in</th><th>Wire out (onward to TFT)</th><th>Terminal</th></tr></thead>
+        <thead><tr><th>Pin</th><th>Fed from</th></tr></thead>
         <tbody>
-          <tr><td class="m">NSS</td><td>← GPIO 5</td><td class="note">—</td><td></td></tr>
-          <tr><td class="m">BUSY</td><td>← GPIO 6</td><td class="note">—</td><td></td></tr>
-          <tr><td class="m">RST</td><td>← GPIO 7</td><td class="note">—</td><td></td></tr>
-          <tr><td class="m">MOSI</td><td>← GPIO 35</td><td>→ TFT SDI</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
-          <tr><td class="m">SCK</td><td>← GPIO 36</td><td>→ TFT SCK</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
-          <tr><td class="m">MISO</td><td>← GPIO 37</td><td>→ TFT SDO</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
-          <tr><td class="m">3.3V</td><td>← 3V3</td><td>→ TFT VCC</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
-          <tr><td class="m">GND</td><td>← GND</td><td>→ TFT GND</td><td><span class="flag"><i class="di">◆</i> 2 wires</span></td></tr>
+          <tr><td class="m">NSS</td><td>GPIO 5</td></tr>
+          <tr><td class="m">BUSY</td><td>GPIO 6</td></tr>
+          <tr><td class="m">RST</td><td>GPIO 7</td></tr>
+          <tr><td class="m">MOSI</td><td>MOSI splice <span class="note">(G35 + TFT SDI)</span></td></tr>
+          <tr><td class="m">SCK</td><td>SCK splice <span class="note">(G36 + TFT SCK)</span></td></tr>
+          <tr><td class="m">MISO</td><td>MISO splice <span class="note">(G37 + TFT SDO)</span></td></tr>
+          <tr><td class="m">3.3V</td><td>3V3 splice <span class="note">(3V3 + TFT VCC)</span></td></tr>
+          <tr><td class="m">GND</td><td>GND splice <span class="note">(GND + TFT GND + buzzer −)</span></td></tr>
         </tbody>
       </table>
     </div>
-    <p class="cap">All five double-crimp terminals live here. Every other terminal in the
-      build holds a single wire.</p>
+    <p class="cap">Each pin lands a single leg — the shared nets join upstream at a
+      soldered splice, never doubled onto a pin.</p>
   </section>
 
   <section>
@@ -270,15 +270,15 @@
         <caption>ILI9488 3.5&quot; TFT <span class="pill">SPI · shared bus</span></caption>
         <thead><tr><th>Pin</th><th>From</th></tr></thead>
         <tbody>
-          <tr><td class="m">SDI (MOSI)</td><td>PN5180 · MOSI <span class="note">(daisy)</span></td></tr>
-          <tr><td class="m">SCK</td><td>PN5180 · SCK <span class="note">(daisy)</span></td></tr>
-          <tr><td class="m">SDO (MISO)</td><td>PN5180 · MISO <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">SDI (MOSI)</td><td>PN5180 · MOSI <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">SCK</td><td>PN5180 · SCK <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">SDO (MISO)</td><td>PN5180 · MISO <span class="note">(splice)</span></td></tr>
           <tr><td class="m">CS</td><td>GPIO 15 <span class="note">(direct)</span></td></tr>
           <tr><td class="m">DC (RS)</td><td>GPIO 16 <span class="note">(direct)</span></td></tr>
           <tr><td class="m">RESET</td><td>GPIO 17 <span class="note">(direct)</span></td></tr>
-          <tr><td class="m">VCC</td><td>PN5180 · 3.3V <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">VCC</td><td>PN5180 · 3.3V <span class="note">(splice)</span></td></tr>
           <tr><td class="m">LED</td><td>bridge to VCC on the module <span class="note">(panel backlight, always-on)</span></td></tr>
-          <tr><td class="m">GND</td><td>PN5180 · GND <span class="note">(daisy)</span></td></tr>
+          <tr><td class="m">GND</td><td>PN5180 · GND <span class="note">(splice)</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -325,44 +325,40 @@
         <thead><tr><th>Buzzer</th><th>To</th></tr></thead>
         <tbody>
           <tr><td class="m">+</td><td>GPIO 14</td></tr>
-          <tr><td class="m">−</td><td>GND <span class="note">(a spare MCU GND keeps it off the daisy chain)</span></td></tr>
+          <tr><td class="m">−</td><td>GND <span class="note">(joins the GND splice, or a spare MCU GND)</span></td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
   <section>
-    <h2>Double-crimping</h2>
+    <h2>Shared-net junctions</h2>
     <div class="callout">
-      <h3>◆ Two wires into one terminal</h3>
-      <p>Daisy-chaining moves each branch to the pass-through pin, where an incoming and an
-        outgoing wire meet. Join them by crimping <b>both wires into one terminal</b> — it
-        works when the combined copper fits the barrel (rule of thumb: two conductors about
-        one size class below the terminal's max, e.g. two <code>26 AWG</code> in a
-        <code>22–26 AWG</code> terminal).</p>
-      <p>Strip both, twist together (tin lightly if solid-core), seat fully, crimp, and
-        <b>tug-test each leg separately</b>. If a barrel won't take two: use a pigtail
-        Y-splice (two → one, heat-shrunk) just upstream, or a small 3V3/GND distribution point.
-        Bridging <code>VCC→LED</code> on the display and landing buzzer&nbsp;− on a spare GND
-        keep the whole TFT connector single-wire.</p>
+      <h3>◆ One soldered splice per shared net</h3>
+      <p>The five shared nets (MOSI · SCK · MISO · 3V3 · GND) are each joined at a
+        <b>soldered pigtail splice</b> — one clean leg then lands at every device.
+        <b>Slide the heat-shrink on before you solder</b>; a lineman's twist adds strength.
+        Stagger the five splices so the shrink bumps don't stack, keep them near the MCU
+        for short stubs, and bridge <code>VCC→LED</code> on the display so the backlight
+        needs no leg.</p>
+      <p><b>Rails with many legs:</b> the GND (4 legs) and 3V3 (3 legs) splices are the
+        bulkiest — put those two on a small <b>perfboard bus</b> (a row of commoned pads,
+        one wire per pad) if a single joint gets unwieldy. Mount the bus with foam tape or
+        adhesive standoffs near the MCU. The three SPI splices are just three wires each.</p>
     </div>
   </section>
 
   <section>
-    <h2>DuPont connectors — use a distribution rail</h2>
+    <h2>Device-end connectors</h2>
     <div class="callout">
-      <h3>◆ Fan out from a bussed rail, not one pin</h3>
-      <p>A 0.1&Prime; header pin takes only one DuPont terminal, and the barrels are
-        small (≈26–28 AWG), so double-crimping is fiddly. Preferred instead: a scrap of
-        perfboard with a small <b>group of male header pins per shared net, soldered
-        common underneath</b>. Feed each net once from the MCU; every device taps its
-        own pin with a single-wire jumper — no double-crimps. Groups:
-        <b>GND ×5</b>, <b>3V3 ×4</b>, <b>MOSI / SCK / MISO ×3 each</b>. Keep it near the
-        MCU. (Fallbacks: a Y-splice pigtail, or 28 AWG double-crimps.)</p>
-      <p><b>Mounting:</b> perfboard to a flat interior wall near the MCU —
-        <b>double-sided foam tape</b> or adhesive PCB standoffs need no reprint;
-        M2.5 standoff bosses in the enclosure SCAD are the screw-down option for a
-        future case revision. Dab hot glue on DuPont housings so they can't back out.</p>
+      <h3>◆ Solder or DuPont — your call per module</h3>
+      <p>Each splice leg lands at its module either <b>soldered directly</b> to the header
+        pin (most reliable, permanent) or on a <b>DuPont plug</b> if you may want to swap
+        that module. A DuPont terminal and header pin each hold one wire — which is exactly
+        why the shared nets are spliced upstream instead of doubled onto a pin. Dab hot glue
+        on DuPont housings so they can't back out.</p>
+      <p>The NAU7802 stays on its latching Qwiic cable and the load cell in its screw
+        terminal — both already reliable, nothing to change.</p>
     </div>
   </section>
 

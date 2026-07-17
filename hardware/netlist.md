@@ -12,65 +12,36 @@ datasheet-of-record (`docs/datasheets/display-hosyond-ili9488.md`).
 
 ---
 
-## Wire-by-wire assembly schedule
+## Assembly schedule
 
-One physical wire per row. Build top to bottom and tick them off. `W##` =
-discrete MCU jumper; `L#` = load-cell lead into the NAU7802 terminal block.
+Two kinds of connection: **direct** single wires, and **shared nets** that reach
+more than one device — each of those is joined once at a **soldered splice**
+(pigtail star), with a single clean leg to every endpoint.
 
-### Power — +3.3 V
-
-| # | From | To |
-|---|---|---|
-| W01 | MCU 3V3 | PN5180 : 3.3V |
-| W02 | MCU 3V3 | TFT : VCC |
-| W03 | MCU 3V3 | TFT : LED (panel backlight) |
-
-> W03 can instead be a short bridge from TFT VCC→LED **on the display module**,
-> saving one wire back to the MCU.
-
-### Ground — GND
+### Direct wires — one per row (MCU pin → device)
 
 | # | From | To |
 |---|---|---|
-| W04 | MCU GND | PN5180 : GND |
-| W05 | MCU GND | TFT : GND |
-| W06 | MCU GND | Buzzer : − |
+| 1 | GPIO 5  | PN5180 : NSS (CS) |
+| 2 | GPIO 6  | PN5180 : BUSY *(active-high)* |
+| 3 | GPIO 7  | PN5180 : RST *(active-low)* |
+| 4 | GPIO 15 | TFT : CS |
+| 5 | GPIO 16 | TFT : DC (RS) |
+| 6 | GPIO 17 | TFT : RESET |
+| 7 | GPIO 14 | Buzzer : + *(PWM; passive piezo, no resistor)* |
 
-### SPI bus (shared: PN5180 + TFT)
+### Shared nets — one soldered splice each
 
-| # | From | To |
+Each splice joins the legs below; a single wire then lands at every endpoint.
+Bridge **VCC→LED** on the display module so the backlight needs no separate leg.
+
+| Splice | MCU leg | Device legs |
 |---|---|---|
-| W07 | MCU GPIO 35 (MOSI) | PN5180 : MOSI |
-| W08 | MCU GPIO 35 (MOSI) | TFT : SDI (MOSI) |
-| W09 | MCU GPIO 36 (SCK)  | PN5180 : SCK |
-| W10 | MCU GPIO 36 (SCK)  | TFT : SCK |
-| W11 | MCU GPIO 37 (MISO) | PN5180 : MISO |
-| W12 | MCU GPIO 37 (MISO) | TFT : SDO (MISO) |
-
-> Alternatively daisy-chain each signal PN5180→TFT so only one wire leaves the
-> MCU pin; electrically identical.
-
-### PN5180 control
-
-| # | From | To |
-|---|---|---|
-| W13 | MCU GPIO 5 | PN5180 : NSS (CS) |
-| W14 | MCU GPIO 6 | PN5180 : BUSY *(active-high)* |
-| W15 | MCU GPIO 7 | PN5180 : RST *(active-low)* |
-
-### TFT control
-
-| # | From | To |
-|---|---|---|
-| W16 | MCU GPIO 15 | TFT : CS |
-| W17 | MCU GPIO 16 | TFT : DC (RS) |
-| W18 | MCU GPIO 17 | TFT : RESET |
-
-### Buzzer signal
-
-| # | From | To |
-|---|---|---|
-| W19 | MCU GPIO 14 | Buzzer : + *(PWM; passive piezo, no resistor)* |
+| MOSI | GPIO 35 | PN5180 MOSI · TFT SDI |
+| SCK  | GPIO 36 | PN5180 SCK · TFT SCK |
+| MISO | GPIO 37 | PN5180 MISO · TFT SDO |
+| 3V3  | 3V3     | PN5180 3.3V · TFT VCC |
+| GND  | GND     | PN5180 GND · TFT GND · Buzzer − |
 
 ### NAU7802 load-cell ADC — one Qwiic cable
 
@@ -94,113 +65,48 @@ connector to the NAU7802 board carries all four:
 | L4 | White (白)  | Signal −     | A− |
 | L5 | Yellow (黄) | Shield/drain | GND *(omit if absent)* |
 
-**Totals:** 19 MCU jumper wires (W01–W19) + 1 Qwiic cable + 4–5 load-cell leads.
+**Totals:** 7 direct wires + 5 soldered splices (13 legs) + 1 Qwiic cable +
+4–5 load-cell leads.
 
 ---
 
-## Daisy-chain build (single-wire crimp terminals)
+## Shared-net junctions — soldered pigtails
 
-Chosen topology. The shared nets (SPI MOSI/SCK/MISO and the 3V3/GND rails) are
-routed device-to-device so **no MCU pin fans out**. The branch doesn't vanish —
-it moves to the **pass-through pin**, where an incoming and an outgoing wire
-meet. With one-wire crimp terminals, join those two by **double-crimping both
-wires into one terminal** (works when the combined gauge fits the barrel — see
-note). Each arrow below is one wire:
+Five nets reach more than one device — **MOSI, SCK, MISO, 3V3, GND**. Instead of
+stacking wires on a pin, join each with **one soldered splice** and heat-shrink
+it; a single clean leg then lands at each device (see the splice table above).
 
-- **MOSI:** MCU G35 → PN5180 MOSI → TFT SDI
-- **SCK:**  MCU G36 → PN5180 SCK  → TFT SCK
-- **MISO:** MCU G37 → PN5180 MISO → TFT SDO
-- **3V3:**  MCU 3V3 → PN5180 3.3V → TFT VCC   *(then bridge VCC→LED on the module)*
-- **GND:**  MCU GND → PN5180 GND  → TFT GND
+**Technique**
 
-Land **buzzer −** and the **NAU7802** elsewhere (buzzer − on a spare MCU GND;
-NAU7802 on its own Qwiic cable) so they don't add junctions to the chain.
+- Strip ~4 mm on each leg; gather and solder into one joint (a lineman's /
+  Western-Union twist adds mechanical strength before you flow solder).
+- **Slide the heat-shrink on before you solder**, then shrink it over the joint.
+- **Stagger** the five splices along the loom so the shrink bumps don't stack,
+  and anchor the bundle so nothing flexes right at a joint.
+- Keep the splices **near the MCU** so the shared-bus stubs stay short.
 
-### Terminals that carry two wires (double-crimp)
+**Rails with many legs.** The 3V3 (3 legs) and especially GND (4 legs) splices
+carry the most wires; if a single solder joint gets bulky, put those two on a
+small **perfboard bus** instead — a row of commoned pads, one wire per pad. Same
+result, neater for many wires. The three SPI splices are just three wires each.
 
-One per pass-through pin — everything else is a single wire per terminal:
+If you use a perfboard bus, mount it on a flat interior wall near the MCU:
+foam tape (VHB) or adhesive-backed nylon PCB standoffs need no reprint; M2.5
+standoff bosses can be added to the enclosure SCAD for a screw-down future
+revision.
 
-| Double-crimped terminal (plugs onto) | Joins |
-|---|---|
-| PN5180 : MOSI | in from G35  ·  out to TFT SDI |
-| PN5180 : SCK  | in from G36  ·  out to TFT SCK |
-| PN5180 : MISO | in from G37  ·  out to TFT SDO |
-| PN5180 : 3.3V | in from 3V3  ·  out to TFT VCC |
-| PN5180 : GND  | in from GND  ·  out to TFT GND |
+## Device-end connectors & retention
 
-That's **5 double-crimped terminals**, all on the PN5180 connector. Bridging
-`VCC→LED` on the display module and landing buzzer − on a spare GND keeps the TFT
-connector single-wire throughout.
+Independent of the splices, the leg that lands at each module can be:
 
-### Double-crimping two wires into one terminal
+- **Soldered directly** to the module's header pin — most reliable, permanent.
+- **DuPont (0.1 in) plug** — keep it if you may want to swap a module. Each
+  female terminal holds one wire and each header pin takes one terminal, which is
+  exactly why the shared nets are spliced upstream rather than doubled onto a pin.
+  Dab hot glue on DuPont housings so they can't back out under handling.
 
-Two wires fit one terminal only if their combined copper fits the wire barrel —
-as a rule, two conductors about one size class below the terminal's rated max
-(e.g. two 26 AWG in a 22–26 AWG terminal). Strip both, twist together (tin
-lightly if solid-core), seat fully in the barrel, crimp, and **tug-test each leg
-separately**. If the barrel won't take two, use a pigtail Y-splice (two → one,
-heat-shrunk) upstream of a single terminal, or a small 3V3/GND distribution
-point for the rails.
-
-> The `W07–W12` rows above list these shared signals as two wires from the MCU
-> (star topology) — electrically identical. In the daisy chain the second wire of
-> each pair instead runs PN5180→TFT and shares the PN5180 terminal.
-
-### DuPont (0.1 in) connectors
-
-One female terminal per wire, and only one terminal fits a header pin — so the
-pass-through junction still has to merge two wires, and DuPont's small barrels
-(≈26–28 AWG, one wire) make double-crimping fiddly. In order of preference:
-
-1. **Distribution rail (recommended).** A scrap of perfboard carrying, per shared
-   net, a small **bussed group of male header pins — the pins in each group
-   soldered common underneath** (a solder bead across the pads, or a bare bus
-   wire). Each net is fed once from the MCU; every device then taps its *own* pin
-   with a single-wire DuPont jumper. No double-crimps anywhere. Suggested groups:
-   - **GND** ×5 (MCU, PN5180, TFT, buzzer −, spare)
-   - **3V3** ×4 (MCU, PN5180, TFT, spare)
-   - **MOSI / SCK / MISO** ×3 each (MCU, PN5180, TFT)
-
-   > A single header pin still takes only one DuPont — the fan-out comes from the
-   > *group* of commoned pins, not from one pin. Keep the board near the MCU so the
-   > bus stubs stay short.
-2. **Y-splice pigtail.** Join the two wires upstream (solder + heat-shrink), then
-   crimp one terminal — every terminal stays single-wire.
-3. **Double-crimp** — DuPont barrels are tight; only with **28 AWG** for the
-   doubled legs (two 26 AWG won't seat), and tug-test each leg. Least reliable of
-   the three on DuPont.
-
-Secure DuPont housings against back-out (a dab of hot glue) — they work loose
-under handling more than latched connectors.
-
-### Mounting the distribution rail
-
-Put the bus on a small perfboard and fix it to a flat interior wall near the MCU.
-
-| Method | Reprint? | Notes |
-|---|---|---|
-| Double-sided foam tape (VHB) | no | simplest; flat perfboard back to a flat wall |
-| Adhesive-backed nylon PCB standoffs | no | stick to case, screw the perfboard on; removable/serviceable |
-| Printed snap-in holder (glued/taped in) | separate small part | a channel the perfboard slides into; middle ground |
-| M2.5 standoff bosses in the enclosure | yes (SCAD) | screw-mounted; cleanest for a future case revision |
-
-For the already-printed case, foam tape or adhesive standoffs need no reprint.
-
----
-
-## Pins that carry more than one wire
-
-Everything else is a single wire per pin. Only these are shared — plan the
-fan-out (use the board's several GND / multiple 3V3 pins, or a small distribution
-point, so you're not stacking many leads on one hole):
-
-| MCU pin | Wires | Goes to |
-|---|---|---|
-| 3V3 | 3 | W01 PN5180, W02 TFT VCC, W03 TFT LED *(NAU7802 3V3 is separate, via Qwiic)* |
-| GND | 3 | W04 PN5180, W05 TFT, W06 buzzer *(NAU7802 GND is separate, via Qwiic)* |
-| GPIO 35 (MOSI) | 2 | W07 PN5180, W08 TFT |
-| GPIO 36 (SCK)  | 2 | W09 PN5180, W10 TFT |
-| GPIO 37 (MISO) | 2 | W11 PN5180, W12 TFT |
+The NAU7802 stays on its latching Qwiic cable and the load cell in its screw
+terminal — both already reliable, nothing to change.
 
 ---
 
