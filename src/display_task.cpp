@@ -227,7 +227,7 @@ void displayTask(void* param) {
                 row(2, "Place spool to begin", TFT_WHITE);
                 if (!gScaleCalibrated) {
                     row(3, "Scale not calibrated", tft.color565(220, 140, 0));
-                    row(4, "Send CAL <g> over USB", tft.color565(220, 140, 0));
+                    row(4, "Calibrate in web app", tft.color565(220, 140, 0));
                 }
                 if (gWebAddr[0]) {
                     row(5, "Web app:", TFT_DARKGREY);
@@ -240,7 +240,7 @@ void displayTask(void* param) {
                 title("Weigh Station", tft.color565(220, 140, 0));
                 row(2, "Place spool to weigh", TFT_WHITE);
                 if (!gScaleCalibrated)
-                    row(3, "Uncalibrated: CAL/USB", tft.color565(220, 140, 0));
+                    row(3, "Uncalibrated - web app", tft.color565(220, 140, 0));
                 if (gApSsid[0]) {
                     row(4, "Join WiFi:", TFT_DARKGREY);
                     rowf(5, TFT_CYAN, "%s", gApSsid);

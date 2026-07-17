@@ -22,6 +22,9 @@ extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
+extern volatile bool        gScaleCalibrated;
+extern volatile bool        gCalZeroReq;
+extern volatile float       gCalSetGrams;
 
 static AsyncWebServer sServer(80);
 
@@ -75,6 +78,7 @@ static String head(const char* title) {
          "<a href='/onboard'>Onboard</a>"
          "<a href='/reorder'>Reorder</a>"
          "<a href='/config'>Config</a>"
+         "<a href='/calibrate'>Calibrate</a>"
          "<a href='/backup'>Backup</a>"
          "</span></header><main>";
     return h;
@@ -96,6 +100,11 @@ static int currentSpool() {
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
     String p = head("Inventory");
+
+    if (!gScaleCalibrated)
+        p += "<div class='card' style='border-color:#a70'>"
+             "<b class='ob'>Scale not calibrated.</b> Weights will be wrong until "
+             "you <a href='/calibrate' style='color:#fd6'>calibrate the scale</a>.</div>";
 
     int cur = currentSpool();
     if (cur > 0) {
@@ -613,6 +622,59 @@ static void handleImportDone(AsyncWebServerRequest* req) {
     }
 }
 
+// ── Scale calibration (web-driven; scaleTask does the actual NAU7802 work) ────
+static void handleApiScale(AsyncWebServerRequest* req) {
+    xSemaphoreTake(gWeightMutex, portMAX_DELAY);
+    float w = gWeightGrams;
+    xSemaphoreGive(gWeightMutex);
+    req->send(200, "application/json",
+        "{\"weight\":" + String(w, 1) +
+        ",\"calibrated\":" + (gScaleCalibrated ? "true" : "false") + "}");
+}
+
+static void handleApiCalZero(AsyncWebServerRequest* req) {
+    gCalZeroReq = true;                       // scaleTask tares on its next loop
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleApiCal(AsyncWebServerRequest* req) {
+    const AsyncWebParameter* pp = req->getParam("grams", true);
+    float g = pp ? pp->value().toFloat() : 0.0f;
+    if (g <= 0.0f) { req->send(400, "text/plain", "need grams>0"); return; }
+    gCalSetGrams = g;                         // scaleTask calibrates on its next loop
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleCalibratePage(AsyncWebServerRequest* req) {
+    String p = head("Calibrate");
+    p += "<h3>Scale calibration</h3>";
+    p += "<div class='card'><div class='muted'>Live weight</div>"
+         "<div class='big' id='w'>&mdash;</div>"
+         "<div class='muted' id='st'></div></div>";
+    p += "<div class='card'><label style='margin-top:0'>Step 1 &mdash; Zero</label>"
+         "<p class='muted'>Remove everything from the scale, then zero it.</p>"
+         "<button type='button' onclick='z()'>Zero (tare)</button></div>";
+    p += "<div class='card'><label style='margin-top:0'>Step 2 &mdash; Calibrate</label>"
+         "<p class='muted'>Place a known weight on the scale and enter its exact "
+         "mass in grams.</p>"
+         "<input type='number' step='0.1' id='g' placeholder='grams'>"
+         "<button type='button' onclick='c()'>Set calibration</button></div>";
+    p += "<script>"
+         "function r(){fetch('/api/scale').then(x=>x.json()).then(d=>{"
+         "document.getElementById('w').textContent=d.weight.toFixed(1)+' g';"
+         "document.getElementById('st').textContent="
+         "d.calibrated?'Calibrated':'Not calibrated yet';});}"
+         "function z(){fetch('/api/cal-zero',{method:'POST'}).then(()=>setTimeout(r,700));}"
+         "function c(){var g=document.getElementById('g').value;"
+         "fetch('/api/cal',{method:'POST',"
+         "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+         "body:'grams='+encodeURIComponent(g)}).then(()=>setTimeout(r,700));}"
+         "setInterval(r,1000);r();"
+         "</script>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void webAppBegin() {
     if (MDNS.begin(DEVICE_HOSTNAME))
@@ -628,6 +690,10 @@ void webAppBegin() {
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
     sServer.on("/config",      HTTP_GET,  handleConfig);
     sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);
+    sServer.on("/calibrate",   HTTP_GET,  handleCalibratePage);
+    sServer.on("/api/scale",   HTTP_GET,  handleApiScale);
+    sServer.on("/api/cal-zero",HTTP_POST, handleApiCalZero);
+    sServer.on("/api/cal",     HTTP_POST, handleApiCal);
     sServer.on("/backup",      HTTP_GET,  handleBackupPage);
     sServer.on("/export",      HTTP_GET,  handleExport);
     sServer.on("/import",      HTTP_POST, handleImportDone, handleImportUpload);

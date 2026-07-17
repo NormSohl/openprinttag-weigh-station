@@ -16,9 +16,13 @@ SemaphoreHandle_t    gStateMutex  = nullptr;
 volatile float    gWeightGrams  = 0.0f;
 SemaphoreHandle_t gWeightMutex  = nullptr;
 
-// False until a real calibration (CAL) is stored. displayTask shows an idle-screen
-// "run CAL over USB" banner while false, so the uncalibrated first boot isn't silent.
+// False until a real calibration is stored. displayTask shows an idle-screen
+// "not calibrated" banner while false, so the uncalibrated first boot isn't silent.
 volatile bool     gScaleCalibrated = false;
+
+// Calibration requests from the web UI (or serial), consumed by scaleTask.
+volatile bool     gCalZeroReq  = false;   // tare with an empty scale
+volatile float    gCalSetGrams = 0.0f;    // >0: calibrate against this known weight
 
 // ── Shared tag data (written by nfcTask, read by syncTask / displayTask) ──────
 uint8_t           gTagUid[8]    = {};

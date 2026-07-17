@@ -9,6 +9,8 @@
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
 extern volatile bool        gScaleCalibrated;
+extern volatile bool        gCalZeroReq;
+extern volatile float       gCalSetGrams;
 
 // ── Serial calibration helpers ────────────────────────────────────────────────
 // Commands accepted over Serial at 115200 baud:
@@ -27,23 +29,39 @@ static void saveCalibration(NAU7802& nau) {
     prefs.end();
 }
 
+// Shared zero/cal operations — driven by both the serial console and the web UI.
+static void doZero(NAU7802& nau) {
+    nau.calculateZeroOffset(32);
+    saveCalibration(nau);
+    Serial.printf("[scale] Zero offset set: %ld\n", (long)nau.getZeroOffset());
+}
+
+static bool doCalibrate(NAU7802& nau, float knownGrams) {
+    if (knownGrams <= 0) return false;
+    nau.calculateCalibrationFactor(knownGrams, 32);
+    saveCalibration(nau);
+    gScaleCalibrated = true;   // clears the idle-screen "not calibrated" banner
+    Serial.printf("[scale] Cal factor set: %.4f (for %.1fg)\n",
+                  nau.getCalibrationFactor(), knownGrams);
+    return true;
+}
+
+// Web UI sets request flags (gCalZeroReq / gCalSetGrams); apply them here on the
+// scale task so all NAU7802 access stays on one core.
+static void handleCalRequests(NAU7802& nau) {
+    if (gCalZeroReq) { gCalZeroReq = false; doZero(nau); }
+    float g = gCalSetGrams;
+    if (g > 0.0f) { gCalSetGrams = 0.0f; doCalibrate(nau, g); }
+}
+
 static void handleSerialCommand(NAU7802& nau) {
     if (!Serial.available()) return;
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     if (cmd.equalsIgnoreCase("ZERO")) {
-        nau.calculateZeroOffset(32);
-        saveCalibration(nau);
-        Serial.printf("[scale] Zero offset set: %ld\n", (long)nau.getZeroOffset());
+        doZero(nau);
     } else if (cmd.startsWith("CAL ") || cmd.startsWith("cal ")) {
-        float knownGrams = cmd.substring(4).toFloat();
-        if (knownGrams > 0) {
-            nau.calculateCalibrationFactor(knownGrams, 32);
-            saveCalibration(nau);
-            gScaleCalibrated = true;   // clears the idle-screen "run CAL" banner
-            Serial.printf("[scale] Cal factor set: %.4f (for %.1fg)\n",
-                          nau.getCalibrationFactor(), knownGrams);
-        }
+        doCalibrate(nau, cmd.substring(4).toFloat());
     } else if (!storeSerialCommand(cmd)) {
         // Not a scale or store command — try the config catalog harness.
         cfgSerialCommand(cmd);
@@ -87,6 +105,7 @@ void scaleTask(void* param) {
 
     for (;;) {
         handleSerialCommand(nau);
+        handleCalRequests(nau);   // web-initiated zero/calibrate
 
         // getWeight() blocks internally while averaging SCALE_SAMPLES readings.
         // At 80 SPS each sample is ~12.5 ms; 10 samples ≈ 125 ms.  The
