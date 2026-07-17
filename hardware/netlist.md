@@ -98,6 +98,56 @@ connector to the NAU7802 board carries all four:
 
 ---
 
+## Daisy-chain build (single-wire crimp terminals)
+
+Chosen topology. The shared nets (SPI MOSI/SCK/MISO and the 3V3/GND rails) are
+routed device-to-device so **no MCU pin fans out**. The branch doesn't vanish —
+it moves to the **pass-through pin**, where an incoming and an outgoing wire
+meet. With one-wire crimp terminals, join those two by **double-crimping both
+wires into one terminal** (works when the combined gauge fits the barrel — see
+note). Each arrow below is one wire:
+
+- **MOSI:** MCU G35 → PN5180 MOSI → TFT SDI
+- **SCK:**  MCU G36 → PN5180 SCK  → TFT SCK
+- **MISO:** MCU G37 → PN5180 MISO → TFT SDO
+- **3V3:**  MCU 3V3 → PN5180 3.3V → TFT VCC   *(then bridge VCC→LED on the module)*
+- **GND:**  MCU GND → PN5180 GND  → TFT GND
+
+Land **buzzer −** and the **NAU7802** elsewhere (buzzer − on a spare MCU GND;
+NAU7802 on its own Qwiic cable) so they don't add junctions to the chain.
+
+### Terminals that carry two wires (double-crimp)
+
+One per pass-through pin — everything else is a single wire per terminal:
+
+| Double-crimped terminal (plugs onto) | Joins |
+|---|---|
+| PN5180 : MOSI | in from G35  ·  out to TFT SDI |
+| PN5180 : SCK  | in from G36  ·  out to TFT SCK |
+| PN5180 : MISO | in from G37  ·  out to TFT SDO |
+| PN5180 : 3.3V | in from 3V3  ·  out to TFT VCC |
+| PN5180 : GND  | in from GND  ·  out to TFT GND |
+
+That's **5 double-crimped terminals**, all on the PN5180 connector. Bridging
+`VCC→LED` on the display module and landing buzzer − on a spare GND keeps the TFT
+connector single-wire throughout.
+
+### Double-crimping two wires into one terminal
+
+Two wires fit one terminal only if their combined copper fits the wire barrel —
+as a rule, two conductors about one size class below the terminal's rated max
+(e.g. two 26 AWG in a 22–26 AWG terminal). Strip both, twist together (tin
+lightly if solid-core), seat fully in the barrel, crimp, and **tug-test each leg
+separately**. If the barrel won't take two, use a pigtail Y-splice (two → one,
+heat-shrunk) upstream of a single terminal, or a small 3V3/GND distribution
+point for the rails.
+
+> The `W07–W12` rows above list these shared signals as two wires from the MCU
+> (star topology) — electrically identical. In the daisy chain the second wire of
+> each pair instead runs PN5180→TFT and shares the PN5180 terminal.
+
+---
+
 ## Pins that carry more than one wire
 
 Everything else is a single wire per pin. Only these are shared — plan the
