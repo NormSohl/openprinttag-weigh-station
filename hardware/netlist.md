@@ -80,7 +80,9 @@ it; a single clean leg then lands at each device (see the splice table above).
 
 - Strip ~4 mm on each leg; gather and solder into one joint (a lineman's /
   Western-Union twist adds mechanical strength before you flow solder).
-- **Slide the heat-shrink on before you solder**, then shrink it over the joint.
+- **Thread the heat-shrink onto one leg first** and slide it well back from the
+  end — once the wires are joined there's no open end to feed a tube over the
+  splice. Solder, let it cool, slide the tube over the joint, then heat to shrink.
 - **Stagger** the five splices along the loom so the shrink bumps don't stack,
   and anchor the bundle so nothing flexes right at a joint.
 - Keep the splices **near the MCU** so the shared-bus stubs stay short.

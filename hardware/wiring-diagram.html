@@ -337,10 +337,11 @@
       <h3>◆ One soldered splice per shared net</h3>
       <p>The five shared nets (MOSI · SCK · MISO · 3V3 · GND) are each joined at a
         <b>soldered pigtail splice</b> — one clean leg then lands at every device.
-        <b>Slide the heat-shrink on before you solder</b>; a lineman's twist adds strength.
-        Stagger the five splices so the shrink bumps don't stack, keep them near the MCU
-        for short stubs, and bridge <code>VCC→LED</code> on the display so the backlight
-        needs no leg.</p>
+        <b>Thread the heat-shrink onto a leg first</b> (once soldered there's no open end
+        to feed it over the joint), solder, then slide it over and shrink; a lineman's
+        twist adds strength. Stagger the five splices so the shrink bumps don't stack,
+        keep them near the MCU for short stubs, and bridge <code>VCC→LED</code> on the
+        display so the backlight needs no leg.</p>
       <p><b>Rails with many legs:</b> the GND (4 legs) and 3V3 (3 legs) splices are the
         bulkiest — put those two on a small <b>perfboard bus</b> (a row of commoned pads,
         one wire per pad) if a single joint gets unwieldy. Mount the bus with foam tape or
