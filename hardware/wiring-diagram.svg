@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 430"
+     font-family="system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <title>Wiring block diagram: the ESP32-S3 controller connects separately to the PN5180 NFC reader, the ILI9488 TFT display, the NAU7802 load-cell ADC (which reads the load cell), and the passive buzzer. Shared nets join at soldered splices; the devices do not interconnect.</title>
+  <style>
+    .edge{stroke:#1f6f8b;stroke-width:2.5;fill:none;}
+    .node{fill:#ffffff;stroke:#cbc9c2;stroke-width:1.5;}
+    .ntitle{fill:#1b1e24;font-weight:700;}
+    .nsub{fill:#5b626d;}
+    .elabel{fill:#4a515b;stroke:#ffffff;stroke-width:4;paint-order:stroke;
+      font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;}
+    .badge-bg{fill:#f6e9d0;stroke:#d8b877;}
+    .badge-tx{fill:#8f5410;font-weight:700;}
+  </style>
+  <defs>
+    <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#1f6f8b"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="820" height="430" fill="#ffffff"/>
+
+  <!-- shared-net splice note -->
+  <rect class="badge-bg" x="292" y="8" width="248" height="26" rx="8"/>
+  <text class="badge-tx" x="416" y="25" text-anchor="middle" font-size="12">◆ shared nets: 5 soldered splices</text>
+
+  <!-- edges: every device runs back to the controller (no device-to-device link) -->
+  <g class="edge">
+    <line x1="216" y1="188" x2="566" y2="80"  marker-end="url(#arw)"/>
+    <line x1="216" y1="205" x2="566" y2="194" marker-end="url(#arw)"/>
+    <line x1="216" y1="240" x2="300" y2="340" marker-end="url(#arw)"/>
+    <line x1="500" y1="356" x2="566" y2="356" marker-end="url(#arw)"/>
+    <line x1="126" y1="280" x2="126" y2="320" marker-end="url(#arw)"/>
+  </g>
+
+  <!-- edge labels -->
+  <g class="elabel" text-anchor="middle">
+    <text x="391" y="120">SPI bus + CS·BUSY·RST</text>
+    <text x="391" y="182">SPI bus + CS·DC·RST</text>
+    <text x="238" y="300" text-anchor="start">Qwiic (I²C)</text>
+    <text x="533" y="346">E± · A±</text>
+    <text x="138" y="306" text-anchor="start">GPIO 14 · GND</text>
+  </g>
+
+  <!-- nodes -->
+  <rect class="node" x="36"  y="150" width="180" height="130" rx="10"/>
+  <rect class="node" x="566" y="44"  width="214" height="72"  rx="10"/>
+  <rect class="node" x="566" y="158" width="214" height="72"  rx="10"/>
+  <rect class="node" x="300" y="320" width="200" height="72"  rx="10"/>
+  <rect class="node" x="566" y="320" width="214" height="72"  rx="10"/>
+  <rect class="node" x="36"  y="320" width="180" height="72"  rx="10"/>
+
+  <g text-anchor="middle">
+    <text class="ntitle" x="126" y="209" font-size="17">ESP32-S3</text>
+    <text class="nsub"   x="126" y="231" font-size="12.5">Thing Plus · controller</text>
+    <text class="ntitle" x="673" y="75"  font-size="16">PN5180</text>
+    <text class="nsub"   x="673" y="95"  font-size="12.5">NFC reader</text>
+    <text class="ntitle" x="673" y="189" font-size="16">ILI9488</text>
+    <text class="nsub"   x="673" y="209" font-size="12.5">3.5&quot; TFT display</text>
+    <text class="ntitle" x="400" y="351" font-size="16">NAU7802</text>
+    <text class="nsub"   x="400" y="371" font-size="12.5">load-cell ADC</text>
+    <text class="ntitle" x="673" y="351" font-size="16">Load cell</text>
+    <text class="nsub"   x="673" y="371" font-size="12.5">full bridge</text>
+    <text class="ntitle" x="126" y="351" font-size="16">Buzzer</text>
+    <text class="nsub"   x="126" y="371" font-size="12.5">passive piezo</text>
+  </g>
+</svg>

@@ -12,6 +12,16 @@ datasheet-of-record (`docs/datasheets/display-hosyond-ili9488.md`).
 
 ---
 
+## Diagram
+
+![Wiring block diagram](wiring-diagram.svg)
+
+Every device wires back to the controller — the PN5180 and display don't connect
+to each other; each shared net runs from the controller and forks at a splice.
+The onboard NeoPixel (GPIO 48) and BOOT button (GPIO 0) need no wiring.
+
+---
+
 ## Assembly schedule
 
 Two kinds of connection: **direct** single wires, and **shared nets** that reach
@@ -59,11 +69,11 @@ connector to the NAU7802 board carries all four:
 
 | # | Load-cell wire | Function | NAU7802 terminal |
 |---|---|---|---|
-| L1 | Red (红)    | Excitation + | E+ |
-| L2 | Black (黑)  | Excitation − | E− |
-| L3 | Green (绿)  | Signal +     | A+ |
-| L4 | White (白)  | Signal −     | A− |
-| L5 | Yellow (黄) | Shield/drain | GND *(omit if absent)* |
+| L1 | 🟥 Red (红)    | Excitation + | E+ |
+| L2 | ⬛ Black (黑)  | Excitation − | E− |
+| L3 | 🟩 Green (绿)  | Signal +     | A+ |
+| L4 | ⬜ White (白)  | Signal −     | A− |
+| L5 | 🟨 Yellow (黄) | Shield/drain | GND *(omit if absent)* |
 
 **Totals:** 7 direct wires + 5 soldered splices (13 legs) + 1 Qwiic cable +
 4–5 load-cell leads.
