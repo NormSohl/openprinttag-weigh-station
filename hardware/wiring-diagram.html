@@ -153,63 +153,61 @@
     <h2>Topology</h2>
     <div class="card diagram">
       <svg viewBox="0 0 820 430" role="img"
-           aria-label="Block diagram: the ESP32-S3 drives a shared SPI bus reaching both the PN5180 and the ILI9488 TFT (shared nets joined at soldered splices); the ESP32-S3 also connects to the NAU7802 load-cell ADC over a Qwiic cable, and the NAU7802 reads the full-bridge load cell.">
+           aria-label="Block diagram: the ESP32-S3 controller connects separately to the PN5180 NFC reader and the ILI9488 TFT display — each shared SPI/power net runs from the controller and forks at a soldered splice, so the two devices do not connect to each other. The controller also connects to the NAU7802 load-cell ADC over a Qwiic cable, and the NAU7802 reads the full-bridge load cell.">
         <defs>
           <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
             <path d="M0,0 L7,3 L0,6 Z" fill="currentColor"/>
           </marker>
         </defs>
 
-        <!-- edges -->
+        <!-- shared-net splice note -->
+        <rect class="badge-bg" x="292" y="8" width="248" height="26" rx="8"/>
+        <text class="badge-tx" x="416" y="25" text-anchor="middle" font-size="12">◆ shared nets: 5 soldered splices</text>
+
+        <!-- edges: every device runs back to the controller (no device-to-device link) -->
         <g class="edge" stroke-width="2.5">
-          <line x1="212" y1="220" x2="322" y2="220" marker-end="url(#arw)"/>
-          <line x1="486" y1="220" x2="602" y2="220" marker-end="url(#arw)"/>
-          <line x1="128" y1="272" x2="128" y2="330" marker-end="url(#arw)"/>
-          <line x1="214" y1="372" x2="326" y2="372" marker-end="url(#arw)"/>
+          <line x1="216" y1="188" x2="566" y2="80"  marker-end="url(#arw)"/>
+          <line x1="216" y1="205" x2="566" y2="194" marker-end="url(#arw)"/>
+          <line x1="216" y1="240" x2="300" y2="340" marker-end="url(#arw)"/>
+          <line x1="500" y1="356" x2="566" y2="356" marker-end="url(#arw)"/>
         </g>
-        <path class="edge" d="M128,168 C128,112 692,112 692,168"
-              stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arw)"/>
 
         <!-- edge labels (haloed) -->
         <g class="elabel" text-anchor="middle">
-          <text x="267" y="212">shared bus</text>
-          <text x="544" y="212">shared bus</text>
-          <text x="410" y="98">CS · DC · RST</text>
-          <text x="150" y="306" text-anchor="start">Qwiic</text>
-          <text x="270" y="364">E± · A±</text>
+          <text x="391" y="120">SPI bus + CS·BUSY·RST</text>
+          <text x="391" y="182">SPI bus + CS·DC·RST</text>
+          <text x="238" y="300" text-anchor="start">Qwiic (I²C)</text>
+          <text x="533" y="346">E± · A±</text>
         </g>
 
-        <!-- shared-net splice badge -->
-        <rect class="badge-bg" x="300" y="278" width="210" height="26" rx="8"/>
-        <text class="badge-tx" x="405" y="295" text-anchor="middle" font-size="12">◆ 5 shared-net splices</text>
-
         <!-- nodes -->
-        <rect class="node" x="42"  y="170" width="170" height="100" rx="11"/>
-        <rect class="node" x="322" y="170" width="164" height="100" rx="11"/>
-        <rect class="node" x="602" y="170" width="176" height="100" rx="11"/>
-        <rect class="node" x="42"  y="330" width="172" height="84"  rx="11"/>
-        <rect class="node" x="326" y="330" width="164" height="84"  rx="11"/>
+        <rect class="node" x="36"  y="150" width="180" height="130" rx="11"/>
+        <rect class="node" x="566" y="44"  width="214" height="72"  rx="11"/>
+        <rect class="node" x="566" y="158" width="214" height="72"  rx="11"/>
+        <rect class="node" x="300" y="320" width="200" height="72"  rx="11"/>
+        <rect class="node" x="566" y="320" width="214" height="72"  rx="11"/>
 
         <g text-anchor="middle">
-          <text class="ntitle" x="127" y="214" font-size="17">ESP32-S3</text>
-          <text class="nsub"   x="127" y="236" font-size="12.5">Thing Plus · controller</text>
-          <text class="ntitle" x="404" y="214" font-size="17">PN5180</text>
-          <text class="nsub"   x="404" y="236" font-size="12.5">NFC reader</text>
-          <text class="ntitle" x="690" y="214" font-size="17">ILI9488</text>
-          <text class="nsub"   x="690" y="236" font-size="12.5">3.5&quot; TFT display</text>
-          <text class="ntitle" x="128" y="368" font-size="16">NAU7802</text>
-          <text class="nsub"   x="128" y="389" font-size="12.5">load-cell ADC</text>
-          <text class="ntitle" x="408" y="368" font-size="16">Load cell</text>
-          <text class="nsub"   x="408" y="389" font-size="12.5">full bridge</text>
+          <text class="ntitle" x="126" y="209" font-size="17">ESP32-S3</text>
+          <text class="nsub"   x="126" y="231" font-size="12.5">Thing Plus · controller</text>
+          <text class="ntitle" x="673" y="75"  font-size="16">PN5180</text>
+          <text class="nsub"   x="673" y="95"  font-size="12.5">NFC reader</text>
+          <text class="ntitle" x="673" y="189" font-size="16">ILI9488</text>
+          <text class="nsub"   x="673" y="209" font-size="12.5">3.5&quot; TFT display</text>
+          <text class="ntitle" x="400" y="351" font-size="16">NAU7802</text>
+          <text class="nsub"   x="400" y="371" font-size="12.5">load-cell ADC</text>
+          <text class="ntitle" x="673" y="351" font-size="16">Load cell</text>
+          <text class="nsub"   x="673" y="371" font-size="12.5">full bridge</text>
         </g>
       </svg>
       <div class="legend">
-        <span><i class="swatch-line"></i> wire run</span>
-        <span><i class="swatch-line dash"></i> direct control line (from MCU)</span>
+        <span><i class="swatch-line"></i> wire run to the controller</span>
         <span><span class="flag"><i class="di">◆</i> soldered splice (shared net)</span></span>
       </div>
-      <p class="cap">Buzzer (GPIO&nbsp;14&nbsp;+ / GND&nbsp;−) and the onboard NeoPixel
-        (GPIO&nbsp;48) &amp; BOOT button (GPIO&nbsp;0) are omitted from the diagram — see tables.</p>
+      <p class="cap">Every device wires back to the controller — the PN5180 and display don't
+        connect to each other; each shared signal runs from the controller and forks at a
+        splice. Buzzer (GPIO&nbsp;14&nbsp;+ / GND&nbsp;−), the onboard NeoPixel (GPIO&nbsp;48)
+        &amp; BOOT button (GPIO&nbsp;0) are omitted — see tables.</p>
     </div>
   </section>
 
@@ -229,11 +227,11 @@
           <tr><td class="m">GPIO 15</td><td>TFT chip-select</td><td>TFT · CS</td></tr>
           <tr><td class="m">GPIO 16</td><td>TFT data/command</td><td>TFT · DC (RS)</td></tr>
           <tr><td class="m">GPIO 17</td><td>TFT reset</td><td>TFT · RESET</td></tr>
-          <tr><td class="m">GPIO 35</td><td>SPI MOSI</td><td>PN5180 · MOSI <span class="arrow">→</span> TFT · SDI <span class="note">(splice)</span></td></tr>
-          <tr><td class="m">GPIO 36</td><td>SPI SCK</td><td>PN5180 · SCK <span class="arrow">→</span> TFT · SCK <span class="note">(splice)</span></td></tr>
-          <tr><td class="m">GPIO 37</td><td>SPI MISO</td><td>PN5180 · MISO <span class="arrow">→</span> TFT · SDO <span class="note">(splice)</span></td></tr>
-          <tr><td class="m">3V3</td><td>+3.3&nbsp;V rail</td><td>PN5180 · 3.3V <span class="arrow">→</span> TFT · VCC <span class="note">(splice)</span></td></tr>
-          <tr><td class="m">GND</td><td>Ground rail</td><td>PN5180 · GND <span class="arrow">→</span> TFT · GND · buzzer −</td></tr>
+          <tr><td class="m">GPIO 35</td><td>SPI MOSI</td><td>PN5180 · MOSI <span class="arrow">+</span> TFT · SDI <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">GPIO 36</td><td>SPI SCK</td><td>PN5180 · SCK <span class="arrow">+</span> TFT · SCK <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">GPIO 37</td><td>SPI MISO</td><td>PN5180 · MISO <span class="arrow">+</span> TFT · SDO <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">3V3</td><td>+3.3&nbsp;V rail</td><td>PN5180 · 3.3V <span class="arrow">+</span> TFT · VCC <span class="note">(splice)</span></td></tr>
+          <tr><td class="m">GND</td><td>Ground rail</td><td>PN5180 · GND <span class="arrow">+</span> TFT · GND · buzzer −</td></tr>
           <tr><td class="m">GPIO 48</td><td>WS2812 status pixel</td><td class="note">onboard — no wire</td></tr>
           <tr><td class="m">GPIO 0</td><td>BOOT / WiFi-reset</td><td class="note">onboard button — no wire</td></tr>
         </tbody>
