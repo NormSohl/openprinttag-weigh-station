@@ -60,7 +60,7 @@ See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi se
 
 See `docs/design/tft-display-states.md` for the display content per state (`display_task.cpp` is authoritative for exact layout).
 
-See `hardware/wiring.md` and `hardware/netlist.md` for pin assignments and connector details.
+See `hardware/netlist.md` for the wiring diagram, pin assignments, and connector details.
 
 ## Runtime Configuration
 

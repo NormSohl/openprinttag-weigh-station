@@ -67,5 +67,5 @@ choice:
 
 See [`docs/design/sd-local-ecosystem.md`](../design/sd-local-ecosystem.md)
 for how this feeds the Spoolman-free redesign, and
-[`hardware/wiring.md`](../../hardware/wiring.md) for current pin
+[`hardware/netlist.md`](../../hardware/netlist.md) for current pin
 assignments.

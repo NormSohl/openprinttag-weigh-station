@@ -1,8 +1,8 @@
 # Wiring Netlist
 
 Source → destination for the controller and every peripheral. Matches the
-firmware pin map (`src/config.h`), `hardware/wiring.md`, and the display
-datasheet-of-record (`docs/datasheets/display-hosyond-ili9488.md`).
+firmware pin map (`src/config.h`) and the display datasheet-of-record
+(`docs/datasheets/display-hosyond-ili9488.md`).
 
 **MCU:** SparkFun Thing Plus ESP32-S3 (DEV-21230).
 
