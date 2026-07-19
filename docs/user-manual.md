@@ -64,7 +64,7 @@ Some spools arrive with an NFC tag already applied (genuine Prusament, or spools
 
 ### 1. Hardware assembly
 
-Wire the components per `docs/wiring.md`. The NAU7802 and SSD1306 connect via a Qwiic cable to the board's Qwiic connector. The PN5180 connects via SPI.
+Wire the components per `hardware/wiring.md`. The NAU7802 connects via a Qwiic cable to the board's Qwiic connector. The PN5180 NFC module and the ILI9488 TFT display connect via SPI (a shared bus).
 
 ### 2. Flash the firmware
 
@@ -177,5 +177,5 @@ The display shows `Fix SpoolMan URL: / weighstation.local` as a reminder. The we
 
 ### Display is blank
 
-- Confirm the Qwiic cable is fully seated at both ends.
-- Check the serial output for `[display] SSD1306 not found` — if present, the I²C address may be wrong or the cable is faulty.
+- Check the TFT's SPI wiring — CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), and the shared MOSI/SCK.
+- Make sure the backlight (`LED` pin) is powered (tied to 3.3 V) — the panel shows nothing without it.

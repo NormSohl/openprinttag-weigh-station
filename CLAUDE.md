@@ -30,7 +30,7 @@ Originally considered a separate PC-side onboarding tool (USB ISO15693 reader + 
 Use a Spoolman custom `extra` field (e.g. `extra.needs_onboarding = true`) as the "needs data entry" marker — not the `Location` field. Location should stay reserved for actual physical location; conflating it with workflow status causes stale "scale" labels once a spool moves to its real shelf.
 
 ### Confirm-by-inaction for blank-tag formatting
-No physical button exists. On blank tag detection: OLED shows a live 5-4-3-2-1 countdown ("New tag — remove to cancel"), NeoPixel blinks at an accelerating rate (a pattern not reused for any other status indicator). Removing the tag during the countdown cancels; leaving it in place until 0 confirms and proceeds to format + stub-create. Accepted tradeoff: default-to-proceed rather than default-to-cancel — justified because the failure mode (an extra placeholder Spool) is low-stakes and easily cleaned up.
+No physical button exists. On blank tag detection: the display shows a live 5-4-3-2-1 countdown ("New tag — remove to cancel"), NeoPixel blinks at an accelerating rate (a pattern not reused for any other status indicator). Removing the tag during the countdown cancels; leaving it in place until 0 confirms and proceeds to format + stub-create. Accepted tradeoff: default-to-proceed rather than default-to-cancel — justified because the failure mode (an extra placeholder Spool) is low-stakes and easily cleaned up.
 
 ### Weighing and write-back (no continuous weight resampling)
 On placement: weigh **once**. Write `remaining_weight`/`used_weight` to both the tag's Auxiliary section and Spoolman in the same pass. Check the tag's Main section against Spoolman's filament fields at this same moment; rewrite Main section too if it's already stale.
@@ -45,7 +45,7 @@ This mechanism is not onboarding-specific — it transparently reconciles *any* 
 A tag can be well-formed (not blank) but have an `nfc_id` Spoolman doesn't recognize — e.g. a genuine Prusament spool, or a spool tagged by another maker's tooling. Treat this as legitimate, not an error: decode the tag's own Main-section data (vendor, material, color, weight) and run the original find-or-create flow (Vendor → Filament → Spool) using that data, rather than creating an empty stub. Converges into the normal weigh+sync path afterward.
 
 ### Spool numbering for human lookup
-Display Spoolman's own **native auto-incrementing Spool ID** on the OLED — do not build a custom counter or extra field for this. The native ID is already unique, already atomic (no race condition risk from concurrent onboarding events), and short enough for the display. IDs will have gaps if records are ever deleted; cosmetic only.
+Display the **native auto-incrementing Spool ID** on the display — do not build a custom counter or extra field for this. The native ID is already unique, already atomic (no race condition risk from concurrent onboarding events), and short enough for the display. IDs will have gaps if records are ever deleted; cosmetic only.
 
 ### Tag reuse — decided against, for disposable spools
 The physical tag is a paper/aluminum-foil/PET-foil/adhesive laminate (see OpenPrintTag MK1 manufacturing drawing). Peeling it off a spool risks creasing/tearing the foil antenna trace — an invisible failure mode requiring an electrical test to even detect — and reapplication needs fresh adhesive anyway. Labor cost exceeds the ~$1/tag savings. **New tag every time** for disposable third-party spools.
@@ -56,7 +56,7 @@ For the (currently being phased out) fleet of reusable spool bodies: reuse is ha
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, the steady "present" state with background reconciliation, and network-failure fallback.
 
-See `docs/design/oled-display-states.md` for the OLED content per state. Note: the actual font used in `display_task.cpp` is Adafruit's default size-1 (6×8 px per char, ~21 chars × 8 lines), not the 8×16 assumed in that doc. The `SpoolmanUnreachable` state also now shows a "Fix SpoolMan URL: / weighstation.local" hint in the lower half of the screen.
+See `docs/design/tft-display-states.md` for the display content per state (`display_task.cpp` is authoritative for exact layout).
 
 See `hardware/wiring.md` for pin assignments and connector details.
 

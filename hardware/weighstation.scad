@@ -502,8 +502,9 @@ module base() {
 // =============================================================
 // Mounts on the base's four M3 bosses.
 // Devkit is held by side rails (most S3 devkits have no mounting
-// holes); NAU7802, OLED, and USB-C power breakout sit on standoff
+// holes); the NAU7802 and USB-C power breakout sit on standoff
 // pairs with parametric hole spacing — MEASURE your modules.
+// (The TFT mounts on the porch adapter, not internal standoffs.)
 devkit_l = 71;   devkit_w = 26;   devkit_pcb_t = 1.6;   // MEASURE
 nau_hole_dx = 20.3; nau_hole_dy = 7.6;                  // MEASURE
 usbbo_hole_dx = 14; usbbo_hole_dy = 0;                  // MEASURE (0 = single pair)
