@@ -19,7 +19,7 @@ struct OptMeta {
 // ── Main section (data/main_fields.yaml) ─────────────────────────────────────
 // Only the fields this project reads or writes.  Full field table is in the yaml.
 struct OptMain {
-    uint8_t  instance_uuid[16];          // key 0  — Spoolman nfc_id lookup key (UUID bytes)
+    uint8_t  instance_uuid[16];          // key 0  — local store lookup key / nfc_id (UUID bytes)
     char     brand_name[64];             // key 11
     char     material_name[64];          // key 10
     char     material_abbreviation[16];  // key 52 — e.g. "PETG", "ASA"

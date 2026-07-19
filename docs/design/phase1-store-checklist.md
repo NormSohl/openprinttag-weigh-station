@@ -53,7 +53,8 @@ rebuildable — weigh lines stay lean.
 ```
 
 - `ev` ∈ `onboard | weigh | reconcile | reorder_flag | export`.
-- `uuid` = tag `instance_uuid`, 32 hex chars (the Spoolman `nfc_id` key).
+- `uuid` = tag `instance_uuid`, 32 hex chars (the store lookup key; the same
+  value Spoolman formerly used as `nfc_id`).
 - `spool` = local auto-increment ID (NVS counter).
 - `crc` = CRC-32 (IEEE 802.3, poly 0xEDB88320) over the exact line bytes
   **from `{` up to and including the comma before `"crc"`** — i.e. the

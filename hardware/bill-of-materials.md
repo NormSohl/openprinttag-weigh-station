@@ -62,8 +62,9 @@ quantities yet:
   the actual board; assumed M3, may be M2 (see fastener schedule notes)
 - **Rubber feet** — base has recesses for them (4 corners) but no
   spec/source chosen yet
-- **Spoolman host hardware** — ruled out on Synology NAS (no Docker
-  support on j-series); separate dev server still to be sourced
+- **External server hardware** — no longer needed. The station is
+  self-contained (local storage + built-in web app), so there is no
+  Spoolman/Prometheus host to source. (Was previously an open item.)
 - **Display microSD interface pinout** — source is now known (Hosyond
   3.5" ILI9488 shield, see Electronics table), but the SD slot's pin
   assignments and whether it shares the TFT SPI bus are not yet

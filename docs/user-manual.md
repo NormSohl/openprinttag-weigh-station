@@ -1,38 +1,44 @@
 # Weigh Station — User Manual
 
-The Weigh Station is a filament inventory tool for the Seattle Makers 3D printing lab. Place a spool on the scale; it reads the NFC tag, weighs the spool, and updates the remaining filament in Spoolman automatically.
+The Weigh Station is a self-contained filament inventory tool for the Seattle
+Makers 3D-printing lab. Place a spool on the scale; it reads the NFC tag, weighs
+the spool, and records the remaining filament **on the device**. A built-in web
+app (`http://weighstation.local/`) shows inventory and history, onboards new
+spools, flags reorders, and takes backups. There is no external server.
 
 ---
 
 ## For Members: Weighing a Spool
 
-1. **Place the spool on the scale.** The NFC reader and load cell activate immediately — no button press needed.
-2. **Wait for the display to settle.** It will show the spool number, material, and remaining weight for a second or two while it syncs.
+1. **Place the spool on the scale.** The NFC reader and load cell activate
+   immediately — no button press needed.
+2. **Wait for the display to settle.** It shows the spool number, material, and
+   remaining weight for a second or two.
 3. **Remove the spool.** The display returns to the idle screen.
 
-That's it. Spoolman is updated in the background.
+That's it — the reading is saved locally, and a weigh entry is added to the
+spool's history.
 
 ### What the display shows
 
 | Display | Meaning |
 |---|---|
-| `Seattle Makers / Weigh Station / Place spool to begin` | Idle, ready |
-| `Weighing...` | Reading the load cell |
-| `Spool #N / [material] / NNNg remaining / Synced` | Done — Spoolman updated |
-| `Registered! / Spool #N / Edit in Spoolman / NNNg` | New spool just registered — an admin needs to fill in the material details |
-| `Updating tag...` | Writing updated filament data back to the NFC tag |
-| `Spoolman offline / NNNg (local) / Will sync later` | Can't reach Spoolman — weight is saved to the tag and will sync on the next successful connection |
+| `Seattle Makers / Place spool to begin / Web app: http://weighstation.local` | Idle, ready |
+| `Weighing... / NNN g` | Reading the load cell |
+| `Spool #N / [material] / NNNg remaining / Saved locally` | Done — recorded |
+| `Registered! / Spool #N / Add details in web app / NNNg` | New spool just registered — fill in the material details in the web app |
+| `Updating tag... ` | Writing updated filament data back to the NFC tag |
+| `Scale not calibrated / Calibrate in web app` | Shown on idle until the scale is calibrated (weights are unreliable until then) |
 
 ### Status light (NeoPixel)
 
 | Color | Meaning |
 |---|---|
 | Dim green | Idle, ready |
-| Blue | Communicating (WiFi setup, weighing, writing tag) |
-| Green | Spool weighed and synced |
-| Yellow | Spool registered but needs data entry in Spoolman |
-| Orange | Spoolman unreachable |
-| Amber (blinking, accelerating) | New tag countdown — remove the spool to cancel |
+| Blue | Working (WiFi setup, weighing, writing tag) |
+| Green | Spool weighed and saved |
+| Yellow | Spool registered but needs details entered in the web app |
+| Amber (blinking, accelerating) | New-tag countdown — remove the spool to cancel |
 | Red | Tag read error — reposition the spool |
 
 ---
@@ -41,127 +47,140 @@ That's it. Spoolman is updated in the background.
 
 When you place a spool with a **blank NFC tag** on the scale:
 
-1. The display shows a **5-second countdown** — "New tag found / Remove to cancel / Registering in: 5…"
-2. **Remove the spool within 5 seconds** to cancel, or **leave it in place** to proceed.
-3. The station formats the tag and creates a placeholder record in Spoolman. The display shows `Registered! / Spool #N / Edit in Spoolman`.
-4. **An admin needs to open Spoolman and fill in the material details** (brand, material type, color, weight) for that spool number.
+1. The display shows a **5-second countdown** — "New tag found / Remove to
+   cancel / Registering in: 5…"
+2. **Remove the spool within 5 seconds** to cancel, or **leave it in place** to
+   proceed.
+3. The station formats the tag and creates a placeholder record on the device.
+   The display shows `Registered! / Spool #N / Add details in web app`.
+4. **Open the web app and fill in the material details** for that spool — see
+   *Onboarding a spool* below.
 
-Once the details are saved in Spoolman, the next time that spool is placed on the scale the NFC tag is automatically updated with the real data.
+Once the details are saved, the NFC tag is written with the real data — either
+right away if the spool is still on the scale, or the next time it's placed.
+
+### Onboarding a spool (web app)
+
+1. With the spool on the scale, browse to `http://weighstation.local/` on any
+   phone or laptop on the same network.
+2. Open **Onboard**. Pick the **vendor**, **material**, **color**, and **spool
+   profile** (the profile fills in the empty-spool tare and nominal weight). You
+   can also capture the tare from a matching empty spool with **Capture tare**.
+3. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
+   weights) is written to the tag and the record is saved.
 
 ### Applying an NFC tag to a new spool
 
-Use an OpenPrintTag MK1 sticker. Peel and apply to the flat hub face of the spool — away from the filament windings, centered so it sits over the NFC reader when placed on the scale. Press firmly for 5 seconds.
+Use an OpenPrintTag MK1 sticker. Peel and apply to the flat hub face of the
+spool — away from the filament windings, centered so it sits over the NFC reader
+when placed on the scale. Press firmly for 5 seconds.
 
-**Do not reuse tags.** Peeling a tag risks cracking the foil antenna invisibly. New tag for every new spool.
+**Do not reuse tags.** Peeling a tag risks cracking the foil antenna invisibly.
+New tag for every new spool.
 
 ### Pre-tagged spools (e.g. Prusament)
 
-Some spools arrive with an NFC tag already applied (genuine Prusament, or spools tagged by another maker's setup). The station recognizes these as legitimate and registers them in Spoolman using the data already on the tag — no countdown, no blank-tag flow. It then weighs and syncs normally.
+Some spools arrive with an NFC tag already applied (genuine Prusament, or spools
+tagged by another maker's setup). The station recognizes these as legitimate and
+creates a local record from the data already on the tag — no countdown, no
+blank-tag flow. It then weighs and records normally.
 
 ---
 
 ## For Administrators: Initial Setup
 
+Full build/flash steps are in [`DEVELOPMENT.md`](../DEVELOPMENT.md); a short
+version follows.
+
 ### 1. Hardware assembly
 
-Wire the components per `hardware/wiring.md`. The NAU7802 connects via a Qwiic cable to the board's Qwiic connector. The PN5180 NFC module and the ILI9488 TFT display connect via SPI (a shared bus).
+Wire the components per [`hardware/netlist.md`](../hardware/netlist.md). The
+NAU7802 connects via a Qwiic cable; the PN5180 NFC module and the ILI9488 TFT
+display share the SPI bus.
 
 ### 2. Flash the firmware
 
 ```bash
-cd <repo>
 pio run --target upload
 ```
 
-Monitor output:
+### 3. First-time WiFi setup
 
-```bash
-pio device monitor --baud 115200
-```
-
-### 3. First-time WiFi and Spoolman URL setup
-
-On first boot, the display shows:
+On first boot the display shows:
 
 ```
 WiFi Setup
-Join AP:
+Join network:
 WeighStation-Setup
 ```
 
 1. On any phone or laptop, join the `WeighStation-Setup` WiFi network.
-2. A captive portal page opens automatically (or browse to `192.168.4.1`).
+2. A captive-portal page opens automatically (or browse to `192.168.4.1`).
 3. Select your WiFi network and enter the password.
-4. Set the **Spoolman URL** field (e.g. `http://spoolman.local:7912`).
-5. Submit. The device connects and the display changes to the idle screen.
+4. Submit. The device connects to the lab network and the display shows the idle
+   screen with its address (`http://weighstation.local/`).
 
-### 4. Scale calibration
+If no network is configured (or it can't be reached), the station falls back to
+its own `WeighStation` access point so the web app stays reachable — the idle
+screen shows the SSID and address to use.
 
-The scale auto-tares on first boot (assuming the platform is empty). To calibrate with a known weight:
+### 4. Scale calibration (web)
 
-1. Open a serial terminal at 115200 baud (`pio device monitor`).
-2. With **nothing** on the scale, send:
-   ```
-   ZERO
-   ```
-3. Place a known reference weight (e.g. a 100 g calibration weight) on the scale platform, then send:
-   ```
-   CAL 100
-   ```
-   Replace `100` with the actual mass in grams.
-4. Calibration is saved to flash automatically. Repeat any time the load cell is remounted or readings drift.
+The scale reads raw counts until calibrated; the idle screen shows **"Scale not
+calibrated"** until you do this.
+
+1. With the spool on/off as directed, browse to `http://weighstation.local/` and
+   open **Calibrate**.
+2. **Step 1 — Zero:** clear the scale, then click **Zero (tare)**.
+3. **Step 2 — Calibrate:** place a known weight, type its exact mass in grams,
+   then **Set calibration**.
+
+The banner clears when it takes. (Serial `ZERO` / `CAL <grams>` at 115200 baud
+still work as a fallback.)
 
 ---
 
 ## For Administrators: Ongoing Maintenance
 
-### Changing the Spoolman URL
+### The web app
 
-From any browser on the same network:
+`http://weighstation.local/` provides:
 
-1. Go to `http://weighstation.local/`
-2. Update the **Spoolman URL** field and click **Save**.
-
-No restart required. The new URL takes effect immediately and is persisted to flash.
+- **Inventory** — remaining filament by material; the spool currently on the scale.
+- **Spools** — the full list; click a spool for its weigh history + a remaining-over-time sparkline (with CSV export).
+- **Onboard** — fill in details for a new/blank spool.
+- **Reorder** — standard-stock items at or below threshold; download a CSV to place the order.
+- **Config** — edit the vendor/material/color/spool-profile/stock-item tables.
+- **Backup** — download the event log; restore from an uploaded backup.
+- **Calibrate** — the scale calibration workflow above.
 
 ### Changing the WiFi network
 
-If the network SSID or password changes:
+**Option A — web (device currently connected):** browse to
+`http://weighstation.local/reset`. The device reboots and opens the
+`WeighStation-Setup` AP; connect and reconfigure as in initial setup.
 
-**Option A — web (device must currently be connected):**
+**Option B — power cycle (device unreachable):** power-cycle it. If stored
+credentials fail, the captive portal opens for **120 seconds** — connect within
+that window and reconfigure. (Holding the BOOT button for 3 s at power-on also
+clears WiFi credentials.)
 
-1. Go to `http://weighstation.local/reset`
-2. The device reboots and opens the `WeighStation-Setup` AP.
-3. Connect and reconfigure as in the initial setup.
+### Recalibrating / backups
 
-**Option B — power cycle (device unreachable or not yet connected):**
-
-Power-cycle the device. If the stored credentials fail, WiFiManager automatically opens the `WeighStation-Setup` AP for **120 seconds**. Connect within that window and reconfigure.
-
-> The Spoolman URL is preserved across a WiFi reset — you only need to re-enter the WiFi credentials.
-
-### Recalibrating the scale
-
-Repeat the calibration procedure in the Setup section. New values overwrite the stored ones immediately.
+Recalibrate any time via the **Calibrate** page. Take periodic **Backup**
+downloads (and, once the SD card is wired, automatic snapshots) so history
+survives a device swap.
 
 ---
 
 ## Troubleshooting
 
-### "Spoolman offline" on the display
-
-The device can't reach the Spoolman server. Possible causes:
-
-- **Wrong URL** — browse to `http://weighstation.local/` and check the Spoolman URL field. It should match the address you use to reach Spoolman in a browser (e.g. `http://spoolman.local:7912`).
-- **Spoolman server is down** — check that the machine running Spoolman is on and the service is running.
-- **WiFi issue** — see below.
-
-The display shows `Fix SpoolMan URL: / weighstation.local` as a reminder. The weight is still written to the NFC tag and will sync to Spoolman once the connection is restored.
-
 ### Device won't connect to WiFi
 
-- Power-cycle the device and connect to `WeighStation-Setup` within 120 seconds to reconfigure.
-- If the SSID list in the portal is empty, wait 30 seconds for the scan to complete and refresh the page.
+- Power-cycle the device and connect to `WeighStation-Setup` within 120 seconds
+  to reconfigure.
+- If the SSID list in the portal is empty, wait ~30 seconds for the scan and
+  refresh the page.
 
 ### NFC tag not reading ("Read error")
 
@@ -171,11 +190,13 @@ The display shows `Fix SpoolMan URL: / weighstation.local` as a reminder. The we
 
 ### Scale reads zero or wildly wrong values
 
-- Ensure the platform is clear and stable, then send `ZERO` over serial.
-- If readings are consistently off by a fixed ratio, recalibrate with `CAL <grams>`.
+- Recalibrate: open **Calibrate**, **Zero** with the platform clear, then
+  **Set calibration** with a known weight.
 - Check that the load cell wiring hasn't shifted (particularly E+ / E− polarity).
 
 ### Display is blank
 
-- Check the TFT's SPI wiring — CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), and the shared MOSI/SCK.
-- Make sure the backlight (`LED` pin) is powered (tied to 3.3 V) — the panel shows nothing without it.
+- Check the TFT's SPI wiring — CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), and the
+  shared MOSI/SCK.
+- Make sure the backlight (`LED` pin) is powered (tied to 3.3 V) — the panel
+  shows nothing without it.

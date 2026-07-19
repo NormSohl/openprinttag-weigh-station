@@ -1,16 +1,14 @@
 stateDiagram-v2
     [*] --> Boot
 
-    Boot --> WiFiSetupMode: no saved WiFi credentials
-    Boot --> Idle: WiFi connects
+    Boot --> WiFiSetupMode: attempt WiFi provisioning
 
-    WiFiSetupMode --> Idle: provisioning succeeds
-    WiFiSetupMode --> IdleNoWiFi: 120s timeout, no setup completed
+    WiFiSetupMode --> Idle: station connects
+    WiFiSetupMode --> IdleNoWiFi: 120s timeout -> SoftAP fallback
 
     Idle --> TagDetecting: tag presence (1st read)
     IdleNoWiFi --> TagDetecting: tag presence (1st read)
-    Idle --> IdleNoWiFi: WiFi/Spoolman connection lost
-    IdleNoWiFi --> Idle: WiFi/Spoolman connection restored
+    IdleNoWiFi --> Idle: station WiFi comes up later
 
     TagDetecting --> Idle: reads don't confirm (false trigger)
     TagDetecting --> TagReadError: 3 reads, inconsistent/corrupt data
@@ -31,23 +29,19 @@ stateDiagram-v2
     end note
     AwaitingFormatConfirm --> FormattingAndRegistering: countdown reaches 0, tag still present
     AwaitingFormatConfirm --> Idle: tag removed during countdown (cancelled)
-    FormattingAndRegistering --> Present: stub Spool created, tag formatted
+    FormattingAndRegistering --> ValidTagFound: tag formatted (blank, nil UUID)
 
-    ValidTagFound --> ForeignTagFound: nfc_id not in Spoolman (valid data, just not registered yet)
-    ValidTagFound --> WeighingAndSync: nfc_id matches an existing spool
+    ValidTagFound --> Present: blank tag -> mint UUID + local stub record (needs onboarding)
+    ValidTagFound --> ForeignTagFound: nfc_id not in the local store (valid data, just unregistered)
+    ValidTagFound --> WeighingAndSync: nfc_id matches a known spool
 
-    ForeignTagFound --> RegisteringForeignTag: decode tag's own Main-section data (vendor, material, color, weight)
-    RegisteringForeignTag --> WeighingAndSync: Vendor/Filament/Spool found-or-created from the tag's own data
+    ForeignTagFound --> RegisteringForeignTag: decode the tag's own Main data (vendor, material, color, weight)
+    RegisteringForeignTag --> WeighingAndSync: local record created from the tag's own data
     ForeignTagFound --> Idle: tag removed
-    RegisteringForeignTag --> Idle: tag removed mid find-or-create
+    RegisteringForeignTag --> Idle: tag removed mid-registration
 
-    WeighingAndSync --> Present: weigh once, write Aux+Main as needed, PATCH Spoolman
+    WeighingAndSync --> Present: weigh once; write tag Aux; append a weigh event to the log
 
-    Present --> ReconcilingMainSection: 1s poll detects Spoolman change
-    ReconcilingMainSection --> Present: tag rewritten, cache updated
+    Present --> ReconcilingMainSection: 1s poll detects a local-store edit (web onboarding)
+    ReconcilingMainSection --> Present: tag Main rewritten, snapshot updated
     Present --> Idle: tag removed (2 consecutive misses)
-
-    Present --> SpoolmanUnreachable: API call fails
-    WeighingAndSync --> SpoolmanUnreachable: API call fails
-    SpoolmanUnreachable --> Present: connectivity restored, retry succeeds
-    SpoolmanUnreachable --> Idle: tag removed
