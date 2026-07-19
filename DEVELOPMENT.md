@@ -21,8 +21,8 @@ green local build should match CI.
 ## 2. Get the code
 
 ```bash
-git clone https://github.com/NormSohl/Filliment-Scale-with-OpenPrintTag-RFID-tracking-and-Spoolman-integration.git
-cd Filliment-Scale-with-OpenPrintTag-RFID-tracking-and-Spoolman-integration
+git clone https://github.com/NormSohl/openprinttag-weigh-station.git
+cd openprinttag-weigh-station
 ```
 
 ## 3. Build

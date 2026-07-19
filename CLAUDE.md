@@ -8,7 +8,7 @@ Auto-loaded by Claude Code at the start of every session. Summarizes architectur
 
 Self-contained NFC-based filament inventory system for Seattle Makers' 3D printing lab. A custom ESP32-S3 weigh station reads OpenPrintTag (OPT) NFC spool tags via a PN5180 module, weighs spools with a NAU7802 load cell, and records inventory **locally on the device**, serving a built-in web app over WiFi. There is no external backend.
 
-> **History:** the project originally synced to Spoolman (self-hosted inventory backend) and kept history in Prometheus. Both were removed in the local-storage redesign — see `docs/design/sd-local-ecosystem.md` and `implementation-plan.md`. Storage is now an append-only event log on LittleFS + NVS counters, with the built-in web app replacing Spoolman's UI. The repo name still reflects the original design.
+> **History:** the project originally synced to Spoolman (self-hosted inventory backend) and kept history in Prometheus. Both were removed in the local-storage redesign — see `docs/design/sd-local-ecosystem.md` and `implementation-plan.md`. Storage is now an append-only event log on LittleFS + NVS counters, with the built-in web app replacing Spoolman's UI.
 
 **Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 48). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (GPIO 35/36/37); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via include/User_Setup.h.
 

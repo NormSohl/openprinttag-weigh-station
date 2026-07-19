@@ -25,5 +25,4 @@ event log in on-device flash.
 
 > **History:** this project originally synced to Spoolman (and kept history in
 > Prometheus). It is now standalone — Spoolman and Prometheus have been removed
-> and replaced by on-device storage and the built-in web app. The repo name still
-> reflects the original design.
+> and replaced by on-device storage and the built-in web app.
