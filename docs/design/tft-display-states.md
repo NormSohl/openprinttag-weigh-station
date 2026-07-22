@@ -19,7 +19,7 @@ the passive buzzer plays short state tones (boot chime, weigh-done, error, …).
 | FormattingAndRegistering | `Registering...` | `Please wait` | tag format + write |
 | ForeignTagFound / RegisteringForeignTag | `New spool found` | decoded brand · decoded material · `Registering spool...` | pre-tagged spool (Prusament, another maker's tooling) not yet known — decode its own data and create a local record |
 | WeighingAndSync | `Weighing...` | `<grams> g` | single sample |
-| Present (needs onboarding) | `Registered!` | `Spool #N` · `Add details in web app` · `<grams> g` | prompts filling in details via the web form |
+| Present (needs onboarding) | `Registered!` | `Spool #N` · `Add details in web app:` · `http://weighstation.local` · `<grams> g` | prompts filling in details via the web form; shows the URL |
 | Present (normal) | `Spool #N` | material · `<grams> g remaining` · `Saved locally` | steady display while the spool sits on the scale |
 | ReconcilingMainSection | `Updating tag...` | | brief overlay, then resumes Present |
 

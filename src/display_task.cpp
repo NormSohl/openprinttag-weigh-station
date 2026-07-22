@@ -296,7 +296,8 @@ void displayTask(void* param) {
                 if (needsOnboarding) {
                     title("Registered!", TFT_YELLOW);
                     if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
-                    row(3, "Add details in web app", TFT_DARKGREY);
+                    row(3, "Add details in web app:", TFT_DARKGREY);
+                    if (gWebAddr[0]) rowf(4, TFT_CYAN, "http://%s", gWebAddr);
                     rowf(5, TFT_WHITE, "%.0f g", remaining);
                     pixelColor = pixel.Color(50, 50, 0);
                 } else {
