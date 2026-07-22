@@ -49,6 +49,7 @@ static const char* STYLE =
     "body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}"
     "header{background:#1c2b1c;padding:14px 18px;font-size:20px;font-weight:600}"
     "header a{color:#8f8;text-decoration:none;margin-right:16px;font-size:15px;font-weight:400}"
+    "header a.active{color:#fff;font-weight:600;border-bottom:2px solid #8f8;padding-bottom:3px}"
     "main{padding:18px;max-width:760px;margin:0 auto}"
     "table{border-collapse:collapse;width:100%}"
     "th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #333}"
@@ -64,23 +65,32 @@ static const char* STYLE =
     ".muted{color:#888}"
     "</style>";
 
-static String head(const char* title) {
+// One nav link, marked `active` when its href matches the current page.
+static void navlink(String& h, const char* href, const char* label, const char* active) {
+    h += "<a href='";
+    h += href;
+    h += (strcmp(href, active) == 0) ? "' class='active'>" : "'>";
+    h += label;
+    h += "</a>";
+}
+
+// `active` = the nav href for the current page (e.g. "/spools"); "" = none.
+static String head(const char* title, const char* active = "") {
     String h = "<!DOCTYPE html><html><head><meta charset='utf-8'>"
                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                "<title>";
     h += title;
     h += "</title>";
     h += STYLE;
-    h += "</head><body><header>Weigh Station"
-         "<span style='float:right'>"
-         "<a href='/'>Inventory</a>"
-         "<a href='/spools'>Spools</a>"
-         "<a href='/onboard'>Onboard</a>"
-         "<a href='/reorder'>Reorder</a>"
-         "<a href='/config'>Config</a>"
-         "<a href='/calibrate'>Calibrate</a>"
-         "<a href='/backup'>Backup</a>"
-         "</span></header><main>";
+    h += "</head><body><header>Weigh Station<span style='float:right'>";
+    navlink(h, "/",          "Inventory", active);
+    navlink(h, "/spools",    "Spools",    active);
+    navlink(h, "/onboard",   "Onboard",   active);
+    navlink(h, "/reorder",   "Reorder",   active);
+    navlink(h, "/config",    "Config",    active);
+    navlink(h, "/calibrate", "Calibrate", active);
+    navlink(h, "/backup",    "Backup",    active);
+    h += "</span></header><main>";
     return h;
 }
 
@@ -99,7 +109,7 @@ static int currentSpool() {
 
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
-    String p = head("Inventory");
+    String p = head("Inventory", "/");
 
     if (!gScaleCalibrated)
         p += "<div class='card' style='border-color:#a70'>"
@@ -145,7 +155,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
 
 // ── Spool list ────────────────────────────────────────────────────────────────
 static void handleSpools(AsyncWebServerRequest* req) {
-    String p = head("Spools");
+    String p = head("Spools", "/spools");
     p += "<h3>Spools</h3><table>"
          "<tr><th>#</th><th>Material</th><th>Vendor</th><th>Remaining</th><th></th></tr>";
     size_t n = storeSpoolCount();
@@ -257,7 +267,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
         return;
     }
 
-    String p = head("Spool");
+    String p = head("Spool", "/spools");
     char rgb[8];
     snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
     p += "<div class='card'>";
@@ -292,7 +302,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
 
 // ── Onboarding form ───────────────────────────────────────────────────────────
 static void handleOnboardForm(AsyncWebServerRequest* req) {
-    String p = head("Onboard");
+    String p = head("Onboard", "/onboard");
     int cur = currentSpool();
 
     if (cur < 0) {
@@ -494,7 +504,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         return;
     }
 
-    String p = head("Reorder");
+    String p = head("Reorder", "/reorder");
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
@@ -537,7 +547,7 @@ static void configTableForm(String& p, const char* label, const char* which) {
 }
 
 static void handleConfig(AsyncWebServerRequest* req) {
-    String p = head("Config");
+    String p = head("Config", "/config");
     p += "<h3>Config catalog</h3>";
     p += "<p class='muted'>Edit the reference tables that drive onboarding and "
          "reordering. Each is a JSON array; Save validates and persists it.</p>";
@@ -567,7 +577,7 @@ static void handleApiConfigSave(AsyncWebServerRequest* req) {
 static const char* IMPORT_STAGING = "/log/import.staging";
 
 static void handleBackupPage(AsyncWebServerRequest* req) {
-    String p = head("Backup");
+    String p = head("Backup", "/backup");
     p += "<h3>Backup &amp; restore</h3>";
     p += "<div class='card'><label style='margin-top:0'>Download</label>"
          "<p class='muted'>The event log is the source of truth &mdash; download it "
@@ -610,7 +620,7 @@ static void handleImportDone(AsyncWebServerRequest* req) {
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
-        String p = head("Restore");
+        String p = head("Restore", "/backup");
         p += "<div class='card'><p>Restore complete &mdash; "
              + String((unsigned)storeSpoolCount()) + " spools, "
              + String((unsigned)storeLogLineCount()) + " log entries.</p>"
@@ -646,7 +656,7 @@ static void handleApiCal(AsyncWebServerRequest* req) {
 }
 
 static void handleCalibratePage(AsyncWebServerRequest* req) {
-    String p = head("Calibrate");
+    String p = head("Calibrate", "/calibrate");
     p += "<h3>Scale calibration</h3>";
     p += "<div class='card'><div class='muted'>Live weight</div>"
          "<div class='big' id='w'>&mdash;</div>"
