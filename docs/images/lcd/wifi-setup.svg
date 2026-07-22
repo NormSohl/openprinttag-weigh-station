@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" font-family="ui-monospace,Menlo,Consolas,monospace">
+<rect width="480" height="320" rx="6" fill="#000"/>
+<text x="12" y="32" font-size="26" font-weight="700" fill="#0064dc">WiFi Setup</text>
+<text x="12" y="81" font-size="17" fill="#ffffff">Join network:</text>
+<text x="12" y="109" font-size="17" fill="#00ffff">WeighStation-Setup</text>
+<text x="12" y="165" font-size="17" fill="#7b7d7b">Then open browser to</text>
+<text x="12" y="193" font-size="17" fill="#7b7d7b">192.168.4.1</text>
+</svg>

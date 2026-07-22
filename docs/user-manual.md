@@ -21,14 +21,16 @@ spool's history.
 
 ### What the display shows
 
+The 3.5" screen shows one of these, depending on what's happening:
+
 | Display | Meaning |
 |---|---|
-| `Seattle Makers / Place spool to begin / Web app: http://weighstation.local` | Idle, ready |
-| `Weighing... / NNN g` | Reading the load cell |
-| `Spool #N / [material] / NNNg remaining / Saved locally` | Done — recorded |
-| `Registered! / Spool #N / Add details in web app / NNNg` | New spool just registered — fill in the material details in the web app |
-| `Updating tag... ` | Writing updated filament data back to the NFC tag |
-| `Scale not calibrated / Calibrate in web app` | Shown on idle until the scale is calibrated (weights are unreliable until then) |
+| <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, Web app URL"> | **Idle, ready** — place a spool to begin |
+| <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing** — reading the load cell |
+| <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Saved locally"> | **Done** — spool number, material, and remaining weight recorded locally |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen prompting to add details in the web app"> | **New spool registered** — fill in the material details in the web app (see *New Spools* below) |
+| <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
+| <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
 
 ### Status light (NeoPixel)
 
@@ -49,10 +51,16 @@ When you place a spool with a **blank NFC tag** on the scale:
 
 1. The display shows a **5-second countdown** — "New tag found / Remove to
    cancel / Registering in: 5…"
+
+   <img src="images/lcd/new-tag-countdown.svg" width="300" alt="New tag found screen with a large countdown digit">
+
 2. **Remove the spool within 5 seconds** to cancel, or **leave it in place** to
    proceed.
 3. The station formats the tag and creates a placeholder record on the device.
    The display shows `Registered! / Spool #N / Add details in web app`.
+
+   <img src="images/lcd/registered.svg" width="300" alt="Registered screen prompting to add details in the web app">
+
 4. **Open the web app and fill in the material details** for that spool — see
    *Onboarding a spool* below.
 
@@ -106,13 +114,9 @@ pio run --target upload
 
 ### 3. First-time WiFi setup
 
-On first boot the display shows:
+On first boot the display shows the WiFi setup screen:
 
-```
-WiFi Setup
-Join network:
-WeighStation-Setup
-```
+<img src="images/lcd/wifi-setup.svg" width="300" alt="WiFi Setup screen: Join network WeighStation-Setup, then open browser to 192.168.4.1">
 
 1. On any phone or laptop, join the `WeighStation-Setup` WiFi network.
 2. A captive-portal page opens automatically (or browse to `192.168.4.1`).
@@ -127,7 +131,9 @@ screen shows the SSID and address to use.
 ### 4. Scale calibration (web)
 
 The scale reads raw counts until calibrated; the idle screen shows **"Scale not
-calibrated"** until you do this.
+calibrated"** until you do this:
+
+<img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning">
 
 1. With the spool on/off as directed, browse to `http://weighstation.local/` and
    open **Calibrate**.

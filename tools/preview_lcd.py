@@ -98,3 +98,24 @@ html=("<!doctype html><html><head><meta charset='utf-8'>"
 
 open("lcd-preview.html","w").write(html)
 print("wrote lcd-preview.html", len(html), "bytes;", len(states), "states")
+
+# --- also emit each state as a standalone SVG (for embedding in docs) ---
+import os
+slugs=["boot","wifi-setup","idle","idle-uncalibrated","idle-softap","read-error",
+       "new-tag-countdown","registering","foreign-spool","weighing","registered",
+       "present","updating-tag"]
+def svg_screen(spans):
+    out=['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" '
+         'font-family="ui-monospace,Menlo,Consolas,monospace">',
+         '<rect width="480" height="320" rx="6" fill="#000"/>']
+    for left,top,size,color,text,bold in spans:
+        fw=' font-weight="700"' if bold else ''
+        y=top+round(size*0.78)
+        t=text.replace('&','&amp;').replace('<','&lt;')
+        out.append(f'<text x="{left}" y="{y}" font-size="{size}"{fw} fill="{color}">{t}</text>')
+    out.append('</svg>')
+    return "\n".join(out)
+os.makedirs("lcd-svg",exist_ok=True)
+for slug,(label,px,spans) in zip(slugs,states):
+    open(f"lcd-svg/{slug}.svg","w").write(svg_screen(spans))
+print("wrote", len(slugs), "SVGs to lcd-svg/")
