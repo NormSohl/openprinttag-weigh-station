@@ -45,9 +45,17 @@ flashed over USB-C.
    - A normal upload writes the **bootloader + partition table + app**
      together, so the custom `partitions.csv` (single 3 MB app + 4.88 MB
      LittleFS, no OTA) takes effect on the first flash automatically.
-   - If auto-reset doesn't catch (common on the very first flash): hold
-     **BOOT**, tap **RESET**, release **BOOT**, then upload again.
+   - **Download mode (expect to need this on the very first flash):** the S3's
+     native USB won't present a bootloader until it's told to. Hold **BOOT**
+     (IO0), tap **RESET** (EN), release **BOOT**, then upload. After one good
+     flash the auto-reset works on its own.
    - Optional clean slate the first time: `pio run -t erase` before uploading.
+
+> **Native USB, no bridge chip.** The Thing Plus ESP32-S3 wires USB-C straight
+> to the chip's USB — there is **no CP210x/CH340 serial bridge**, so there's no
+> vendor driver to install, and the port is **`ttyACM*` / `cu.usbmodem*` /
+> `COMx`**, *not* `ttyUSB*`. (If you're hunting for `/dev/ttyUSB0`, that's why
+> it's not there.)
 
 **No filesystem image to upload.** Config tables seed themselves at first boot
 and the web UI is embedded in the firmware, so there is no `uploadfs` step — a
@@ -62,13 +70,53 @@ pio device monitor -b 115200
 For boot logs and the capacity/test harness (`SEED <spools> <events>`, `DUMP`,
 `LOGSTATS`, `REBUILD`, …). WiFi setup is shown on the TFT and
 calibration/onboarding are done in the browser, so the serial console is **not**
-required for bring-up.
+required for bring-up — but on the *first* power-on it's the single most useful
+instrument (see the expected output below). `pio device list` prints the port.
 
 If the monitor is blank after a successful upload, it's the ESP32-S3 native-USB
 CDC quirk: add `-DARDUINO_USB_CDC_ON_BOOT=1` to `build_flags` in
 `platformio.ini` (depends on the board's USB wiring).
 
+### Serial port access & drivers (per OS)
+
+No driver install — native USB is class-compliant CDC. The only per-OS bit is
+**permissions / a couple of well-known gotchas**:
+
+- **Linux** — add yourself to the serial group once, then log out/in:
+  ```bash
+  sudo usermod -aG dialout $USER      # (or `uucp` on Arch)
+  ```
+  If the port appears then **vanishes after ~1 s**, the culprit is almost always
+  `brltty` (a screen-reader daemon that grabs ACM devices):
+  `sudo apt remove brltty`. Port is `/dev/ttyACM0`.
+- **macOS** — nothing to install; port is `/dev/cu.usbmodemXXXX`. (Only a
+  *bridge* board would need the SiLabs VCP driver — this one doesn't.)
+- **Windows** — Win10/11 install the USB-CDC class driver automatically; it
+  shows up as `COMx` in Device Manager. No Zadig needed for flashing/monitoring
+  (Zadig is only for the separate JTAG interface, which we don't use).
+
 ## First-boot bring-up (no PC needed after flashing)
+
+> **First power-on: leave the microSD slot empty and keep the serial monitor
+> open.** SD is the only brand-new, unvalidated wiring — it's fail-safe (boots
+> fine with no card), so keeping it out means it can't muddy the first log. Add
+> the card once the core is proven.
+
+**What a healthy boot prints.** The subsystems come up as independent tasks, so
+even a dead peripheral won't hide the others — read the banner to see who's
+alive:
+
+```
+[store] ready: 0 spools, 0 log lines, next id #1
+[cfg]   ready: N vendors, N materials, N profiles, N colors, N stock
+[sd]    no card (backup to SD disabled until inserted)
+*wm:AutoConnect ...            <- WiFiManager (portal or join)
+```
+
+Then the TFT lights and shows `WiFi Setup` (or the idle screen once joined). A
+missing line points straight at the section to drill into — e.g. no `[cfg]`
+means LittleFS didn't mount; a hang right after `SPI.begin` points at the shared
+PN5180/TFT bus.
 
 1. **WiFi:** on first boot the TFT shows `WiFi Setup` — join the
    `WeighStation-Setup` network and enter the lab WiFi. After that it runs in
