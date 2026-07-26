@@ -139,7 +139,7 @@ static String serStock() {
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 static void seedVendors() {
-    sVendors = {"Prusament", "Hatchbox", "Overture", "Polymaker", "Generic"};
+    sVendors = {"eSun", "Overture"};   // Seattle Makers standard stock (add more via Config)
 }
 // Explicit builders — GCC 8 (esp32 core) rejects push_back({...}) for these
 // aggregates (char arrays / nested array members).
@@ -165,33 +165,139 @@ static void addColor(const char* name, uint8_t r, uint8_t g, uint8_t b, uint8_t 
     c.rgba[0] = r; c.rgba[1] = g; c.rgba[2] = b; c.rgba[3] = a;
     sColors.push_back(c);
 }
+static void addStock(const char* vendor, const char* material, const char* color,
+                     float dia, float spool_g, uint16_t min_spools) {
+    CfgStock s{};
+    strlcpy(s.vendor,   vendor,   sizeof(s.vendor));
+    strlcpy(s.material, material, sizeof(s.material));
+    strlcpy(s.color,    color,    sizeof(s.color));
+    s.dia = dia; s.spool_g = spool_g;
+    s.min_spools = min_spools; s.min_grams = 0.0f;
+    s.pack_qty = 1;
+    sStock.push_back(s);
+}
 
 static void seedMaterials() {
     sMaterials.clear();
-    addMat("PLA",  "PLA",  1.75f, 190, 220, 50, 60);
-    addMat("PETG", "PETG", 1.75f, 230, 250, 70, 85);
-    addMat("ASA",  "ASA",  1.75f, 240, 260, 90, 110);
-    addMat("ABS",  "ABS",  1.75f, 230, 250, 90, 110);
-    addMat("TPU",  "TPU",  1.75f, 210, 230, 30, 50);
+    // Temps are eSun's published ranges (nozzle / bed). cls/type left 0 —
+    // material_name/abbr carry identity; OPT enum codes can be filled later.
+    addMat("PLA",  "PLA",  1.75f, 190, 220, 45, 60);
+    addMat("PLA+", "PLA+", 1.75f, 205, 225, 60, 80);
+    addMat("PETG", "PETG", 1.75f, 230, 250, 70, 80);
+    addMat("TPU",  "TPU",  1.75f, 220, 250, 30, 60);
 }
 static void seedProfiles() {
     sProfiles.clear();
-    addProf("Prusament 1kg",  1000.0f, 201.0f);
+    // Tares are ESTIMATES — eSun spools vary 200–267 g by line/generation, so
+    // use Capture tare at onboarding for accuracy. Full = 1 kg net.
+    addProf("eSun 1kg",       1000.0f, 200.0f);   // PLA / PETG / TPU standard spool
+    addProf("eSun PLA+ 1kg",  1000.0f, 255.0f);   // heavier PLA+ spool
+    addProf("Overture 1kg",   1000.0f, 235.0f);
     addProf("Generic 1kg",    1000.0f, 200.0f);
     addProf("Generic 0.75kg",  750.0f, 175.0f);
     addProf("Generic 0.5kg",   500.0f, 150.0f);
 }
 static void seedColors() {
     sColors.clear();
-    addColor("Black",        30,  30,  30,  255);
-    addColor("White",        245, 245, 245, 255);
-    addColor("Prusa Orange", 227, 111, 17,  255);
-    addColor("Red",          200, 30,  30,  255);
-    addColor("Green",        40,  160, 60,  255);
-    addColor("Blue",         40,  80,  200, 255);
-    addColor("Grey",         130, 130, 130, 255);
+    // Solids
+    addColor("Black",            30,  30,  30,  255);
+    addColor("White",            245, 245, 245, 255);
+    addColor("Cold White",       238, 242, 247, 255);
+    addColor("Warm White",       245, 239, 224, 255);
+    addColor("Natural",          239, 232, 216, 255);
+    addColor("Beige",            232, 220, 192, 255);
+    addColor("Grey",             130, 130, 130, 255);
+    addColor("Light Brown",      156, 107, 63,  255);
+    addColor("Wood",             156, 122, 77,  255);
+    addColor("Gold",             212, 175, 55,  255);
+    addColor("Red",              200, 30,  30,  255);
+    addColor("Fire Engine Red",  200, 20,  20,  255);
+    addColor("Orange",           227, 111, 17,  255);
+    addColor("Pink",             255, 143, 191, 255);
+    addColor("Magenta",          208, 32,  140, 255);
+    addColor("Purple",           128, 64,  192, 255);
+    addColor("Blue",             40,  80,  200, 255);
+    addColor("Light Blue",       90,  160, 230, 255);
+    addColor("Green",            40,  160, 60,  255);
+    addColor("Olive Green",      107, 142, 35,  255);
+    addColor("RGB Green",        40,  160, 40,  255);
+    addColor("Yellow",           245, 197, 24,  255);
+    addColor("Dark Yellow",      200, 160, 0,   255);
+    addColor("Luminous",         200, 255, 200, 255);
+    // Translucent / clear (lower alpha)
+    addColor("Clear",            223, 232, 232, 110);
+    addColor("Translucent Green",143, 216, 160, 150);
+    // Silk
+    addColor("Silk Silver",      196, 196, 200, 255);
+    addColor("Silk Magic",       166, 166, 200, 255);
+    addColor("Silk Mystic",      154, 134, 184, 255);
+    // Matte finishes (eSun names)
+    addColor("Matte Black",              38,  38,  38,  255);
+    addColor("Matte White",              242, 242, 242, 255);
+    addColor("Matte Light Khaki",        181, 163, 122, 255);
+    addColor("Matte Peach Pink",         246, 198, 176, 255);
+    addColor("Matte Lake",               106, 165, 208, 255);
+    addColor("Matte Rainbow Sunrise",    255, 143, 64,  255);
+    addColor("Matte Rainbow Paddy Field",90,  160, 96,  255);
 }
-static void seedStock() { sStock.clear(); }   // empty — user defines standard stock
+static void seedStock() {
+    sStock.clear();
+    // Seattle Makers standard stock — from the team inventory (Preferred Qty →
+    // min_spools). eSun product names used where the inventory description
+    // differed. dia 1.75, 1 kg spools.
+    // eSun PLA
+    addStock("eSun", "PLA", "Beige",                     1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Blue",                      1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Cold White",                1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Fire Engine Red",           1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Gold",                      1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Grey",                      1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Light Blue",                1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Light Brown",               1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Luminous",                  1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Magenta",                   1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Natural",                   1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Olive Green",               1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Orange",                    1.75f, 1000.0f, 3);
+    addStock("eSun", "PLA", "Pink",                      1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Purple",                    1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Red",                       1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "RGB Green",                 1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Silk Magic",                1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Silk Mystic",               1.75f, 1000.0f, 3);
+    addStock("eSun", "PLA", "Silk Silver",               1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Warm White",                1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Wood",                      1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Matte Black",               1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA", "Matte White",               1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Matte Light Khaki",         1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Matte Lake",                1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Matte Rainbow Sunrise",     1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA", "Matte Rainbow Paddy Field", 1.75f, 1000.0f, 1);
+    // eSun PLA+
+    addStock("eSun", "PLA+", "Green",                    1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA+", "Black",                    1.75f, 1000.0f, 2);
+    addStock("eSun", "PLA+", "Dark Yellow",              1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA+", "Matte Peach Pink",         1.75f, 1000.0f, 1);
+    addStock("eSun", "PLA+", "Yellow",                   1.75f, 1000.0f, 2);
+    // eSun PETG
+    addStock("eSun", "PETG", "Black",                    1.75f, 1000.0f, 3);
+    addStock("eSun", "PETG", "Blue",                     1.75f, 1000.0f, 2);
+    addStock("eSun", "PETG", "Clear",                    1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Fire Engine Red",          1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Green",                    1.75f, 1000.0f, 2);
+    addStock("eSun", "PETG", "Grey",                     1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Orange",                   1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Purple",                   1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Red",                      1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Translucent Green",        1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "White",                    1.75f, 1000.0f, 1);
+    addStock("eSun", "PETG", "Yellow",                   1.75f, 1000.0f, 1);
+    // TPU
+    addStock("eSun",     "TPU", "White", 1.75f, 1000.0f, 1);
+    addStock("Overture", "TPU", "Black", 1.75f, 1000.0f, 1);
+    addStock("Overture", "TPU", "Clear", 1.75f, 1000.0f, 1);
+}
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 bool cfgBegin() {
