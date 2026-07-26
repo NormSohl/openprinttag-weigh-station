@@ -143,11 +143,12 @@ static void seedVendors() {
 }
 // Explicit builders — GCC 8 (esp32 core) rejects push_back({...}) for these
 // aggregates (char arrays / nested array members).
-static void addMat(const char* name, const char* abbr, float dia,
-                   int16_t pmin, int16_t pmax, int16_t bmin, int16_t bmax) {
+static void addMat(const char* name, const char* abbr, int8_t cls, int8_t type,
+                   float dia, int16_t pmin, int16_t pmax, int16_t bmin, int16_t bmax) {
     CfgMaterial m{};
     strlcpy(m.name, name, sizeof(m.name));
     strlcpy(m.abbr, abbr, sizeof(m.abbr));
+    m.cls = cls; m.type = type;
     m.dia = dia;
     m.print_min = pmin; m.print_max = pmax;
     m.bed_min = bmin;   m.bed_max = bmax;
@@ -179,12 +180,14 @@ static void addStock(const char* vendor, const char* material, const char* color
 
 static void seedMaterials() {
     sMaterials.clear();
-    // Temps are eSun's published ranges (nozzle / bed). cls/type left 0 —
-    // material_name/abbr carry identity; OPT enum codes can be filled later.
-    addMat("PLA",  "PLA",  1.75f, 190, 220, 45, 60);
-    addMat("PLA+", "PLA+", 1.75f, 205, 225, 60, 80);
-    addMat("PETG", "PETG", 1.75f, 230, 250, 70, 80);
-    addMat("TPU",  "TPU",  1.75f, 220, 250, 30, 60);
+    // Temps are eSun's published ranges (nozzle / bed). cls = OPT material_class
+    // (key 8; 0 = FFF), type = OPT material_type (key 9; PLA 0, PETG 1, TPU 2 per
+    // prusa3d/OpenPrintTag). PLA+ has no distinct OPT type — it's a PLA variant —
+    // so it maps to PLA (0) while the name keeps the "+".
+    addMat("PLA",  "PLA",  0, 0, 1.75f, 190, 220, 45, 60);
+    addMat("PLA+", "PLA+", 0, 0, 1.75f, 205, 225, 60, 80);
+    addMat("PETG", "PETG", 0, 1, 1.75f, 230, 250, 70, 80);
+    addMat("TPU",  "TPU",  0, 2, 1.75f, 220, 250, 30, 60);
 }
 static void seedProfiles() {
     sProfiles.clear();
