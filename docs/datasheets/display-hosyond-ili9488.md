@@ -60,10 +60,24 @@ choice:
 - **Share the bus** — externally jumper SD_SCK→SCK, SD_MOSI→SDI(MOSI),
   SD_MISO→SDO(MISO); SD_CS to a free GPIO. SD then joins the PN5180 +
   TFT on the shared bus (and must be arbitrated by `gSpiMutex`).
-- **Dedicated bus (preferred for the SD-local redesign)** — wire the four
-  SD pins to the ESP32-S3's second SPI host (FSPI/HSPI). SD I/O then runs
-  independently of the NFC/TFT bus: no mutex contention, no interference
-  with display refresh or PN5180 polling. Costs 4 GPIOs.
+- **Dedicated bus (chosen)** — wire the four SD pins to the ESP32-S3's second
+  SPI host (FSPI/HSPI). SD I/O then runs independently of the NFC/TFT bus: no
+  mutex contention, no interference with display refresh or PN5180 polling.
+  Costs 4 GPIOs.
+
+**Assigned pins** (`src/config.h`, second SPI host):
+
+| Display SD header | MCU GPIO |
+|---|---|
+| SD_SCK  | 10 |
+| SD_MOSI | 18 |
+| SD_MISO | 33 |
+| SD_CS   | 34 |
+
+The Thing Plus also has its **own** onboard microSD slot (SDIO, GPIO 34–42
+range). This project uses the *display's* SD for front-panel access, so the
+onboard slot is left **empty** — its traces stay inert and don't contend with
+the pins above. (Verify the four against the board silkscreen before soldering.)
 
 See [`docs/design/sd-local-ecosystem.md`](../design/sd-local-ecosystem.md)
 for how this feeds the Spoolman-free redesign, and

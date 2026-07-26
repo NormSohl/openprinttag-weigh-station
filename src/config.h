@@ -22,6 +22,22 @@
 #define TFT_DC   16
 #define TFT_RST  17
 
+// ── microSD on the display board — dedicated second SPI host ──
+// The Hosyond ILI9488's SD lines are on a *separate* header, NOT bonded to
+// the display SPI bus (see docs/datasheets/display-hosyond-ili9488.md), so
+// the SD gets its own SPI host (FSPI via a separate SPIClass) — no gSpiMutex
+// traffic, isolated from NFC/TFT I/O. Backup/archive only; the device runs
+// fine with no card. Assigned to free header GPIOs on the Thing Plus ESP32-S3.
+//
+// NOTE for the build: the Thing Plus has its OWN onboard microSD slot on the
+// SDIO pins (GPIO 34-42 range). We use the *display's* SD instead (front-panel
+// accessible), so LEAVE THE ONBOARD SLOT EMPTY — its traces then stay inert.
+// Confirm these four against your board's silkscreen before soldering.
+#define SD_SCK   10
+#define SD_MOSI  18
+#define SD_MISO  33
+#define SD_CS    34
+
 // ── WS2812 NeoPixel (onboard) ────────────────────────────────
 // The external porch NeoPixel is superseded by the TFT display.
 #define NEOPIXEL_PIN     48

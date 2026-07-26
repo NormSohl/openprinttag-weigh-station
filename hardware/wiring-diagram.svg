@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 430"
      font-family="system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <title>Wiring block diagram: the ESP32-S3 controller connects separately to the PN5180 NFC reader, the ILI9488 TFT display, the NAU7802 load-cell ADC (which reads the load cell), and the passive buzzer. Shared nets join at soldered splices; the devices do not interconnect.</title>
+  <title>Wiring block diagram: the ESP32-S3 controller connects separately to the microSD on the display board (its own 2nd SPI bus), the PN5180 NFC reader, the ILI9488 TFT display, the NAU7802 load-cell ADC (which reads the load cell), and the passive buzzer. Shared nets join at soldered splices; the devices do not interconnect.</title>
   <style>
     .edge{stroke:#1f6f8b;stroke-width:2.5;fill:none;}
     .node{fill:#ffffff;stroke:#cbc9c2;stroke-width:1.5;}
@@ -30,6 +30,7 @@
     <line x1="216" y1="240" x2="300" y2="340" marker-end="url(#arw)"/>
     <line x1="500" y1="356" x2="566" y2="356" marker-end="url(#arw)"/>
     <line x1="126" y1="280" x2="126" y2="320" marker-end="url(#arw)"/>
+    <line x1="126" y1="150" x2="126" y2="110" marker-end="url(#arw)"/>
   </g>
 
   <!-- edge labels -->
@@ -39,9 +40,11 @@
     <text x="238" y="300" text-anchor="start">Qwiic (I²C)</text>
     <text x="533" y="346">E± · A±</text>
     <text x="138" y="306" text-anchor="start">GPIO 14 · GND</text>
+    <text x="138" y="136" text-anchor="start">2nd SPI (SD)</text>
   </g>
 
   <!-- nodes -->
+  <rect class="node" x="36"  y="44"  width="180" height="66"  rx="10"/>
   <rect class="node" x="36"  y="150" width="180" height="130" rx="10"/>
   <rect class="node" x="566" y="44"  width="214" height="72"  rx="10"/>
   <rect class="node" x="566" y="158" width="214" height="72"  rx="10"/>
@@ -50,6 +53,8 @@
   <rect class="node" x="36"  y="320" width="180" height="72"  rx="10"/>
 
   <g text-anchor="middle">
+    <text class="ntitle" x="126" y="72"  font-size="16">microSD</text>
+    <text class="nsub"   x="126" y="92"  font-size="12.5">on display · 2nd SPI</text>
     <text class="ntitle" x="126" y="209" font-size="17">ESP32-S3</text>
     <text class="nsub"   x="126" y="231" font-size="12.5">Thing Plus · controller</text>
     <text class="ntitle" x="673" y="75"  font-size="16">PN5180</text>

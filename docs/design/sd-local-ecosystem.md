@@ -351,9 +351,17 @@ topology is a free wiring choice, not a constraint. See
 
 **Decision: give the SD its own SPI bus.** Wire the four SD pins to the
 ESP32-S3's second SPI host (FSPI/HSPI), separate from the shared
-PN5180 + TFT bus. This keeps SD I/O (frequent, during logging)
-independent of NFC polling and display refresh — no `gSpiMutex` traffic
-for storage at all. Costs 4 GPIOs, which the S3 has spare.
+PN5180 + TFT bus. This keeps SD I/O independent of NFC polling and display
+refresh — no `gSpiMutex` traffic for storage at all. Costs 4 GPIOs, which the
+S3 has spare. **Assigned:** `SD_SCK/MOSI/MISO/CS = GPIO 10/18/33/34`
+(`src/config.h`, wired per `hardware/netlist.md`).
+
+**Onboard slot considered.** The Thing Plus ESP32-S3 also carries its own
+microSD slot on the SDIO-4 pins (which SparkFun notes is faster than SPI). We
+use the **display's** SD instead for front-panel card access, and leave the
+onboard slot empty (its SDIO traces then stay inert). If enclosure access ever
+makes the onboard slot preferable, switching to `SD_MMC` there would drop these
+4 wires — revisit if desired.
 
 ## Risks & mitigations
 

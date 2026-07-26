@@ -53,6 +53,26 @@ Bridge **VCC→LED** on the display module so the backlight needs no separate le
 | 3V3  | 3V3     | PN5180 3.3V · TFT VCC |
 | GND  | GND     | PN5180 GND · TFT GND · Buzzer − |
 
+### microSD (on the display board) — dedicated second SPI bus
+
+Four wires from the display's **separate SD header** (left side of the board —
+*not* the main display header) to free GPIOs on the Thing Plus. This is its
+**own SPI host**, independent of the shared PN5180 + TFT bus, so SD I/O never
+touches `gSpiMutex`. Backup/archive only — the station runs fine with no card.
+
+| # | From (MCU) | To (display SD header) |
+|---|---|---|
+| S1 | GPIO 10 | SD_SCK |
+| S2 | GPIO 18 | SD_MOSI |
+| S3 | GPIO 33 | SD_MISO |
+| S4 | GPIO 34 | SD_CS |
+
+> **Before soldering:** confirm GPIO 10 / 18 / 33 / 34 against your board's
+> silkscreen. The Thing Plus also has its **own** onboard microSD slot (on the
+> SDIO pins, GPIO 34–42 range); we use the display's SD for front-panel access,
+> so **leave the onboard slot empty** — its traces then stay inert and don't
+> contend with these lines.
+
 ### NAU7802 load-cell ADC — one Qwiic cable
 
 Not jumpers — a single 4-conductor Qwiic cable from the Thing Plus Qwiic
@@ -75,8 +95,8 @@ connector to the NAU7802 board carries all four:
 | L4 | ⬜ White (白)  | Signal −     | A− |
 | L5 | 🟨 Yellow (黄) | Shield/drain | GND *(omit if absent)* |
 
-**Totals:** 7 direct wires + 5 soldered splices (13 legs) + 1 Qwiic cable +
-4–5 load-cell leads.
+**Totals:** 7 direct wires + 5 soldered splices (13 legs) + 4 SD wires +
+1 Qwiic cable + 4–5 load-cell leads.
 
 ---
 
@@ -133,7 +153,7 @@ terminal — both already reliable, nothing to change.
 
 | Device | Interface | Status |
 |---|---|---|
-| microSD (on display board) | own SPI host (2nd bus) | **planned, unwired** — separate 4-pin header, not bonded to the TFT bus; GPIOs TBD on the ESP32-S3 second SPI host (backup feature) |
+| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/33/34). Firmware backup/restore half is still to come; host download/upload already works |
 | Resistive touch (T_CLK/T_CS/T_DIN/T_DO/T_IRQ) | SPI slave, same header | **out of scope** — intentionally unwired |
 | PN5180 IRQ | — | unused (firmware polls BUSY) |
 
