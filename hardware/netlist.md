@@ -153,7 +153,7 @@ terminal — both already reliable, nothing to change.
 
 | Device | Interface | Status |
 |---|---|---|
-| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/33/34). Firmware backup/restore half is still to come; host download/upload already works |
+| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/33/34). Firmware snapshot/restore implemented (`src/sd_backup.*`); pending on-card validation |
 | Resistive touch (T_CLK/T_CS/T_DIN/T_DO/T_IRQ) | SPI slave, same header | **out of scope** — intentionally unwired |
 | PN5180 IRQ | — | unused (firmware polls BUSY) |
 

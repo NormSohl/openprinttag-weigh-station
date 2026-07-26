@@ -6,6 +6,7 @@
 #include "opt_tag.h"
 #include "store.h"          // local-storage core (redesign Phase 1)
 #include "config_store.h"   // config catalog (redesign Phase 3)
+#include "sd_backup.h"      // SD snapshot/restore (redesign Phase 6)
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -23,6 +24,11 @@ volatile bool     gScaleCalibrated = false;
 // Calibration requests from the web UI (or serial), consumed by scaleTask.
 volatile bool     gCalZeroReq  = false;   // tare with an empty scale
 volatile float    gCalSetGrams = 0.0f;    // >0: calibrate against this known weight
+
+// SD backup requests from the web UI, consumed by syncTask (keeps all SD I/O on
+// one task, off the AsyncTCP callback). Snapshot/restore run when the scale is idle.
+volatile bool     gSdSnapshotReq = false;
+volatile bool     gSdRestoreReq  = false;
 
 // ── Shared tag data (written by nfcTask, read by syncTask / displayTask) ──────
 uint8_t           gTagUid[8]    = {};
@@ -83,6 +89,17 @@ void setup() {
                   (unsigned)cfgVendorCount(), (unsigned)cfgMaterialCount(),
                   (unsigned)cfgProfileCount(), (unsigned)cfgColorCount(),
                   (unsigned)cfgStockCount());
+
+    // SD backup on the display board's card (dedicated 2nd SPI host). Optional —
+    // the station runs fine with no card; snapshots begin once one is present.
+    if (sdBackupBegin()) {
+        SdStatus s; sdGetStatus(s);
+        Serial.printf("[sd] card ready: %llu MB free / %llu MB, gen #%u\n",
+                      (unsigned long long)(s.freeBytes >> 20),
+                      (unsigned long long)(s.cardBytes >> 20), (unsigned)s.generation);
+    } else {
+        Serial.println("[sd] no card (backup to SD disabled until inserted)");
+    }
 
     // Core 1: time-sensitive hardware polling
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);

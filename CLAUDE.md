@@ -85,4 +85,4 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 ## Pending (requires hardware)
 - Scale calibration: run the Calibrate flow (web or serial) with a known reference weight once the load cell is wired and mounted.
 - End-to-end state machine validation: NFC read/write, blank tag onboarding flow, local persistence, reconciliation loop.
-- SD-card backup snapshots: the SD is now wired (dedicated 2nd SPI host, GPIO 10/18/33/34); the remaining work is the firmware SD half of the backup feature — mount the card on its own `SPIClass`, mirror/rotate snapshots, restore path (host download/upload already works).
+- SD-card backup snapshots: implemented in `sd_backup.*` (dedicated 2nd SPI host on its own `SPIClass`; stage → CRC-verify → promote-by-rename → dated history + prune + card-full reclaim; manifest; restore via the validated import path; web controls on `/backup`; idle auto-snapshot). **Pending: on-card validation** with a real microSD once the board is up.

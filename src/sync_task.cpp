@@ -7,6 +7,7 @@
 #include "device_state.h"
 #include "opt_tag.h"
 #include "store.h"
+#include "sd_backup.h"
 #include "web_app.h"
 
 // ── Shared globals ────────────────────────────────────────────────────────────
@@ -23,6 +24,8 @@ extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
+extern volatile bool        gSdSnapshotReq;
+extern volatile bool        gSdRestoreReq;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -147,6 +150,11 @@ void syncTask(void* param) {
     for (;;) {
         DeviceState state = getState();
 
+        // ── SD snapshot on request ────────────────────────────────────────────
+        // Runs on its own SPI host, so it's safe in any state. Restore rewrites
+        // the store, so it's deferred to the idle branch (no spool depending on it).
+        if (gSdSnapshotReq) { gSdSnapshotReq = false; sdSnapshot(true); }
+
         // ── Quiescent / boot states ───────────────────────────────────────────
         switch (state) {
             case DeviceState::Boot:
@@ -170,6 +178,10 @@ void syncTask(void* param) {
                     snprintf(gWebAddr, sizeof(gWebAddr), "%s.local", DEVICE_HOSTNAME);
                     setState(DeviceState::Idle);
                 }
+                // SD housekeeping while nothing's on the scale: honor a restore
+                // request, then let the throttled auto-snapshot run if the log grew.
+                if (gSdRestoreReq) { gSdRestoreReq = false; sdRestoreLatest(); }
+                sdBackupTick();
                 vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
                 continue;
 

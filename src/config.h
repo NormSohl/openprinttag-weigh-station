@@ -60,6 +60,10 @@
 
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
+// ── SD backup (Phase 6) ───────────────────────────────────────
+#define SD_SPI_FREQ_HZ        20000000  // SD SPI clock (20 MHz; drop to 10M if flaky)
+#define SD_HISTORY_KEEP             20  // dated snapshots retained under /backup/history
+#define SD_SNAPSHOT_MIN_INTERVAL_MS (5*60*1000UL) // auto-snapshot throttle when idle
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing

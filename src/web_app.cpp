@@ -11,6 +11,7 @@
 #include "opt_tag.h"
 #include "store.h"
 #include "config_store.h"
+#include "sd_backup.h"
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -25,6 +26,8 @@ extern volatile bool        gSpoolNeedsOnboarding;
 extern volatile bool        gScaleCalibrated;
 extern volatile bool        gCalZeroReq;
 extern volatile float       gCalSetGrams;
+extern volatile bool        gSdSnapshotReq;
+extern volatile bool        gSdRestoreReq;
 
 static AsyncWebServer sServer(80);
 
@@ -590,11 +593,63 @@ static void handleBackupPage(AsyncWebServerRequest* req) {
          "<input type='file' name='file' accept='.ndjson,text/plain'>"
          "<div><button type='submit'>Upload &amp; restore</button></div>"
          "</form></div>";
-    p += "<p class='muted'>Config tables back up separately via the "
-         "<a href='/config' style='color:#8f8'>Config</a> page (copy the JSON). "
-         "SD-card snapshots arrive once the card is wired.</p>";
+    p += "<h3>SD card snapshots</h3>";
+    p += "<div class='card'><div class='muted'>Status</div>"
+         "<div id='sd'>&mdash;</div>"
+         "<div style='margin-top:10px'>"
+         "<button type='button' onclick='snap()'>Snapshot to SD now</button> "
+         "<button type='button' onclick='rest()'>Restore from SD</button></div>"
+         "<p class='muted' id='sdmsg'></p></div>";
+    p += "<p class='muted'>Snapshots are verified copies of the event log, kept "
+         "with dated history on the card; the log stays the source of truth. "
+         "The station also auto-snapshots when idle after the log changes.</p>";
+    p += "<script>"
+         "function fmt(b){return (b/1048576).toFixed(0)+' MB';}"
+         "function s(){fetch('/api/sd').then(x=>x.json()).then(d=>{"
+         "var e=document.getElementById('sd');"
+         "if(!d.present){e.innerHTML='<b>No card.</b> Insert a microSD in the display slot.';return;}"
+         "e.innerHTML='<b>Card:</b> '+fmt(d.free)+' free / '+fmt(d.card)+"
+         "' &nbsp; <b>Snapshots:</b> gen #'+d.gen+', '+d.history+' kept'+"
+         "(d.ts?' &nbsp; <b>Last:</b> '+d.ts+' ('+d.lines+' lines)':'');"
+         "document.getElementById('sdmsg').textContent=d.msg||'';});}"
+         "function snap(){document.getElementById('sdmsg').textContent='Snapshotting\\u2026';"
+         "fetch('/api/sd-snapshot',{method:'POST'}).then(()=>setTimeout(s,1500));}"
+         "function rest(){if(!confirm('Restore replaces the current log with the SD backup. Continue?'))return;"
+         "document.getElementById('sdmsg').textContent='Restoring\\u2026';"
+         "fetch('/api/sd-restore',{method:'POST'}).then(()=>setTimeout(s,1500));}"
+         "setInterval(s,2000);s();"
+         "</script>";
+    p += "<p class='muted'>Config tables also back up separately via the "
+         "<a href='/config' style='color:#8f8'>Config</a> page (copy the JSON).</p>";
     p += FOOT;
     req->send(200, "text/html", p);
+}
+
+// ── SD snapshot/restore (syncTask does the SD I/O; these just set flags) ───────
+static void handleApiSdStatus(AsyncWebServerRequest* req) {
+    SdStatus s; sdGetStatus(s);
+    String j = "{";
+    j += "\"present\":"; j += s.present ? "true" : "false";
+    j += ",\"card\":";   j += String((double)s.cardBytes, 0);
+    j += ",\"free\":";   j += String((double)s.freeBytes, 0);
+    j += ",\"gen\":";    j += String((unsigned)s.generation);
+    j += ",\"lines\":";  j += String((unsigned)s.lastLines);
+    j += ",\"history\":";j += String((unsigned)s.history);
+    j += ",\"ts\":\"";   j += s.lastTs;  j += "\"";
+    j += ",\"msg\":\"";  j += esc(s.lastMsg); j += "\"}";
+    req->send(200, "application/json", j);
+}
+
+static void handleSdSnapshot(AsyncWebServerRequest* req) {
+    if (!sdCardPresent()) { req->send(409, "application/json", "{\"ok\":false,\"err\":\"no card\"}"); return; }
+    gSdSnapshotReq = true;   // syncTask performs it off the async callback
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleSdRestore(AsyncWebServerRequest* req) {
+    if (!sdCardPresent()) { req->send(409, "application/json", "{\"ok\":false,\"err\":\"no card\"}"); return; }
+    gSdRestoreReq = true;    // syncTask performs it when the scale is idle
+    req->send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleExport(AsyncWebServerRequest* req) {
@@ -707,6 +762,9 @@ void webAppBegin() {
     sServer.on("/backup",      HTTP_GET,  handleBackupPage);
     sServer.on("/export",      HTTP_GET,  handleExport);
     sServer.on("/import",      HTTP_POST, handleImportDone, handleImportUpload);
+    sServer.on("/api/sd",         HTTP_GET,  handleApiSdStatus);
+    sServer.on("/api/sd-snapshot",HTTP_POST, handleSdSnapshot);
+    sServer.on("/api/sd-restore", HTTP_POST, handleSdRestore);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.

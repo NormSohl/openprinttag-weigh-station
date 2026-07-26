@@ -91,13 +91,13 @@ spool ID).
 - **Milestone:** a low stock item appears on `/reorder`; CSV downloads.
   **Third gap closed.**
 
-### Phase 6 — Backup & restore
+### Phase 6 — Backup & restore  *(implemented — pending on-card validation)*
 - SD snapshot: stage → CRC-verify → promote by rename → dated history,
-  with card-full oldest-first reclaim.
-- `GET /export` (host download), `POST /import`, `POST /restore`,
-  boot auto-bootstrap.
+  with card-full oldest-first reclaim. — `src/sd_backup.*`
+- `GET /export` (host download), `POST /import`, `POST /restore` (SD), plus
+  idle auto-snapshot and web controls on `/backup`.
 - **Milestone:** snapshot to SD, wipe LittleFS, restore from SD **and** from
-  a host-uploaded bundle.
+  a host-uploaded bundle. *(host path verified; SD path awaits a real card.)*
 
 ### Phase 7 — Display & polish
 - Idle screen shows the web-UI address (+ optional QR); local spool ID;
