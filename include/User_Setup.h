@@ -9,10 +9,11 @@
 
 #define ILI9488_DRIVER
 
-// Shared SPI pins (same as PN5180)
-#define TFT_MOSI  35
-#define TFT_SCLK  36
-#define TFT_MISO  37
+// Shared SPI pins (same as PN5180). SparkFun Thing Plus ESP32-S3 default SPI:
+// PICO/MOSI = GPIO11, SCK = GPIO12, POCI/MISO = GPIO13 (per board silk + variant).
+#define TFT_MOSI  11
+#define TFT_SCLK  12
+#define TFT_MISO  13
 
 // TFT-only control pins
 #define TFT_CS    15

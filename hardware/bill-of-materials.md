@@ -11,7 +11,7 @@ Everything needed to build one weigh station, beyond the fasteners
 | NFC reader module | PN5180-NFC (ISO 15693) | 1 | Needs both 3.3V logic + 5V RF rail |
 | Load cell amplifier | NAU7802 (SparkFun Qwiic Scale) | 1 | I²C, on Qwiic bus |
 | Load cell | TAL220B, 5kg, 55×12.7×12.7mm | 1 | Single-bolt mount, ~40mm hole spacing |
-| TFT display | Hosyond 3.5" ILI9488 SPI TFT, 480×320, resistive touch (MSP3520-type) | 1 | Amazon (Hosyond Store, sold by HONGXINBAORUI), ~$17.99; incl. stylus. SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17. On-board microSD **now wired** to a dedicated 2nd SPI host (SD_SCK/MOSI/MISO/CS = GPIO 10/18/33/34); resistive touch (T_xx pins) intentionally unwired |
+| TFT display | Hosyond 3.5" ILI9488 SPI TFT, 480×320, resistive touch (MSP3520-type) | 1 | Amazon (Hosyond Store, sold by HONGXINBAORUI), ~$17.99; incl. stylus. SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17. On-board microSD **now wired** to a dedicated 2nd SPI host (SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42); resistive touch (T_xx pins) intentionally unwired |
 | microSD card | FAT32, any small capacity (≥1 GB is ample) | 1 | Backup/archive only; goes in the **display's** SD slot. Optional — the station runs fine with no card |
 | Piezo buzzer | Passive, GPIO 14 | 1 | Feedback tones |
 | USB-C panel-mount cable | Full-function extension, panel-mount | 1 | Routes the ESP32's **native USB-C** to the panel — the single port for the whole unit: power, serial console, and firmware flashing (no OTA needed). Supersedes the earlier power-only USB-C breakout board. |
@@ -68,7 +68,7 @@ quantities yet:
   Spoolman/Prometheus host to source. (Was previously an open item.)
   <!-- (Display microSD interface pinout — RESOLVED: the SD lines are on a
        separate header, not bonded to the TFT bus, now wired to a dedicated
-       2nd SPI host at GPIO 10/18/33/34. See netlist.md and
+       2nd SPI host at GPIO 10/18/21/42. See netlist.md and
        display-hosyond-ili9488.md.) -->
 
 ## Tools Required (not consumed, but needed for assembly)

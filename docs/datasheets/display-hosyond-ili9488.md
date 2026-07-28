@@ -71,13 +71,15 @@ choice:
 |---|---|
 | SD_SCK  | 10 |
 | SD_MOSI | 18 |
-| SD_MISO | 33 |
-| SD_CS   | 34 |
+| SD_MISO | 21 |
+| SD_CS   | 42 |
 
-The Thing Plus also has its **own** onboard microSD slot (SDIO, GPIO 34–42
-range). This project uses the *display's* SD for front-panel access, so the
-onboard slot is left **empty** — its traces stay inert and don't contend with
-the pins above. (Verify the four against the board silkscreen before soldering.)
+All four are free broken-out header pins (GPIO 42 is SparkFun's silk-labeled
+"FREEBIE" spare). The Thing Plus's **own** onboard microSD slot is on the SDIO
+bus (GPIO 33/34/38/39/40/47, card-detect 48) — those are **not** broken out.
+This project uses the *display's* SD for front-panel access, so the onboard slot
+is left **empty**. (Note: GPIO 33–37 are consumed by the module and not on the
+header at all — the board's SPI is 11/12/13.)
 
 See [`docs/design/sd-local-ecosystem.md`](../design/sd-local-ecosystem.md)
 for how this feeds the Spoolman-free redesign, and

@@ -6,10 +6,11 @@
 #define PN5180_BUSY   6
 #define PN5180_RESET  7
 
-// SparkFun Thing Plus ESP32-S3 default VSPI pins
-#define SPI_SCK   36
-#define SPI_MISO  37
-#define SPI_MOSI  35
+// SparkFun Thing Plus ESP32-S3 default SPI pins (board silk: 12/SCK, 11/PICO,
+// 13/POCI). GPIO 33-37 are NOT broken out on this board (module flash/PSRAM).
+#define SPI_SCK   12
+#define SPI_MISO  13
+#define SPI_MOSI  11
 
 // ── I²C / Qwiic (NAU7802) ────────────────────────────────────
 #define I2C_SDA  8
@@ -30,17 +31,19 @@
 // fine with no card. Assigned to free header GPIOs on the Thing Plus ESP32-S3.
 //
 // NOTE for the build: the Thing Plus has its OWN onboard microSD slot on the
-// SDIO pins (GPIO 34-42 range). We use the *display's* SD instead (front-panel
-// accessible), so LEAVE THE ONBOARD SLOT EMPTY — its traces then stay inert.
-// Confirm these four against your board's silkscreen before soldering.
+// SDIO bus (GPIO 33/34/38/39/40/47, detect 48) — those are NOT broken out. We
+// use the *display's* SD instead (front-panel accessible), so LEAVE THE ONBOARD
+// SLOT EMPTY. These four are free broken-out header pins (42 = "FREEBIE" spare).
 #define SD_SCK   10
 #define SD_MOSI  18
-#define SD_MISO  33
-#define SD_CS    34
+#define SD_MISO  21
+#define SD_CS    42
 
 // ── WS2812 NeoPixel (onboard) ────────────────────────────────
 // The external porch NeoPixel is superseded by the TFT display.
-#define NEOPIXEL_PIN     48
+// SparkFun Thing Plus ESP32-S3 onboard RGB is GPIO46 (GPIO48 is the onboard
+// SD card-detect on this board, not the LED).
+#define NEOPIXEL_PIN     46
 #define NEOPIXEL_COUNT    1
 
 // ── Passive piezo buzzer ──────────────────────────────────────

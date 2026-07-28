@@ -18,7 +18,7 @@ firmware pin map (`src/config.h`) and the display datasheet-of-record
 
 Every device wires back to the controller — the PN5180 and display don't connect
 to each other; each shared net runs from the controller and forks at a splice.
-The onboard NeoPixel (GPIO 48) and BOOT button (GPIO 0) need no wiring.
+The onboard NeoPixel (GPIO 46) and BOOT button (GPIO 0) need no wiring.
 
 ---
 
@@ -47,9 +47,9 @@ Bridge **VCC→LED** on the display module so the backlight needs no separate le
 
 | Splice | MCU leg | Device legs |
 |---|---|---|
-| MOSI | GPIO 35 | PN5180 MOSI · TFT SDI |
-| SCK  | GPIO 36 | PN5180 SCK · TFT SCK |
-| MISO | GPIO 37 | PN5180 MISO · TFT SDO |
+| MOSI | GPIO 11 (`11/PICO`) | PN5180 MOSI · TFT SDI |
+| SCK  | GPIO 12 (`12/SCK`)  | PN5180 SCK · TFT SCK |
+| MISO | GPIO 13 (`13/POCI`) | PN5180 MISO · TFT SDO |
 | 3V3  | 3V3     | PN5180 3.3V · TFT VCC |
 | GND  | GND     | PN5180 GND · TFT GND · Buzzer − |
 
@@ -64,14 +64,13 @@ touches `gSpiMutex`. Backup/archive only — the station runs fine with no card.
 |---|---|---|
 | S1 | GPIO 10 | SD_SCK |
 | S2 | GPIO 18 | SD_MOSI |
-| S3 | GPIO 33 | SD_MISO |
-| S4 | GPIO 34 | SD_CS |
+| S3 | GPIO 21 | SD_MISO |
+| S4 | GPIO 42 | SD_CS |
 
-> **Before soldering:** confirm GPIO 10 / 18 / 33 / 34 against your board's
-> silkscreen. The Thing Plus also has its **own** onboard microSD slot (on the
-> SDIO pins, GPIO 34–42 range); we use the display's SD for front-panel access,
-> so **leave the onboard slot empty** — its traces then stay inert and don't
-> contend with these lines.
+> **Free header pins** (42 is SparkFun's silk-labeled "FREEBIE" spare). The
+> Thing Plus's **own** onboard microSD is on the SDIO bus (GPIO 33/34/38/39/40/47,
+> detect 48) — those are **not** broken out. We use the display's SD for
+> front-panel access, so **leave the onboard slot empty**.
 
 ### NAU7802 load-cell ADC — one Qwiic cable
 
@@ -146,14 +145,14 @@ terminal — both already reliable, nothing to change.
 
 | Function | MCU pin |
 |---|---|
-| WS2812 status pixel | GPIO 48 (onboard) |
+| WS2812 status pixel | GPIO 46 (onboard) |
 | BOOT / WiFi-reset button | GPIO 0 (onboard) |
 
 ## Not wired (planned / out of scope)
 
 | Device | Interface | Status |
 |---|---|---|
-| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/33/34). Firmware snapshot/restore implemented (`src/sd_backup.*`); pending on-card validation |
+| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/21/42). Firmware snapshot/restore implemented (`src/sd_backup.*`); pending on-card validation |
 | Resistive touch (T_CLK/T_CS/T_DIN/T_DO/T_IRQ) | SPI slave, same header | **out of scope** — intentionally unwired |
 | PN5180 IRQ | — | unused (firmware polls BUSY) |
 

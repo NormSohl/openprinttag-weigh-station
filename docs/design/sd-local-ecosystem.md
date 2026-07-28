@@ -353,7 +353,7 @@ topology is a free wiring choice, not a constraint. See
 ESP32-S3's second SPI host (FSPI/HSPI), separate from the shared
 PN5180 + TFT bus. This keeps SD I/O independent of NFC polling and display
 refresh — no `gSpiMutex` traffic for storage at all. Costs 4 GPIOs, which the
-S3 has spare. **Assigned:** `SD_SCK/MOSI/MISO/CS = GPIO 10/18/33/34`
+S3 has spare. **Assigned:** `SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42`
 (`src/config.h`, wired per `hardware/netlist.md`).
 
 **Onboard slot considered.** The Thing Plus ESP32-S3 also carries its own
