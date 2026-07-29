@@ -18,6 +18,13 @@ green local build should match CI.
 [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
 (`pip install platformio`, or the standalone installer).
 
+> **Windows:** the VS Code route is the path of least resistance — no Python to
+> install, no PATH to edit, and no USB driver (see §5). Open the repo folder and
+> VS Code will offer the PlatformIO extension automatically (it's recommended in
+> `.vscode/extensions.json`). If you use PowerShell directly and `pio` isn't
+> found, either use the PlatformIO toolbar buttons instead or add
+> `%USERPROFILE%\.platformio\penv\Scripts` to your PATH.
+
 ## 2. Get the code
 
 ```bash
@@ -94,6 +101,26 @@ No driver install — native USB is class-compliant CDC. The only per-OS bit is
 - **Windows** — Win10/11 install the USB-CDC class driver automatically; it
   shows up as `COMx` in Device Manager. No Zadig needed for flashing/monitoring
   (Zadig is only for the separate JTAG interface, which we don't use).
+
+## 6. Editor automation (VS Code)
+
+Committed in `.vscode/` so it works the moment you open the folder:
+
+| Task | What | How |
+|---|---|---|
+| **Flash & Monitor** | build → upload → serial monitor in one go | **Ctrl+Shift+B** (default build task) |
+| Build / Flash / Monitor | the individual steps | Ctrl+Shift+P → *Run Task* |
+| List serial ports | `pio device list` — find the COM port | Ctrl+Shift+P → *Run Task* |
+| Erase flash | clean slate; **wipes LittleFS** (log, config, WiFi, calibration) | Ctrl+Shift+P → *Run Task* |
+
+Build errors are parsed by the `$gcc` problem matcher, so compiler messages
+become clickable file:line links in the Problems panel.
+
+**Crash decoding is on.** `monitor_filters` in `platformio.ini` enables
+`esp32_exception_decoder`, which rewrites a panic backtrace from raw addresses
+into function + file:line — so a first-boot crash reads as
+`nfcTask() at src/nfc_task.cpp:112`, not `Backtrace: 0x42008f3a 0x3ffb2280`.
+Lines are also timestamped (`time`) and log levels coloured (`colorize`).
 
 ## First-boot bring-up (no PC needed after flashing)
 

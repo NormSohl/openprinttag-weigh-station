@@ -1,0 +1,62 @@
+{
+    "version": "2.0.0",
+    "options": {
+        // Keep the ESP-IDF/PlatformIO output uncoloured-safe on Windows terminals.
+        "env": { "PLATFORMIO_DISABLE_PROGRESSBAR": "false" }
+    },
+    "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+    },
+    "tasks": [
+        {
+            // Ctrl+Shift+B — the one you'll use all night: build, flash, then
+            // drop straight into the serial monitor with the exception decoder.
+            "label": "Flash & Monitor",
+            "type": "shell",
+            "command": "pio run --target upload --target monitor",
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "pio run",
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Flash",
+            "type": "shell",
+            "command": "pio run --target upload",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Monitor",
+            "type": "shell",
+            "command": "pio device monitor",
+            "problemMatcher": []
+        },
+        {
+            "label": "List serial ports",
+            "type": "shell",
+            "command": "pio device list",
+            "problemMatcher": []
+        },
+        {
+            // Clean slate: wipes flash INCLUDING LittleFS (event log, config
+            // catalog, WiFi credentials, scale calibration). Re-seeds on next boot.
+            "label": "Erase flash (wipes all stored data)",
+            "type": "shell",
+            "command": "pio run --target erase",
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean build",
+            "type": "shell",
+            "command": "pio run --target clean",
+            "problemMatcher": []
+        }
+    ]
+}
