@@ -120,7 +120,7 @@ become clickable file:line links in the Problems panel.
 `esp32_exception_decoder`, which rewrites a panic backtrace from raw addresses
 into function + file:line — so a first-boot crash reads as
 `nfcTask() at src/nfc_task.cpp:112`, not `Backtrace: 0x42008f3a 0x3ffb2280`.
-Lines are also timestamped (`time`) and log levels coloured (`colorize`).
+Lines are also timestamped (`time`).
 
 ## First-boot bring-up (no PC needed after flashing)
 
