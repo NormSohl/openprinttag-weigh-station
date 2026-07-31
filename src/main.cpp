@@ -64,11 +64,31 @@ void scaleTask(void* param);
 void displayTask(void* param);
 void syncTask(void* param);
 
+// Boot progress marker. Each init step announces itself BEFORE it runs, so if
+// the board hangs the last line printed names the culprit. Flushed immediately
+// because a hang would otherwise leave the message sitting in the USB buffer.
+static void bootMark(const char* step) {
+    Serial.printf("[boot] %s\n", step);
+    Serial.flush();
+}
+
 void setup() {
     Serial.begin(115200);
+    // Native USB (USB-Serial/JTAG on this board): the host re-enumerates after
+    // the post-flash reset and a monitor typically attaches ~1-2 s in, so
+    // anything printed before that is lost. Hold here so the first boot is
+    // actually observable — the cost is 3 s on a device that runs for months.
+    delay(3000);
+    Serial.println();
+    Serial.println("=== weigh station boot ===");
+
+    bootMark("i2c (Wire.begin)");
     Wire.begin(I2C_SDA, I2C_SCL);
+
+    bootMark("spi (shared PN5180 + TFT bus)");
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
 
+    bootMark("mutexes");
     gStateMutex = xSemaphoreCreateMutex();
     gWeightMutex = xSemaphoreCreateMutex();
     gTagMutex = xSemaphoreCreateMutex();
@@ -76,6 +96,8 @@ void setup() {
 
     // Local-storage core (LittleFS log + indices + NVS counter). Headless in
     // Phase 1 — driven via the serial harness (EV / DUMP / REBUILD / …).
+    // First boot after an erase formats the FS partition — expect a pause here.
+    bootMark("store (mount/format LittleFS + NVS)");
     if (storeBegin())
         Serial.printf("[store] ready: %u spools, %u log lines, next id #%u\n",
                       (unsigned)storeSpoolCount(), (unsigned)storeLogLineCount(),
@@ -84,6 +106,7 @@ void setup() {
         Serial.println("[store] LittleFS mount FAILED");
 
     // Config catalog (vendors/materials/profiles/colors/stock-items on LittleFS).
+    bootMark("config catalog (seeds on first boot)");
     cfgBegin();
     Serial.printf("[cfg] ready: %u vendors, %u materials, %u profiles, %u colors, %u stock\n",
                   (unsigned)cfgVendorCount(), (unsigned)cfgMaterialCount(),
@@ -92,6 +115,7 @@ void setup() {
 
     // SD backup on the display board's card (dedicated 2nd SPI host). Optional —
     // the station runs fine with no card; snapshots begin once one is present.
+    bootMark("sd (2nd SPI host; skipped fast if no card)");
     if (sdBackupBegin()) {
         SdStatus s; sdGetStatus(s);
         Serial.printf("[sd] card ready: %llu MB free / %llu MB, gen #%u\n",
@@ -102,12 +126,18 @@ void setup() {
     }
 
     // Core 1: time-sensitive hardware polling
+    bootMark("starting nfcTask (PN5180)");
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
+    bootMark("starting scaleTask (NAU7802)");
     xTaskCreatePinnedToCore(scaleTask,   "scale",   3072, nullptr, 2, nullptr, 1);
 
     // Core 0: I/O — co-located with the WiFi stack
+    bootMark("starting displayTask (TFT)");
     xTaskCreatePinnedToCore(displayTask, "display", 4096, nullptr, 1, nullptr, 0);
+    bootMark("starting syncTask (WiFi + web)");
     xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, nullptr, 0);
+
+    bootMark("setup() complete — tasks running");
 }
 
 void loop() {
