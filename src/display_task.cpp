@@ -119,7 +119,16 @@ static void title(const char* text, uint16_t color) {
 
 // ── Task ──────────────────────────────────────────────────────────────────────
 
-void displayTask(void* param) {
+// Hardware init for the display, NeoPixel and buzzer. Called from setup() on
+// the main task BEFORE any task is created — deliberately not from displayTask.
+//
+// TFT_eSPI and the PN5180 library both initialise the shared SPI bus
+// (nfc.begin() calls SPI.begin() internally). Doing that from two tasks on two
+// cores races: gSpiMutex only guards transactions, not bus setup, and the loser
+// ends up with an uninitialised bus — which panics TFT_eSPI with a null-pointer
+// StoreProhibited inside begin_tft_write(). Serialising init here removes the
+// race entirely: the display owns the bus first, then tasks start.
+void displayBegin() {
     pixel.begin();
     pixel.setBrightness(80);
     pixel.show();
@@ -131,7 +140,9 @@ void displayTask(void* param) {
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
     xSemaphoreGive(gSpiMutex);
+}
 
+void displayTask(void* param) {
     DeviceState prevState  = DeviceState::Boot;
     bool        rendered   = false;
     TickType_t  awaitStart = 0;

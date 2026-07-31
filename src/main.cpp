@@ -64,6 +64,11 @@ void scaleTask(void* param);
 void displayTask(void* param);
 void syncTask(void* param);
 
+// Display/NeoPixel/buzzer hardware init — run on the main task before any task
+// starts, so TFT_eSPI and the PN5180 library can't initialise the shared SPI
+// bus concurrently from two cores. See displayBegin() in display_task.cpp.
+void displayBegin();
+
 // Boot progress marker. Each init step announces itself BEFORE it runs, so if
 // the board hangs the last line printed names the culprit. Flushed immediately
 // because a hang would otherwise leave the message sitting in the USB buffer.
@@ -128,6 +133,11 @@ void setup() {
 #else
     Serial.println("[sd] disabled at build time (SD_BACKUP_ENABLED=0)");
 #endif
+
+    // Display first, on this task, while nothing else can touch the SPI bus.
+    bootMark("display init (TFT + NeoPixel + buzzer)");
+    displayBegin();
+    bootMark("display ok");
 
     // Core 1: time-sensitive hardware polling
     bootMark("starting nfcTask (PN5180)");
