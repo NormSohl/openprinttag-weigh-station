@@ -20,15 +20,15 @@ torn-tail skip verified against a Python mirror; brace/paren balance clean.
 verification: run the serial script, power-cycle, confirm the milestone.
 
 **Flash size — RESOLVED (Phase 0 partition CSV still to write):** the
-board is **8 MB flash / 2 MB PSRAM** (ESP32-S3-MINI-1-N8R2 — the board
-JSON's 8 MB is correct; my earlier "16 MB / 8 MB PSRAM" was wrong).
+board is **4 MB flash / 2 MB quad PSRAM** (ESP32-S3-MINI-1-N4R2 — verified
+on hardware with esptool; earlier 8 MB and 16 MB guesses were both wrong).
 **Confirm with `esptool flash_id`** before cutting the CSV (one search
 snippet mentioned a 4 MB N4R2 variant — unlikely given the JSON, but a 4 MB
 board would not fit dual-OTA + a useful FS).
 
 Partition (`partitions.csv`): **no OTA** (panel USB is full-function, so
-firmware flashes over USB) → single 3 MB app + **4.88 MB LittleFS**
-(~1,900 spools w/ full history). `storeBegin()` mounts LittleFS on the
+firmware flashes over USB) → single 1.875 MB app + **2 MB LittleFS**
+(~800 spools w/ full history). `storeBegin()` mounts LittleFS on the
 `spiffs`-labelled partition.
 
 ---

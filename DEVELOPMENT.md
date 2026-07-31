@@ -50,7 +50,7 @@ flashed over USB-C.
 1. Plug the board into USB-C.
 2. Upload: the VS Code **→ (Upload)** button, or `pio run -t upload`.
    - A normal upload writes the **bootloader + partition table + app**
-     together, so the custom `partitions.csv` (single 3 MB app + 4.88 MB
+     together, so the custom `partitions.csv` (single 1.875 MB app + 2 MB
      LittleFS, no OTA) takes effect on the first flash automatically.
    - **Download mode (expect to need this on the very first flash):** the S3's
      native USB won't present a bootloader until it's told to. Hold **BOOT**
@@ -158,11 +158,11 @@ PN5180/TFT bus.
 
 ## Verifying the flash size
 
-The partition map assumes **8 MB** flash (ESP32-S3-MINI-1-N8R2). Confirm before
+The partition map targets **4 MB** flash (ESP32-S3-MINI-1-N4R2), verified on the board. Re-check if you swap boards:
 relying on it:
 
 ```bash
-pio pkg exec -- esptool.py flash_id      # look for "Detected flash size: 8MB"
+pio pkg exec -- esptool.py flash_id   # expect "Embedded Flash 4MB", "PSRAM 2MB"
 ```
 
 ## Project layout

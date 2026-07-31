@@ -2,7 +2,7 @@
   "build": {
     "arduino": {
       "ldscript": "esp32s3_out.ld",
-      "memory_type": "qio_opi"
+      "memory_type": "qio_qspi"
     },
     "core": "esp32",
     "extra_flags": [
@@ -27,9 +27,9 @@
   "frameworks": ["arduino", "espidf"],
   "name": "SparkFun Thing Plus ESP32-S3",
   "upload": {
-    "flash_size": "8MB",
+    "flash_size": "4MB",
     "maximum_ram_size": 327680,
-    "maximum_size": 8388608,
+    "maximum_size": 4194304,
     "require_upload_port": true,
     "speed": 921600
   },

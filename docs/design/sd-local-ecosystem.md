@@ -72,18 +72,24 @@ rotate                      # log rotation bookkeeping
 
 ### Capacity
 
-The board is **8 MB flash / 2 MB PSRAM** (ESP32-S3-MINI-1-N8R2) — confirm
-with `esptool flash_id`. No OTA (firmware flashes over the full-function
-panel USB), so a single 3 MB app leaves a **4.88 MB LittleFS** partition.
-Current-state record ≈ 250 B/spool; history event ≈ 120 B; ~20 events per
-spool lifetime ≈ 2.5 KB/spool with full history.
+The board is **4 MB flash / 2 MB quad PSRAM** (ESP32-S3-MINI-1-N4R2) —
+**verified on hardware** with `esptool flash_id` ("Embedded Flash 4MB (XMC),
+Embedded PSRAM 2MB (AP_3v3)"). An earlier 8 MB assumption was wrong and put
+the partition table past the end of flash, which boot-looped the board. No
+OTA (firmware flashes over the full-function panel USB), so a single
+1.875 MB app leaves a **2 MB LittleFS** partition. Current-state record ≈
+250 B/spool; history event ≈ 120 B; ~20 events per spool lifetime ≈
+2.5 KB/spool with full history.
 
-| Counting… | Per unit | Fits in 4.88 MB LittleFS |
+| Counting… | Per unit | Fits in 2 MB LittleFS |
 |---|---|---|
-| Registered spools, current state only | ~250 B | **~19,000** |
-| Spools with full lifetime history | ~2.5 KB | **~1,900** |
-| Raw history events | ~120 B | **~42,000** |
+| Registered spools, current state only | ~250 B | **~8,000** |
+| Spools with full lifetime history | ~2.5 KB | **~800** |
+| Raw history events | ~120 B | **~17,000** |
 | Spool-ID counter (NVS `uint32`) | 4 B | **4.29 billion** (never the limit) |
+
+Still far beyond a makerspace's working set (hundreds of spools at most), and
+SD archiving lifts the ceiling further.
 
 Indices live in RAM/PSRAM (2 MB) — ~250 B/spool → thousands of records fit
 easily. With SD archiving the working set stays on flash and older history
@@ -339,7 +345,7 @@ Reuse is high — the tag format, weighing, and NFC flow are unchanged.
 | `web_app.*` | **new/expanded** — full app (dashboard, onboarding, config CRUD, reorder/CSV, backup export/import); `/web/` assets served off LittleFS |
 | recovery page | **new** — minimal UI embedded in firmware for the no-card / blank-flash bootstrap + restore floor |
 | `config.h` | drop `SPOOLMAN_BASE_URL`; add 4 SD pins (own SPI host), LittleFS partition + paths |
-| partition table | **new** — single 3 MB app + 4.88 MB LittleFS (no OTA; see Capacity) |
+| partition table | **new** — single 1.875 MB app + 2 MB LittleFS (no OTA; see Capacity) |
 
 ## SD interface — RESOLVED
 
@@ -387,7 +393,7 @@ makes the onboard slot preferable, switching to `SD_MMC` there would drop these
   to keep — trades backup freshness/depth against card wear and space.
 
 Resolved (see `implementation-plan.md` → Decisions LOCKED): network mode
-= **station + AP fallback**; partition = **single app, no OTA, 4.88 MB FS**;
+= **station + AP fallback**; partition = **single app, no OTA, 2 MB FS**;
 web stack = **ESPAsyncWebServer**.
 
 ## Explicitly out of scope

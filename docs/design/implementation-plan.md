@@ -42,9 +42,9 @@ spool ID).
 
 ### Phase 0 — Scaffolding & hardware gate
 - ✅ **Partition table** (`partitions.csv`, wired via
-  `board_build.partitions`): 8 MB = single 3 MB `factory` app + 4.88 MB
+  `board_build.partitions`): 4 MB = single 1.875 MB `factory` app + 2 MB
   LittleFS (`spiffs` label) + nvs/coredump. Layout validated (contiguous,
-  ends at 0x800000). *Confirm 8 MB with `esptool flash_id` before flashing.*
+  ends at 0x400000). *Verified 4 MB / 2 MB quad PSRAM with `esptool flash_id`.*
 - ✅ Build-time decisions locked (see Decisions section).
 - ☐ **Wire + bring up the SD** on the ESP32-S3's second SPI host; read/write
   a test file. *(the remaining hardware gate)*
@@ -125,10 +125,10 @@ Phase 0 → 1 → 2 unlock the local core; **Phase 4 is the payoff** (inventory
    NFC/scale/display tasks and serves assets + concurrent clients well.
    → add the lib dependency in `platformio.ini` at Phase 0/4; the current
    synchronous `WebServer` config page is replaced.
-2. **Single app slot (no OTA) + ~4.9 MB LittleFS.** The panel USB-C is
+2. **Single app slot (no OTA) + 2 MB LittleFS.** The panel USB-C is
    full-function, so firmware flashes over USB — OTA's second 2 MB app
-   slot isn't worth its cost. One 3 MB `factory` app (headroom) + 4.88 MB
-   LittleFS (~1,900 spools w/ history). Simpler; no OTA path to build.
+   slot isn't worth its cost. One 1.875 MB `factory` app (headroom) + 2 MB
+   LittleFS (~800 spools w/ history). Simpler; no OTA path to build.
    *(Revised from the earlier dual-OTA choice once the panel port was
    confirmed full-function. Note: changing the partition scheme later needs
    a USB reflash to repartition.)*
