@@ -153,7 +153,9 @@ void syncTask(void* param) {
         // ── SD snapshot on request ────────────────────────────────────────────
         // Runs on its own SPI host, so it's safe in any state. Restore rewrites
         // the store, so it's deferred to the idle branch (no spool depending on it).
+#if SD_BACKUP_ENABLED
         if (gSdSnapshotReq) { gSdSnapshotReq = false; sdSnapshot(true); }
+#endif
 
         // ── Quiescent / boot states ───────────────────────────────────────────
         switch (state) {
@@ -180,8 +182,10 @@ void syncTask(void* param) {
                 }
                 // SD housekeeping while nothing's on the scale: honor a restore
                 // request, then let the throttled auto-snapshot run if the log grew.
+#if SD_BACKUP_ENABLED
                 if (gSdRestoreReq) { gSdRestoreReq = false; sdRestoreLatest(); }
                 sdBackupTick();
+#endif
                 vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
                 continue;
 

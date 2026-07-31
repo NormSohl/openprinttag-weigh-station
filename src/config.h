@@ -64,6 +64,12 @@
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
 // ── SD backup (Phase 6) ───────────────────────────────────────
+// Set to 0 to skip SD bring-up entirely. A FAILED SD.begin() (no card, or
+// mis-wired) tears down SPI state on its way out and has been observed to
+// leave the *global* SPI bus handle NULL — which then panics TFT_eSPI with a
+// null-pointer StoreProhibited inside begin_tft_write(). Until the card is
+// wired and verified, leave this off so a missing card can't break the display.
+#define SD_BACKUP_ENABLED 0
 #define SD_SPI_FREQ_HZ        20000000  // SD SPI clock (20 MHz; drop to 10M if flaky)
 #define SD_HISTORY_KEEP             20  // dated snapshots retained under /backup/history
 #define SD_SNAPSHOT_MIN_INTERVAL_MS (5*60*1000UL) // auto-snapshot throttle when idle

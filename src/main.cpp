@@ -115,6 +115,7 @@ void setup() {
 
     // SD backup on the display board's card (dedicated 2nd SPI host). Optional —
     // the station runs fine with no card; snapshots begin once one is present.
+#if SD_BACKUP_ENABLED
     bootMark("sd (2nd SPI host; skipped fast if no card)");
     if (sdBackupBegin()) {
         SdStatus s; sdGetStatus(s);
@@ -124,6 +125,9 @@ void setup() {
     } else {
         Serial.println("[sd] no card (backup to SD disabled until inserted)");
     }
+#else
+    Serial.println("[sd] disabled at build time (SD_BACKUP_ENABLED=0)");
+#endif
 
     // Core 1: time-sensitive hardware polling
     bootMark("starting nfcTask (PN5180)");
