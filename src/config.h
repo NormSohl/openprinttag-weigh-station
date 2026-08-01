@@ -61,11 +61,13 @@
 #define WIFI_RESET_PIN      0
 #define WIFI_RESET_HOLD_MS  3000
 
-// How long the captive portal stays open before giving up and falling back to
-// the SoftAP. 120 s was not enough to actually type a network password on a
-// phone — the portal timed out mid-entry and dropped the connection. 5 minutes
-// is comfortable for a human without leaving a headless device blocked forever.
-#define WIFI_PORTAL_TIMEOUT_SEC 300
+// How long the captive portal waits with NOBODY connected before giving up and
+// falling back to the SoftAP. The countdown is suspended while a phone/laptop
+// is joined to the AP (wm.setAPClientCheck(true) in sync_task), so this is only
+// the unattended timeout — once someone joins they have unlimited time to type
+// a password. That split is why 2 minutes is enough here: it keeps an
+// unattended device from sitting in the portal, without rushing a human.
+#define WIFI_PORTAL_TIMEOUT_SEC 120
 
 // ── Web interface ─────────────────────────────────────────────
 // mDNS hostname; device is reachable at http://<DEVICE_HOSTNAME>.local/

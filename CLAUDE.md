@@ -70,7 +70,7 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 - Managed by WiFiManager. Stored internally by the ESP32 WiFi stack (not in our NVS namespace). If no network is configured or the join fails, syncTask brings up a `WeighStation` SoftAP so the web app stays reachable.
 - **Reset (board accessible):** hold BOOT button (GPIO 0) for 3 seconds at power-on → credentials cleared → captive portal opens immediately.
 - **Reset (cabinet-installed):** browse to `http://weighstation.local/reset` → device reboots into the captive portal.
-- **SSID change / missed portal window:** on each power cycle, WiFiManager automatically opens the captive portal for 5 minutes (WIFI_PORTAL_TIMEOUT_SEC) if stored credentials fail. Power-cycle the device and connect to `WeighStation-Setup` within that window.
+- **SSID change / missed portal window:** on each power cycle, WiFiManager automatically opens the captive portal if stored credentials fail. The timeout (WIFI_PORTAL_TIMEOUT_SEC, 120 s) only runs while nobody is joined to the AP — setAPClientCheck(true) suspends it once a client connects, so there is no time limit on entering a password. Power-cycle the device and connect to `WeighStation-Setup` within that window.
 
 ### Config catalog & storage
 - Onboarding catalog tables (vendors/materials/spool-profiles/colors/stock-items) live on LittleFS under `/config/`, seeded with defaults on first boot and editable via the web app's Config page (`config_store.*`).

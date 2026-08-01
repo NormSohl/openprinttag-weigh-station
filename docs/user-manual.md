@@ -167,8 +167,10 @@ still work as a fallback.)
 `WeighStation-Setup` AP; connect and reconfigure as in initial setup.
 
 **Option B — power cycle (device unreachable):** power-cycle it. If stored
-credentials fail, the captive portal opens for **5 minutes** — connect within
-that window and reconfigure. (Holding the BOOT button for 3 s at power-on also
+credentials fail, the captive portal opens for **2 minutes** — connect within
+that window and reconfigure. **Once your phone joins the AP the countdown
+stops**, so there's no time pressure while typing the password; the 2 minutes
+only applies while nobody is connected. (Holding the BOOT button for 3 s at power-on also
 clears WiFi credentials.)
 
 ### Recalibrating / backups
@@ -183,7 +185,8 @@ survives a device swap.
 
 ### Device won't connect to WiFi
 
-- Power-cycle the device and connect to `WeighStation-Setup` within 5 minutes
+- Power-cycle the device and connect to `WeighStation-Setup` within 2 minutes
+  (the countdown pauses as soon as you join, so take your time on the form)
   to reconfigure.
 - If the SSID list in the portal is empty, wait ~30 seconds for the scan and
   refresh the page.

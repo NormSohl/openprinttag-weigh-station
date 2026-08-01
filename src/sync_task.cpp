@@ -110,6 +110,12 @@ void syncTask(void* param) {
     setState(DeviceState::WiFiSetupMode);
     WiFiManager wm;
     wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_SEC);
+    // Suspend that timeout while someone is actually connected to the AP.
+    // WiFiManager defaults this off, so the portal counts down even mid-typing
+    // and drops the client — which is exactly what happened on the bench. With
+    // it on, WIFI_PORTAL_TIMEOUT_SEC only governs the unattended case: nobody
+    // joined, give up and fall back to the SoftAP.
+    wm.setAPClientCheck(true);
 
     // Hold BOOT (GPIO 0) for WIFI_RESET_HOLD_MS to erase stored WiFi credentials
     // and force the captive portal to reopen — useful when moving the device to a
