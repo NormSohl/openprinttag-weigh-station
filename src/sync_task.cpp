@@ -109,7 +109,7 @@ void syncTask(void* param) {
     // the captive-portal SSID while we wait for provisioning.
     setState(DeviceState::WiFiSetupMode);
     WiFiManager wm;
-    wm.setConfigPortalTimeout(120);
+    wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_SEC);
 
     // Hold BOOT (GPIO 0) for WIFI_RESET_HOLD_MS to erase stored WiFi credentials
     // and force the captive portal to reopen — useful when moving the device to a
