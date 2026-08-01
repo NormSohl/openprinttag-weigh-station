@@ -23,6 +23,11 @@
 #define TFT_DC   16
 #define TFT_RST  17
 
+// Landscape orientation. 1 and 3 are both landscape, 180° apart — which one
+// reads right-way-up depends on how the panel sits in the porch adapter.
+// Verified on the bench: 3 is correct for the current mounting.
+#define TFT_ROTATION 3
+
 // ── microSD on the display board — dedicated second SPI host ──
 // The Hosyond ILI9488's SD lines are on a *separate* header, NOT bonded to
 // the display SPI bus (see docs/datasheets/display-hosyond-ili9488.md), so

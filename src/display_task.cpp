@@ -20,8 +20,8 @@ extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
 extern volatile bool        gScaleCalibrated;
 
-// TFT_eSPI configured via include/User_Setup.h (ILI9488, 480x320).
-// Landscape rotation (setRotation(1)): width=480, height=320.
+// TFT_eSPI configured via -D flags in platformio.ini (ILI9488, 480x320).
+// Landscape (TFT_ROTATION in config.h): width=480, height=320.
 static TFT_eSPI          tft;
 static Adafruit_NeoPixel pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -137,7 +137,7 @@ void displayBegin() {
 
     xSemaphoreTake(gSpiMutex, portMAX_DELAY);
     tft.init();
-    tft.setRotation(1);
+    tft.setRotation(TFT_ROTATION);
     tft.fillScreen(TFT_BLACK);
     xSemaphoreGive(gSpiMutex);
 }
