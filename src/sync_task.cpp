@@ -102,20 +102,78 @@ static void identityFromMain(const OptMain& m, StoreEvent& e) {
     e.nom_g   = m.nominal_netto_full_weight;   // label weight; actual stays on the tag
 }
 
+// ── Captive portal ────────────────────────────────────────────────────────────
+
+// Pump WiFiManager's non-blocking portal until the user finishes, or until one
+// of two deadlines expires. Returns true if the device joined a network.
+//
+// Why two deadlines: the unit lives in a cabinet with the BOOT button out of
+// reach, so the portal can never be allowed to stay open indefinitely — but it
+// also must not cut someone off while they're typing a password.
+//
+//   idle     — restarted whenever a client is associated to the AP, so an
+//              active setup session is never interrupted.
+//   absolute — never restarted. Bounds the "joined, then walked away with the
+//              phone still associated" case, which the idle timer alone would
+//              keep alive forever.
+//
+// On expiry the caller falls back to the SoftAP, so the web app stays reachable
+// either way — a timeout costs configurability, never availability.
+static bool runConfigPortal(WiFiManager& wm) {
+    const uint32_t idleMs = (uint32_t)WIFI_PORTAL_TIMEOUT_SEC * 1000UL;
+    const uint32_t maxMs  = (uint32_t)WIFI_PORTAL_MAX_SEC     * 1000UL;
+
+    const uint32_t start = millis();
+    uint32_t lastClient  = start;
+    bool     sawClient   = false;
+
+    for (;;) {
+        wm.process();                       // serves the portal + captive DNS
+
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("[wifi] portal: credentials accepted, connected");
+            return true;
+        }
+
+        const uint32_t now = millis();      // unsigned math: rollover-safe
+
+        if (WiFi.softAPgetStationNum() > 0) {
+            lastClient = now;               // someone is here; hold the idle timer
+            if (!sawClient) {
+                sawClient = true;
+                Serial.println("[wifi] portal: client joined, idle timer suspended");
+            }
+        }
+
+        if (now - lastClient >= idleMs) {
+            Serial.printf("[wifi] portal: idle %u s with no client — giving up\n",
+                          (unsigned)(idleMs / 1000));
+            return false;
+        }
+        if (now - start >= maxMs) {
+            Serial.printf("[wifi] portal: hit the %u s cap — giving up\n",
+                          (unsigned)(maxMs / 1000));
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
 // ── Task ──────────────────────────────────────────────────────────────────────
 
 void syncTask(void* param) {
-    // Set WiFiSetupMode before blocking in autoConnect so displayTask can show
-    // the captive-portal SSID while we wait for provisioning.
+    // Set WiFiSetupMode before the portal runs so displayTask can show the
+    // captive-portal SSID while we wait for provisioning.
     setState(DeviceState::WiFiSetupMode);
     WiFiManager wm;
-    wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_SEC);
-    // Suspend that timeout while someone is actually connected to the AP.
-    // WiFiManager defaults this off, so the portal counts down even mid-typing
-    // and drops the client — which is exactly what happened on the bench. With
-    // it on, WIFI_PORTAL_TIMEOUT_SEC only governs the unattended case: nobody
-    // joined, give up and fall back to the SoftAP.
-    wm.setAPClientCheck(true);
+    // Drive the portal ourselves rather than letting WiFiManager block: its
+    // built-in timeout either cuts off someone mid-password (what happened on
+    // the bench) or, with setAPClientCheck(true), never fires while a phone
+    // stays associated. Neither is acceptable on a cabinet-installed unit whose
+    // BOOT button is unreachable — the portal MUST close on its own. See
+    // runConfigPortal() for the idle/absolute policy.
+    wm.setConfigPortalBlocking(false);
+    wm.setConfigPortalTimeout(0);      // no internal timeout; we own the policy
 
     // Hold BOOT (GPIO 0) for WIFI_RESET_HOLD_MS to erase stored WiFi credentials
     // and force the captive portal to reopen — useful when moving the device to a
@@ -135,7 +193,13 @@ void syncTask(void* param) {
 
     // Join lab WiFi if provisioned; otherwise fall back to our own SoftAP so the
     // device stays usable (and the web app reachable) with no infrastructure.
-    if (!wm.autoConnect("WeighStation-Setup")) {
+    // In non-blocking mode autoConnect() returns immediately: true if stored
+    // credentials worked, false once it has *started* the portal — so a false
+    // here means "portal is up", not "failed". runConfigPortal() decides.
+    bool joined = wm.autoConnect("WeighStation-Setup");
+    if (!joined) joined = runConfigPortal(wm);
+
+    if (!joined) {
         WiFi.mode(WIFI_AP);
         WiFi.softAP("WeighStation");
         strlcpy(gApSsid, "WeighStation", sizeof(gApSsid));

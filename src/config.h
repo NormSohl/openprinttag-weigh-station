@@ -61,13 +61,17 @@
 #define WIFI_RESET_PIN      0
 #define WIFI_RESET_HOLD_MS  3000
 
-// How long the captive portal waits with NOBODY connected before giving up and
-// falling back to the SoftAP. The countdown is suspended while a phone/laptop
-// is joined to the AP (wm.setAPClientCheck(true) in sync_task), so this is only
-// the unattended timeout — once someone joins they have unlimited time to type
-// a password. That split is why 2 minutes is enough here: it keeps an
-// unattended device from sitting in the portal, without rushing a human.
-#define WIFI_PORTAL_TIMEOUT_SEC 120
+// Captive-portal exit policy (enforced in syncTask, not by WiFiManager).
+// Two independent limits, because the device is cabinet-installed and the BOOT
+// button is inside the case — the portal must always close on its own.
+//
+//   IDLE: no client associated to the AP. Nobody is setting it up, so fall back
+//         to the SoftAP quickly and get the web app reachable.
+//   MAX:  absolute cap regardless of clients. Covers the case where someone
+//         joins, wanders off, and leaves a phone associated — without this the
+//         portal would stay open forever with no way to escape.
+#define WIFI_PORTAL_TIMEOUT_SEC 120   // idle: nobody joined
+#define WIFI_PORTAL_MAX_SEC     600   // absolute: 10 min, then give up
 
 // ── Web interface ─────────────────────────────────────────────
 // mDNS hostname; device is reachable at http://<DEVICE_HOSTNAME>.local/
