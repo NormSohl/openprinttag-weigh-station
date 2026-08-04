@@ -199,19 +199,36 @@ void syncTask(void* param) {
     bool joined = wm.autoConnect("WeighStation-Setup");
     if (!joined) joined = runConfigPortal(wm);
 
+    // Release WiFiManager's portal web server before our own tries to bind :80.
+    // Blocking autoConnect() does this internally on the way out; the
+    // non-blocking path does NOT, so without this the portal keeps the port,
+    // webAppBegin() fails to bind, and once WiFiManager's server goes away
+    // nothing is listening at all — the browser gets ERR_CONNECTION_REFUSED.
+    wm.stopConfigPortal();
+    vTaskDelay(pdMS_TO_TICKS(200));   // let the socket actually close
+
     if (!joined) {
         WiFi.mode(WIFI_AP);
         WiFi.softAP("WeighStation");
         strlcpy(gApSsid, "WeighStation", sizeof(gApSsid));
         WiFi.softAPIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
         setState(DeviceState::IdleNoWiFi);
+        Serial.printf("[wifi] SoftAP '%s' — web app at http://%s\n",
+                      gApSsid, gWebAddr);
     } else {
         gApSsid[0] = '\0';
-        snprintf(gWebAddr, sizeof(gWebAddr), "%s.local", DEVICE_HOSTNAME);
+        // Show the IP rather than the mDNS name: .local depends on the *client*
+        // resolving it (Windows in particular is unreliable), while the IP works
+        // from anything on the network. mDNS still runs, so weighstation.local
+        // keeps working for clients that can resolve it.
+        WiFi.localIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
         setState(DeviceState::Idle);
+        Serial.printf("[wifi] joined '%s' — web app at http://%s  (or http://%s.local)\n",
+                      WiFi.SSID().c_str(), gWebAddr, DEVICE_HOSTNAME);
     }
     // The web app runs regardless of station vs AP mode.
     webAppBegin();
+    Serial.println("[web] server started on :80");
 
     // Per-tag state, valid while a spool is on the scale.
     int     sSpoolId  = -1;
