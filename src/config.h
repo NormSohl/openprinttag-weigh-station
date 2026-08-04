@@ -18,15 +18,17 @@
 
 // ── 3.5" ILI9488 SPI TFT display ─────────────────────────────
 // Shares MOSI/SCK/MISO with PN5180 — gSpiMutex guards the bus.
-// TFT_CS/TFT_DC/TFT_RST are also consumed by User_Setup.h for TFT_eSPI.
+// TFT_CS/TFT_DC/TFT_RST are also passed to TFT_eSPI as -D flags (platformio.ini).
 #define TFT_CS   15
 #define TFT_DC   16
 #define TFT_RST  17
 
 // Landscape orientation. 1 and 3 are both landscape, 180° apart — which one
-// reads right-way-up depends on how the panel sits in the porch adapter.
-// Verified on the bench: 3 is correct for the current mounting.
-#define TFT_ROTATION 3
+// reads right-way-up depends purely on how the panel sits in the mount, not on
+// the panel itself. Confirmed on the assembled unit: 1 is correct.
+// (Set once at init from this constant, so it cannot vary between boots of the
+// same binary — a flip across a reboot means the panel moved, not the code.)
+#define TFT_ROTATION 1
 
 // ── microSD on the display board — dedicated second SPI host ──
 // The Hosyond ILI9488's SD lines are on a *separate* header, NOT bonded to

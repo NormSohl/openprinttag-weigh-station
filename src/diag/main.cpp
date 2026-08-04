@@ -49,7 +49,7 @@ void setup() {
     tft.init();
     Serial.println("tft.init() RETURNED — no panic");
 
-    tft.setRotation(3);   // matches TFT_ROTATION in config.h
+    tft.setRotation(1);   // matches TFT_ROTATION in config.h
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(3);
