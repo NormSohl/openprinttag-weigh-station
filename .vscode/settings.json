@@ -1,0 +1,15 @@
+{
+    // Bring-up on this project means pasting multi-line command blocks into the
+    // terminal constantly. VS Code's "are you sure you want to paste N lines?"
+    // prompt blocks that; skip it here.
+    // (VS Code older than ~1.85 wants the boolean `false` instead of "never".)
+    "terminal.integrated.enableMultiLinePasteWarning": "never",
+
+    // A boot trace plus a panic backtrace easily exceeds the default 1000 lines,
+    // and the head of the trace is the part that matters. Keep plenty.
+    "terminal.integrated.scrollback": 20000,
+
+    // Keep diffs to real changes — the firmware sources are whitespace-clean.
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true
+}

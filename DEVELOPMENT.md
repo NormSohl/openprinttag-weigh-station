@@ -160,7 +160,6 @@ PN5180/TFT bus.
 
 The partition map targets **4 MB** flash (ESP32-S3-MINI-1-N4R2), verified on the board. Re-check if you swap boards:
 
-
 ```bash
 pio pkg exec -- esptool.py flash_id   # expect "Embedded Flash 4MB", "PSRAM 2MB"
 ```
@@ -178,5 +177,6 @@ pio pkg exec -- esptool.py flash_id   # expect "Embedded Flash 4MB", "PSRAM 2MB"
 | `src/config_store.*` | onboarding catalog tables |
 | `src/display_task.cpp` | TFT + buzzer + NeoPixel |
 | `platformio.ini` | build config incl. TFT_eSPI settings (passed as -D flags) |
+| `.vscode/` | shared editor setup: tasks, extension recommendation, terminal settings |
 | `partitions.csv` | flash layout |
 | `docs/design/` | architecture + implementation plan (+ post-bringup backlog) |
