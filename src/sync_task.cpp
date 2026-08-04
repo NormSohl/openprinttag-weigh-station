@@ -197,15 +197,24 @@ void syncTask(void* param) {
     // credentials worked, false once it has *started* the portal — so a false
     // here means "portal is up", not "failed". runConfigPortal() decides.
     bool joined = wm.autoConnect("WeighStation-Setup");
-    if (!joined) joined = runConfigPortal(wm);
+
+    // autoConnect() only raises the portal when it cannot join a saved network,
+    // so a false here means "portal is up". Remember that: stopConfigPortal()
+    // dereferences the portal's server/DNS objects and null-derefs if they were
+    // never allocated — which is exactly what happens on a boot that connects
+    // straight to a saved AP.
+    const bool portalRan = !joined;
+    if (portalRan) joined = runConfigPortal(wm);
 
     // Release WiFiManager's portal web server before our own tries to bind :80.
     // Blocking autoConnect() does this internally on the way out; the
     // non-blocking path does NOT, so without this the portal keeps the port,
     // webAppBegin() fails to bind, and once WiFiManager's server goes away
     // nothing is listening at all — the browser gets ERR_CONNECTION_REFUSED.
-    wm.stopConfigPortal();
-    vTaskDelay(pdMS_TO_TICKS(200));   // let the socket actually close
+    if (portalRan) {
+        wm.stopConfigPortal();
+        vTaskDelay(pdMS_TO_TICKS(200));   // let the socket actually close
+    }
 
     if (!joined) {
         WiFi.mode(WIFI_AP);
