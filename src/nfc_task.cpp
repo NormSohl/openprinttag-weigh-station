@@ -78,10 +78,48 @@ static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
 
 // ── Task ──────────────────────────────────────────────────────────────────────
 
+// Read the PN5180's version registers over SPI and report them. This separates
+// the two very different failure modes behind "no tag detected":
+//   - versions read back plausibly -> SPI/CS/BUSY/RST wiring and 3.3 V logic are
+//     fine, so a dead reader means RF: the TVDD/5 V transmitter rail, the
+//     antenna, or the tag itself.
+//   - all 0x00 or all 0xFF       -> the chip isn't talking at all; look at the
+//     SPI bus, chip select, reset, or power before suspecting anything else.
+// Returns true if the chip answered.
+static bool nfcSelfTest(PN5180ISO15693& nfc) {
+    uint8_t prod[2] = {0xFF, 0xFF}, fw[2] = {0xFF, 0xFF}, eep[2] = {0xFF, 0xFF};
+
+    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    nfc.readEEprom(PRODUCT_VERSION,  prod, 2);
+    nfc.readEEprom(FIRMWARE_VERSION, fw,   2);
+    nfc.readEEprom(EEPROM_VERSION,   eep,  2);
+    xSemaphoreGive(gSpiMutex);
+
+    Serial.printf("[nfc] PN5180 product %d.%d  firmware %d.%d  eeprom %d.%d\n",
+                  prod[1], prod[0], fw[1], fw[0], eep[1], eep[0]);
+
+    const bool dead = (prod[0] == 0xFF && prod[1] == 0xFF) ||
+                      (prod[0] == 0x00 && prod[1] == 0x00);
+    if (dead) {
+        Serial.println("[nfc] NOT RESPONDING — chip is not answering over SPI.");
+        Serial.printf("[nfc]   check: NSS=%d BUSY=%d RST=%d, shared SPI "
+                      "SCK=%d MOSI=%d MISO=%d, and 3.3 V power\n",
+                      PN5180_NSS, PN5180_BUSY, PN5180_RESET,
+                      SPI_SCK, SPI_MOSI, SPI_MISO);
+    } else {
+        Serial.println("[nfc] responding — SPI wiring OK. If tags still aren't "
+                       "seen, suspect the RF rail/antenna, not the bus.");
+    }
+    return !dead;
+}
+
 void nfcTask(void* param) {
     PN5180ISO15693 nfc(PN5180_NSS, PN5180_BUSY, PN5180_RESET);
     nfc.begin();
     nfc.reset();
+
+    nfcSelfTest(nfc);   // logs whether the chip is alive before we poll for tags
+
     nfc.setupRF();
 
     uint8_t uid[8]       = {};
