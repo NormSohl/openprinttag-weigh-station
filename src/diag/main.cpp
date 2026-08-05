@@ -1,82 +1,99 @@
-// Display isolation test — build with:  pio run -e diag -t upload -t monitor
+// PN5180 isolation test — build with:  pio run -e diag -t upload -t monitor
 //
-// The real firmware panics with a null pointer inside TFT_eSPI::begin_tft_write()
-// during tft.init(). Three hypotheses (SD teardown, init race, User_Setup not
-// reaching the library) were each falsified on hardware. This strips everything
-// away to answer one question:
+// The display half of bring-up is done (TFT_eSPI works with USE_HSPI_PORT).
+// This build now isolates the remaining failure: nfcTask hangs inside
+// PN5180::reset(), which spins forever waiting for an IDLE interrupt the chip
+// never raises.
 //
-//   Does TFT_eSPI init at all on this board and wiring?
+// THE HYPOTHESIS
+// A GPIO can only be driven by one SPI peripheral at a time. In the real
+// firmware displayBegin() runs first and TFT_eSPI (USE_HSPI_PORT) routes
+// SCK/MOSI/MISO = 12/11/13 to SPI3. The PN5180 library uses the global `SPI`
+// object, which is SPI2 — so once the display claims those pins, the PN5180
+// never sees a clock edge and cannot answer.
 //
-// Difference from the real firmware that matters most: this does NOT call
-// SPI.begin() first. TFT_eSPI expects to own bus initialisation; our setup()
-// pre-claims the bus with SPI.begin(SCK,MISO,MOSI) for the PN5180's benefit,
-// which may leave TFT_eSPI's own SPIClass with an uninitialised handle.
+// THE TEST
+// This sketch initialises the PN5180 and NOTHING ELSE. No TFT, so nothing
+// steals the pins.
 //
-// Set DIAG_PRECLAIM_SPI to 1 to reproduce the firmware's ordering and confirm
-// that's the trigger.
+//   gets past reset() -> the chip is fine; the shared-pin conflict is real and
+//                        the fix is bus topology (or rewiring the PN5180 to
+//                        its own pins), not the PN5180 itself.
+//   hangs at reset()  -> the chip genuinely is not responding even with sole
+//                        ownership of the bus: power (3.3 V logic and the RF
+//                        rail), or the NSS/BUSY/RST wiring.
+//
+// The hang itself is the signal — the last line printed tells you which.
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <TFT_eSPI.h>
+#include <PN5180.h>
+#include <PN5180ISO15693.h>
+#include "../config.h"
 
-#define DIAG_LED           46   // onboard WS2812
-#define DIAG_PRECLAIM_SPI   0   // 1 = call SPI.begin() before tft.init(), like the firmware
+#define DIAG_LED 46   // onboard WS2812
 
-static TFT_eSPI tft;
+static PN5180ISO15693 nfc(PN5180_NSS, PN5180_BUSY, PN5180_RESET);
 
 void setup() {
     Serial.begin(115200);
-    delay(3000);                       // let native USB enumerate before we print
+    delay(3000);                       // let native USB enumerate before printing
     Serial.println();
-    Serial.println("=== DIAG: TFT isolation ===");
-    Serial.printf("flash %u MB, psram %u MB, heap %u\n",
-                  ESP.getFlashChipSize() >> 20, ESP.getPsramSize() >> 20,
-                  ESP.getFreeHeap());
-    Serial.printf("pins: SCK=%d MOSI=%d MISO=%d  CS=%d DC=%d RST=%d\n",
-                  TFT_SCLK, TFT_MOSI, TFT_MISO, TFT_CS, TFT_DC, TFT_RST);
+    Serial.println("=== DIAG: PN5180 isolation (no TFT — sole owner of the bus) ===");
+    Serial.printf("pins: NSS=%d BUSY=%d RST=%d   SPI SCK=%d MOSI=%d MISO=%d\n",
+                  PN5180_NSS, PN5180_BUSY, PN5180_RESET,
+                  SPI_SCK, SPI_MOSI, SPI_MISO);
 
-#if DIAG_PRECLAIM_SPI
-    Serial.println("pre-claiming SPI bus (firmware ordering)…");
+    pinMode(PN5180_BUSY, INPUT);
+    Serial.printf("BUSY before init: %s\n",
+                  digitalRead(PN5180_BUSY) ? "HIGH" : "LOW (normal idle)");
     Serial.flush();
-    SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI);
-    Serial.println("SPI.begin() returned");
-#else
-    Serial.println("NOT pre-claiming SPI — TFT_eSPI owns bus init");
-#endif
 
-    Serial.println("calling tft.init()…");
-    Serial.flush();                    // flush first: if init panics, this is the last line
-    tft.init();
-    Serial.println("tft.init() RETURNED — no panic");
+    Serial.println("SPI.begin()…");
+    Serial.flush();
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    Serial.println("SPI.begin() ok");
 
-    tft.setRotation(1);   // matches TFT_ROTATION in config.h
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(3);
-    tft.setCursor(12, 12);
-    tft.println("TFT OK");
-    tft.setTextSize(2);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(12, 60);
-    tft.println("ILI9488 480x320");
-    tft.setCursor(12, 90);
-    tft.println("display isolation test");
+    Serial.println("nfc.begin()…");
+    Serial.flush();
+    nfc.begin();
+    Serial.println("nfc.begin() ok");
 
-    // Colour bars — proves pixels, not just a command that didn't crash.
-    const uint16_t bars[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_YELLOW, TFT_CYAN, TFT_MAGENTA};
-    for (int i = 0; i < 6; i++) tft.fillRect(12 + i * 76, 140, 70, 60, bars[i]);
+    // Sample BUSY across the reset pulse. A chip that is alive toggles BUSY;
+    // a flat line means nothing is driving the pin.
+    Serial.println("nfc.reset()…  <-- if this is the last line, the chip is silent");
+    Serial.flush();
+    nfc.reset();
+    Serial.println("nfc.reset() ok  <-- CHIP IS ALIVE: the shared-pin conflict is real");
 
-    Serial.println("drew text + colour bars — look at the screen");
+    uint8_t prod[2] = {0xFF, 0xFF}, fw[2] = {0xFF, 0xFF}, eep[2] = {0xFF, 0xFF};
+    nfc.readEEprom(PRODUCT_VERSION,  prod, 2);
+    nfc.readEEprom(FIRMWARE_VERSION, fw,   2);
+    nfc.readEEprom(EEPROM_VERSION,   eep,  2);
+    Serial.printf("product %d.%d  firmware %d.%d  eeprom %d.%d\n",
+                  prod[1], prod[0], fw[1], fw[0], eep[1], eep[0]);
+
+    Serial.println("setupRF()…");
+    Serial.flush();
+    nfc.setupRF();
+    Serial.println("setupRF() ok — now polling for tags, present one");
     Serial.flush();
 }
 
 void loop() {
     static uint32_t n = 0;
-    neopixelWrite(DIAG_LED, (n % 3 == 0) ? 40 : 0,
-                            (n % 3 == 1) ? 40 : 0,
-                            (n % 3 == 2) ? 40 : 0);
-    Serial.printf("[diag] alive %u s\n", millis() / 1000);
-    Serial.flush();
+    uint8_t uid[8] = {};
+
+    ISO15693ErrorCode rc = nfc.getInventory(uid);
+    if (rc == ISO15693_EC_OK) {
+        Serial.printf("[diag] TAG uid %02x%02x%02x%02x%02x%02x%02x%02x\n",
+                      uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]);
+        neopixelWrite(DIAG_LED, 0, 60, 0);          // green: tag seen
+    } else {
+        if (n % 10 == 0) Serial.printf("[diag] no tag (rc=%d), %lu s\n",
+                                       (int)rc, millis() / 1000);
+        neopixelWrite(DIAG_LED, 0, 0, (n & 1) ? 30 : 0);  // blue blink: alive, polling
+    }
     n++;
-    delay(1000);
+    delay(500);
 }
