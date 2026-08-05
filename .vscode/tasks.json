@@ -15,11 +15,24 @@
             // between flashes, and a plain build silently reflashes whatever is
             // already on disk, which looks exactly like "the fix didn't work".
             // -e weigh-station skips rebuilding the diag environment.
+            //
+            // The pull is a separate task chained via dependsOn rather than a
+            // shell operator: Windows PowerShell 5.1 rejects `&&` ("not a valid
+            // statement separator"), and `;` differs again from POSIX shells.
+            // Task chaining behaves the same everywhere.
             "label": "Pull, Flash & Monitor",
+            "dependsOrder": "sequence",
+            "dependsOn": ["Git pull"],
             "type": "shell",
-            "command": "git pull && pio run -e weigh-station --target upload --target monitor",
+            "command": "pio run -e weigh-station --target upload --target monitor",
             "group": { "kind": "build", "isDefault": true },
             "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Git pull",
+            "type": "shell",
+            "command": "git pull",
+            "problemMatcher": []
         },
         {
             // Same, without the pull — for when you have local edits you don't
