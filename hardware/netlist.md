@@ -39,6 +39,7 @@ more than one device — each of those is joined once at a **soldered splice**
 | 5 | GPIO 16 | TFT : DC (RS) |
 | 6 | GPIO 17 | TFT : RESET |
 | 7 | GPIO 14 | Buzzer : + *(PWM; passive piezo, no resistor)* |
+| 8 | **VUSB (5 V)** | **PN5180 : 5V** — RF transmitter rail, see Cautions |
 
 ### Shared nets — one soldered splice each
 
@@ -94,7 +95,7 @@ connector to the NAU7802 board carries all four:
 | L4 | ⬜ White (白)  | Signal −     | A− |
 | L5 | 🟨 Yellow (黄) | Shield/drain | GND *(omit if absent)* |
 
-**Totals:** 7 direct wires + 5 soldered splices (13 legs) + 4 SD wires +
+**Totals:** 8 direct wires + 5 soldered splices (13 legs) + 4 SD wires +
 1 Qwiic cable + 4–5 load-cell leads.
 
 ---
@@ -160,7 +161,13 @@ terminal — both already reliable, nothing to change.
 
 ## Cautions
 
-- The **PN5180 is 3.3 V only** — do not connect it to 5 V.
+- **The PN5180 needs BOTH supplies.** Its *logic* is 3.3 V (never put 5 V on
+  SPI/NSS/BUSY/RST), but the module has a **separate 5 V pin that powers the RF
+  transmitter / antenna driver**. Leave 5 V off and SPI may still answer while
+  the reader generates no usable field — i.e. it looks alive but sees no tags.
+  Wire **VUSB → PN5180 5V** and **3V3 → PN5180 3.3V**.
+  *(An earlier revision of this file said "3.3 V only — do not connect to 5 V".
+  That was wrong: it conflated the logic level with the module's power pins.)*
 - PN5180 + TFT **share MOSI/SCK/MISO**; only the CS lines differ (GPIO 5 vs 15).
   A firmware mutex (`gSpiMutex`) keeps them off the bus simultaneously.
 - Load-cell orientation: force axis vertical, sealed/potted face **down** for

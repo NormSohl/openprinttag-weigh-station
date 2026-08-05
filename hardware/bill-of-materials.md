@@ -8,7 +8,7 @@ Everything needed to build one weigh station, beyond the fasteners
 | Item | Spec | Qty | Notes |
 |------|------|-----|-------|
 | ESP32-S3 dev board | SparkFun Thing Plus ESP32-S3 | 1 | Native USB CDC, Qwiic on GPIO 8/9 |
-| NFC reader module | PN5180-NFC (ISO 15693) | 1 | Needs both 3.3V logic + 5V RF rail |
+| NFC reader module | PN5180-NFC (ISO 15693) | 1 | **Needs BOTH rails:** 3.3 V logic *and* 5 V on the module's RF/antenna-driver pin (VUSB). 3.3 V alone can answer SPI but produce no usable RF field |
 | Load cell amplifier | NAU7802 (SparkFun Qwiic Scale) | 1 | I²C, on Qwiic bus |
 | Load cell | TAL220B, 5kg, 55×12.7×12.7mm | 1 | Single-bolt mount, ~40mm hole spacing |
 | TFT display | Hosyond 3.5" ILI9488 SPI TFT, 480×320, resistive touch (MSP3520-type) | 1 | Amazon (Hosyond Store, sold by HONGXINBAORUI), ~$17.99; incl. stylus. SPI, shared bus with PN5180; CS GPIO 15, DC GPIO 16, RST GPIO 17. On-board microSD **now wired** to a dedicated 2nd SPI host (SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42); resistive touch (T_xx pins) intentionally unwired |
