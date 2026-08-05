@@ -115,12 +115,38 @@ static bool nfcSelfTest(PN5180ISO15693& nfc) {
 
 void nfcTask(void* param) {
     PN5180ISO15693 nfc(PN5180_NSS, PN5180_BUSY, PN5180_RESET);
+
+    // Every step here is announced BEFORE it runs, because the PN5180 library
+    // waits on the chip with unbounded loops — reset() spins on
+    // `while (0 == (IDLE_IRQ_STAT & getIRQStatus()))` and the SPI helpers spin
+    // on BUSY. If the chip is absent, unpowered or mis-wired, the task simply
+    // never returns and prints nothing at all. Whatever line appears last is
+    // the call that hung.
+    Serial.printf("[nfc] init: NSS=%d BUSY=%d RST=%d (shared SPI %d/%d/%d)\n",
+                  PN5180_NSS, PN5180_BUSY, PN5180_RESET,
+                  SPI_SCK, SPI_MOSI, SPI_MISO);
+
+    // Raw pin read before the library touches anything. The PN5180 idles BUSY
+    // LOW; a pin stuck HIGH (or floating) with no chip on the other end is the
+    // cheapest possible evidence that it isn't powered or wired.
+    pinMode(PN5180_BUSY, INPUT);
+    Serial.printf("[nfc] BUSY reads %s before init\n",
+                  digitalRead(PN5180_BUSY) ? "HIGH (suspect: unpowered/miswired)"
+                                           : "LOW (normal idle)");
+
+    Serial.println("[nfc] begin()…");
     nfc.begin();
+    Serial.println("[nfc] begin() ok");
+
+    Serial.println("[nfc] reset()… (spins forever if the chip never answers)");
     nfc.reset();
+    Serial.println("[nfc] reset() ok");
 
     nfcSelfTest(nfc);   // logs whether the chip is alive before we poll for tags
 
+    Serial.println("[nfc] setupRF()…");
     nfc.setupRF();
+    Serial.println("[nfc] setupRF() ok — polling for tags");
 
     uint8_t uid[8]       = {};
     uint8_t numBlocks    = 0;
