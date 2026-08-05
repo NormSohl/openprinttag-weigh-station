@@ -49,6 +49,44 @@ void setup() {
                   digitalRead(PN5180_BUSY) ? "HIGH" : "LOW (normal idle)");
     Serial.flush();
 
+    // ── Hang-proof liveness probe ─────────────────────────────────────────────
+    // Drive RST ourselves and watch BUSY. Per the PN5180 datasheet the chip
+    // raises BUSY while it starts up after reset and drops it when ready, so a
+    // powered, correctly-wired chip MUST move that pin. Pure GPIO — no SPI, no
+    // library, nothing that can block.
+    //
+    //   BUSY changes      -> the chip is alive and RST/BUSY are wired; any
+    //                        remaining failure is on the SPI lines or CS.
+    //   BUSY never moves  -> nothing is driving the pin: unpowered, or RST/BUSY
+    //                        not actually connected. No amount of SPI debugging
+    //                        will help until that is fixed.
+    pinMode(PN5180_RESET, OUTPUT);
+    pinMode(PN5180_BUSY,  INPUT);
+
+    digitalWrite(PN5180_RESET, LOW);          // assert reset (active low)
+    delay(10);
+    const int busyInReset = digitalRead(PN5180_BUSY);
+    digitalWrite(PN5180_RESET, HIGH);         // release
+
+    int  lo = 0, hi = 0;
+    for (int i = 0; i < 200; i++) {           // 200 ms of sampling
+        digitalRead(PN5180_BUSY) ? hi++ : lo++;
+        delay(1);
+    }
+    Serial.printf("BUSY probe: in-reset=%d, after release %d HIGH / %d LOW samples\n",
+                  busyInReset, hi, lo);
+    if (hi == 0 || lo == 0) {
+        Serial.println("BUSY NEVER CHANGED — the chip is not driving it.");
+        Serial.println("  -> check PN5180 power (3.3 V logic, and the separate");
+        Serial.println("     5 V / TVDD transmitter pin if the module has one),");
+        Serial.printf("     and that RST=%d and BUSY=%d are really connected.\n",
+                      PN5180_RESET, PN5180_BUSY);
+    } else {
+        Serial.println("BUSY TOGGLED — chip is powered and responding to reset.");
+        Serial.println("  -> power/RST/BUSY are good; suspect SCK/MOSI/MISO or NSS.");
+    }
+    Serial.flush();
+
     Serial.println("SPI.begin()…");
     Serial.flush();
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
