@@ -108,7 +108,8 @@ Committed in `.vscode/` so it works the moment you open the folder:
 
 | Task | What | How |
 |---|---|---|
-| **Flash & Monitor** | build → upload → serial monitor in one go | **Ctrl+Shift+B** (default build task) |
+| **Pull, Flash & Monitor** | `git pull` → build → upload → serial monitor | **Ctrl+Shift+B** (default build task) |
+| Flash & Monitor (no pull) | same, but builds exactly what's on disk | Ctrl+Shift+P → *Run Task* |
 | Build / Flash / Monitor | the individual steps | Ctrl+Shift+P → *Run Task* |
 | List serial ports | `pio device list` — find the COM port | Ctrl+Shift+P → *Run Task* |
 | Erase flash | clean slate; **wipes LittleFS** (log, config, WiFi, calibration) | Ctrl+Shift+P → *Run Task* |

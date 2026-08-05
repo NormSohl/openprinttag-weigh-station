@@ -11,12 +11,23 @@
     },
     "tasks": [
         {
-            // Ctrl+Shift+B — the one you'll use all night: build, flash, then
-            // drop straight into the serial monitor with the exception decoder.
-            "label": "Flash & Monitor",
+            // Ctrl+Shift+B — the bring-up loop. Pulls FIRST: fixes land on main
+            // between flashes, and a plain build silently reflashes whatever is
+            // already on disk, which looks exactly like "the fix didn't work".
+            // -e weigh-station skips rebuilding the diag environment.
+            "label": "Pull, Flash & Monitor",
             "type": "shell",
-            "command": "pio run --target upload --target monitor",
+            "command": "git pull && pio run -e weigh-station --target upload --target monitor",
             "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            // Same, without the pull — for when you have local edits you don't
+            // want disturbed, or you're deliberately testing what's on disk.
+            "label": "Flash & Monitor (no pull)",
+            "type": "shell",
+            "command": "pio run -e weigh-station --target upload --target monitor",
+            "group": "build",
             "problemMatcher": "$gcc"
         },
         {
