@@ -56,6 +56,65 @@ static bool readAllBlocks(PN5180ISO15693& nfc, uint8_t* uid,
     return true;
 }
 
+// Human-readable ISO15693 status. The distinction matters for diagnosis:
+//   NO_CARD              -> the tag never answered. RF energy, not logic. A write
+//                           needs far more field strength than a read, so a tag
+//                           that inventories fine can still fail to program.
+//   BLOCK_NOT_PROGRAMMED -> it answered but the cell didn't take. Also usually
+//                           power, at the margin.
+//   BLOCK_IS_LOCKED      -> the tag is write-protected. No amount of repositioning
+//                           will help; the tag is not usable for OPT.
+//   BLOCK_NOT_AVAILABLE  -> we addressed past the end of memory, i.e. our
+//                           numBlocks is wrong.
+//   OPTION_NOT_SUPPORTED -> the tag wants the Option flag set on writes, which
+//                           this library does not do (it sends flags 0x22).
+static const char* isoErrName(ISO15693ErrorCode rc) {
+    switch (rc) {
+        case EC_NO_CARD:                          return "NO_CARD (no answer — RF/coupling)";
+        case ISO15693_EC_OK:                      return "OK";
+        case ISO15693_EC_NOT_SUPPORTED:           return "NOT_SUPPORTED";
+        case ISO15693_EC_NOT_RECOGNIZED:          return "NOT_RECOGNIZED";
+        case ISO15693_EC_OPTION_NOT_SUPPORTED:    return "OPTION_NOT_SUPPORTED";
+        case ISO15693_EC_UNKNOWN_ERROR:           return "UNKNOWN";
+        case ISO15693_EC_BLOCK_NOT_AVAILABLE:     return "BLOCK_NOT_AVAILABLE (past end)";
+        case ISO15693_EC_BLOCK_ALREADY_LOCKED:    return "BLOCK_ALREADY_LOCKED";
+        case ISO15693_EC_BLOCK_IS_LOCKED:         return "BLOCK_IS_LOCKED (write-protected)";
+        case ISO15693_EC_BLOCK_NOT_PROGRAMMED:    return "BLOCK_NOT_PROGRAMMED (write didn't take)";
+        case ISO15693_EC_BLOCK_NOT_LOCKED:        return "BLOCK_NOT_LOCKED";
+        case ISO15693_EC_CUSTOM_CMD_ERROR:        return "CUSTOM_CMD_ERROR";
+    }
+    return "?";
+}
+
+// Write one block, retrying a few times before giving up.
+//
+// EEPROM programming sits much closer to the RF power budget than a read does,
+// so an occasional failure on an otherwise fine tag is normal and a retry
+// usually takes. Retrying is standard practice for ISO15693 writes; failing a
+// whole onboarding because one block out of eighty flickered is not.
+//
+// Takes and releases the bus itself, per attempt: each write costs ~10 ms inside
+// the library, and holding gSpiMutex across a whole 80-block format would freeze
+// displayTask for a second or more.
+#define TAG_WRITE_RETRIES 3
+static ISO15693ErrorCode writeBlockRetry(PN5180ISO15693& nfc, uint8_t* uid,
+                                         uint8_t blockNo, uint8_t* data,
+                                         uint8_t blockSize) {
+    ISO15693ErrorCode rc = ISO15693_EC_UNKNOWN_ERROR;
+    for (int attempt = 0; attempt < TAG_WRITE_RETRIES; attempt++) {
+        spiBusTakeNfc();
+        rc = nfc.writeSingleBlock(uid, blockNo, data, blockSize);
+        spiBusGive();
+        if (rc == ISO15693_EC_OK) {
+            if (attempt) Serial.printf("[nfc] block %u wrote on attempt %d\n",
+                                       (unsigned)blockNo, attempt + 1);
+            return rc;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));   // let the field settle before retrying
+    }
+    return rc;
+}
+
 // Write a CBOR section back into the tag at the position given by the Meta offsets.
 // sectionOffset is relative to the NDEF payload start (from OptMeta).
 static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
@@ -70,9 +129,13 @@ static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
     size_t firstBlock = absStart / blockSize;
     size_t lastBlock  = (absStart + cborLen - 1) / blockSize;
     for (size_t b = firstBlock; b <= lastBlock; b++) {
-        if (nfc.writeSingleBlock(uid, (uint8_t)b,
-                                 sRawBuf + b * blockSize, blockSize) != ISO15693_EC_OK)
+        ISO15693ErrorCode rc = writeBlockRetry(nfc, uid, (uint8_t)b,
+                                               sRawBuf + b * blockSize, blockSize);
+        if (rc != ISO15693_EC_OK) {
+            Serial.printf("[nfc] section write FAILED at block %u/%u: rc=%d %s\n",
+                          (unsigned)b, (unsigned)lastBlock, (int)rc, isoErrName(rc));
             return false;
+        }
     }
     return true;
 }
@@ -270,24 +333,54 @@ void nfcTask(void* param) {
         if (state == DeviceState::FormattingAndRegistering) {
             uint8_t  initBuf[512] = {};
             OptMeta  initMeta     = {};
-            size_t   payloadOff   = optBuildBlankTag(numBlocks, blockSize,
-                                                     initBuf, sizeof(initBuf), &initMeta);
+
+            // Both failures below land in TagReadError, which on screen reads
+            // only "Read Error" — so say on the wire which one it was and why.
+            // Without this the two are indistinguishable, and they have nothing
+            // in common: one is our layout maths, the other is RF.
+            Serial.printf("[nfc] formatting blank tag: %u blocks x %u B = %u B\n",
+                          (unsigned)numBlocks, (unsigned)blockSize,
+                          (unsigned)numBlocks * blockSize);
+
+            size_t payloadOff = optBuildBlankTag(numBlocks, blockSize,
+                                                 initBuf, sizeof(initBuf), &initMeta);
             if (payloadOff == SIZE_MAX) {
+                Serial.printf("[nfc] optBuildBlankTag REFUSED this geometry "
+                              "(%u blocks x %u B, buffer %u B). Nothing was written "
+                              "to the tag.\n",
+                              (unsigned)numBlocks, (unsigned)blockSize,
+                              (unsigned)sizeof(initBuf));
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
 
-            spiBusTakeNfc();
+            const uint32_t t0 = millis();
             bool writeOk = true;
             for (uint8_t b = 0; b < numBlocks; b++) {
-                if (nfc.writeSingleBlock(uid, b, initBuf + b * blockSize, blockSize)
-                        != ISO15693_EC_OK) {
+                ISO15693ErrorCode rc = writeBlockRetry(nfc, uid, b,
+                                                       initBuf + b * blockSize, blockSize);
+                if (rc != ISO15693_EC_OK) {
+                    Serial.printf("[nfc] format FAILED at block %u of %u after %d "
+                                  "attempts: rc=%d %s\n",
+                                  (unsigned)b, (unsigned)numBlocks, TAG_WRITE_RETRIES,
+                                  (int)rc, isoErrName(rc));
+                    // Block 0 failing means it never programmed anything; a later
+                    // block means the tag is now half-written and must be
+                    // re-formatted before use. Worth knowing which.
+                    if (b == 0)
+                        Serial.println("[nfc]   nothing was written — tag is untouched.");
+                    else
+                        Serial.printf("[nfc]   blocks 0..%u were written — the tag is "
+                                      "PARTIALLY formatted and needs another pass.\n",
+                                      (unsigned)(b - 1));
                     writeOk = false;
                     break;
                 }
             }
-            spiBusGive();
+            if (writeOk)
+                Serial.printf("[nfc] format ok: %u blocks in %u ms\n",
+                              (unsigned)numBlocks, (unsigned)(millis() - t0));
             if (!writeOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
