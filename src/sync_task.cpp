@@ -268,20 +268,35 @@ void syncTask(void* param) {
                 }
                 // Event-log compaction, only while nothing is on the scale:
                 // it rewrites the whole log and holds the store lock for the
-                // duration, so it must never land mid-weigh. The check is a
-                // cheap file size, and the rewrite itself happens rarely.
-                if (storeCompactNeeded()) {
-                    const size_t before = storeLogBytes();
-                    Serial.printf("[store] compacting log (%u kB)…\n",
-                                  (unsigned)(before >> 10));
-                    const bool ok = storeCompact();
-                    Serial.printf("[store] compaction %s: %u kB -> %u kB, %u lines, "
-                                  "%u kB free\n",
-                                  ok ? "ok" : "FAILED",
-                                  (unsigned)(before >> 10),
-                                  (unsigned)(storeLogBytes() >> 10),
-                                  (unsigned)storeLogLineCount(),
-                                  (unsigned)(storeFreeBytes() >> 10));
+                // duration, so it must never land mid-weigh.
+                //
+                // Throttled to once a minute rather than riding the ~1 Hz
+                // reconcile tick. The check opens the log to stat it, and the
+                // log takes months to reach the threshold — checking 60x more
+                // often buys nothing and just churns the filesystem.
+                //
+                // Braced: `nowMs` has a runtime initialiser, and a bare
+                // declaration in a case block that is followed by another case
+                // label is a "jump to case label crosses initialization" error.
+                {
+                    static uint32_t lastCompactCheck = 0;
+                    const uint32_t nowMs = millis();
+                    if (nowMs - lastCompactCheck >= 60000UL) {
+                        lastCompactCheck = nowMs;
+                        if (storeCompactNeeded()) {
+                            const size_t before = storeLogBytes();
+                            Serial.printf("[store] compacting log (%u kB)…\n",
+                                          (unsigned)(before >> 10));
+                            const bool ok = storeCompact();
+                            Serial.printf("[store] compaction %s: %u kB -> %u kB, "
+                                          "%u lines, %u kB free\n",
+                                          ok ? "ok" : "FAILED",
+                                          (unsigned)(before >> 10),
+                                          (unsigned)(storeLogBytes() >> 10),
+                                          (unsigned)storeLogLineCount(),
+                                          (unsigned)(storeFreeBytes() >> 10));
+                        }
+                    }
                 }
                 vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
                 continue;

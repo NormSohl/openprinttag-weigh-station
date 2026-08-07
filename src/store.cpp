@@ -318,6 +318,7 @@ static bool rebuildIndices_() {
     sSpools.clear();
     sByUuid.clear();
     sUsage.clear();
+    if (!LittleFS.exists(LOG_PATH)) { sInvDirty = true; return true; }
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
         while (f.available()) {
@@ -339,6 +340,7 @@ bool storeRebuildIndices() { Lock lk; return rebuildIndices_(); }
 // Does the log end with a newline? Caller holds the lock.
 static void primeLogEndsNL_() {
     sLogEndsNL = true;
+    if (!LittleFS.exists(LOG_PATH)) return;
     File rf = LittleFS.open(LOG_PATH, "r");
     if (rf) {
         if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
@@ -398,6 +400,7 @@ size_t storeFreeBytes()   {
 
 size_t storeLogBytes() {
     Lock lk;
+    if (!LittleFS.exists(LOG_PATH)) return 0;
     File f = LittleFS.open(LOG_PATH, "r");
     size_t n = f ? f.size() : 0;
     if (f) f.close();
@@ -406,6 +409,7 @@ size_t storeLogBytes() {
 
 size_t storeLogLineCount() {
     Lock lk;
+    if (!LittleFS.exists(LOG_PATH)) return 0;
     File f = LittleFS.open(LOG_PATH, "r");
     if (!f) return 0;
     size_t n = 0;
@@ -473,6 +477,15 @@ bool storeBegin() {
     if (!sMutex) sMutex = xSemaphoreCreateMutex();
     if (!LittleFS.begin(true)) return false;   // format on first-boot mount fail
     if (!LittleFS.exists("/log")) LittleFS.mkdir("/log");
+    // Create the log up front. LittleFS logs an ESP_LOGE for every open() of a
+    // missing file, and the idle loop's compaction check opens it about once a
+    // second — on a fresh device that produced a steady stream of
+    // "does not exist, no permits for creation" errors that look like a fault
+    // and aren't. An empty log replays to an empty index, which is correct.
+    if (!LittleFS.exists(LOG_PATH)) {
+        File f = LittleFS.open(LOG_PATH, "w");
+        if (f) f.close();
+    }
     Preferences p;
     p.begin("store", true);
     sNextId = p.getUInt("counter", 1);
@@ -486,6 +499,7 @@ bool storeBegin() {
 size_t storeForEachWeigh(uint32_t spool,
                          void (*cb)(const StoreEvent&, void*), void* ctx) {
     Lock lk;
+    if (!LittleFS.exists(LOG_PATH)) return 0;
     File f = LittleFS.open(LOG_PATH, "r");
     if (!f) return 0;
     size_t n = 0;
