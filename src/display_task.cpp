@@ -214,6 +214,10 @@ void displayTask(void* param) {
         DeviceState state = gState;
         xSemaphoreGive(gStateMutex);
 
+        // TagDetecting is the one state with no screen of its own, deliberately:
+        // it returns BEFORE cls(), so the idle screen stays up through the
+        // debounce instead of flashing. Every other state must have a case in
+        // the switch below, or the default there will name it on screen.
         if (state == DeviceState::TagDetecting) {
             prevState = state;
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -382,6 +386,14 @@ void displayTask(void* param) {
                 pixelColor = pixel.Color(0, 50, 50);
                 break;
 
+            case DeviceState::ValidTagFound:
+                title("Tag read", TFT_CYAN);
+                row(2, snap.material_name[0] ? snap.material_name : "Reading spool...",
+                    TFT_WHITE);
+                if (snap.brand_name[0]) row(3, snap.brand_name, TFT_DARKGREY);
+                pixelColor = pixel.Color(0, 40, 60);
+                break;
+
             case DeviceState::WeighingAndSync: {
                 title("Weighing...", tft.color565(0, 100, 220));
                 char wbuf[24];
@@ -416,7 +428,16 @@ void displayTask(void* param) {
                 pixelColor = pixel.Color(50, 50, 0);
                 break;
 
+            // A state with no case above used to fall through to a bare break,
+            // leaving the screen black after cls() — indistinguishable from a
+            // crashed display or dead backlight. ValidTagFound did exactly that,
+            // and it cost a debugging session. Draw the state name instead: an
+            // unhandled state is now self-identifying.
             default:
+                title("...", TFT_DARKGREY);
+                row(2, deviceStateName(state), TFT_WHITE);
+                row(3, "(no display for this state)", TFT_DARKGREY);
+                pixelColor = pixel.Color(30, 30, 30);
                 break;
             }
 
