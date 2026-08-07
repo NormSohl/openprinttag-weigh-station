@@ -64,10 +64,8 @@ static void handleCalRequests(NAU7802& nau) {
     if (g > 0.0f) { gCalSetGrams = 0.0f; doCalibrate(nau, g); }
 }
 
-static void handleSerialCommand(NAU7802& nau) {
-    if (!Serial.available()) return;
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
+// Dispatch one complete command line.
+static void dispatchCommand(const String& cmd, NAU7802& nau) {
     if (cmd.equalsIgnoreCase("ZERO")) {
         doZero(nau);
     } else if (cmd.startsWith("CAL ") || cmd.startsWith("cal ")) {
@@ -87,9 +85,40 @@ static void handleSerialCommand(NAU7802& nau) {
         if (k.equalsIgnoreCase("none") || k.equalsIgnoreCase("clear")) k = "";
         apiKeySet(k.c_str());
         Serial.printf("[api] key %s\n", k.length() ? "set" : "cleared (endpoints now open)");
-    } else if (!storeSerialCommand(cmd)) {
-        // Not a scale or store command — try the config catalog harness.
-        cfgSerialCommand(cmd);
+    } else if (!storeSerialCommand(cmd) && !cfgSerialCommand(cmd)) {
+        // Nothing claimed it. Say so — a silently ignored command is
+        // indistinguishable from a broken device, and a mistyped or truncated
+        // line used to just vanish.
+        Serial.printf("[cmd] unknown: \"%s\"\n", cmd.c_str());
+    }
+}
+
+// Accumulate serial input a character at a time and dispatch on newline.
+//
+// NOT readStringUntil('\n'): that returns whatever it has after a 1 second
+// timeout, and PlatformIO's monitor transmits each keystroke as it is typed
+// rather than buffering the line. Any pause longer than a second while typing
+// therefore delivered a partial command and turned the remainder into a second,
+// bogus one — "SEED 20 200" arriving as "SEED" (which seeded nothing) followed
+// by "20 200" (which matched nothing and was silently dropped).
+//
+// Buffering here removes the timing dependency entirely: a line is a line,
+// however slowly it was typed.
+static void handleSerialCommand(NAU7802& nau) {
+    static String buf;
+    while (Serial.available()) {
+        const char c = (char)Serial.read();
+        if (c == '\r') continue;                 // CRLF terminals
+        if (c == '\n') {
+            String cmd = buf;
+            buf = "";
+            cmd.trim();
+            if (cmd.length()) dispatchCommand(cmd, nau);
+            continue;
+        }
+        // Cap the buffer so a stuck sender or binary noise can't grow it without
+        // bound on a device with no spare heap.
+        if (buf.length() < 160) buf += c;
     }
 }
 
