@@ -66,9 +66,15 @@ void setup() {
         pinMode(pin, INPUT_PULLDOWN); delay(5);
         const int dn = digitalRead(pin);
         pinMode(pin, INPUT);
+        // NB: "held LOW" does NOT prove the chip is alive. An UNPOWERED chip
+        // clamps its I/O pins toward ground through its ESD protection diodes
+        // and reads exactly the same way. If several independent pins all read
+        // held-LOW — especially a shared bus line like MISO, which should float
+        // when nothing is selected — the likeliest explanation is no VDD at the
+        // module, not a chip that is present and idle.
         const char* verdict = (up && !dn) ? "FLOATING (nothing driving it)"
-                            : (!up && !dn) ? "driven LOW  (chip present)"
-                            : (up && dn)   ? "driven HIGH (chip present)"
+                            : (!up && !dn) ? "held LOW  (driven, or UNPOWERED chip clamping)"
+                            : (up && dn)   ? "held HIGH (actively driven)"
                                            : "inconsistent";
         Serial.printf("  %-4s GPIO %2d: pullup=%d pulldown=%d -> %s\n",
                       name, pin, up, dn, verdict);
@@ -77,8 +83,11 @@ void setup() {
     Serial.println("pin continuity probe (internal pull-up vs pull-down):");
     pinProbe("BUSY", PN5180_BUSY);
     pinProbe("MISO", SPI_MISO);
-    Serial.println("  BUSY FLOATING => the PN5180 is unpowered or that wire is open;");
-    Serial.println("  BUSY driven   => the chip is alive, look at NSS/SCK/MOSI instead.");
+    Serial.println("  BUSY floating              => that wire is open.");
+    Serial.println("  BUSY + MISO both held LOW  => almost certainly NO POWER at the");
+    Serial.println("     module: an unpowered chip clamps its pins low through its ESD");
+    Serial.println("     diodes, and MISO in particular should float when idle.");
+    Serial.println("     Measure 3.3 V at the module's own 3.3V pad before anything else.");
     Serial.flush();
 
     // ── Hang-proof liveness probe ─────────────────────────────────────────────
