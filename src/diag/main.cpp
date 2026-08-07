@@ -129,6 +129,39 @@ void setup() {
     nfc.begin();
     Serial.println("nfc.begin() ok");
 
+    // ── Talk to the chip WITHOUT resetting it first ───────────────────────────
+    // BUSY probes as "driven LOW" = the chip is powered and idling normally, yet
+    // pulsing RST produces no BUSY movement at all. A live chip must react to
+    // reset, so the reset pulse isn't reaching it — and PN5180::reset() then
+    // waits forever for a reboot that never happens, which is the only reason
+    // everything downstream fails.
+    //
+    // If the chip answers here, it was never broken: RST is simply not
+    // connected (or is on the wrong module pin), and that single wire is the
+    // whole bug. Safe to try because the chip is idle — BUSY is already low, so
+    // the library's BUSY waits should pass straight through.
+    Serial.println("reading version registers WITHOUT a reset…");
+    Serial.flush();
+    {
+        uint8_t p[2] = {0xFF, 0xFF}, f[2] = {0xFF, 0xFF}, e[2] = {0xFF, 0xFF};
+        nfc.readEEprom(PRODUCT_VERSION,  p, 2);
+        nfc.readEEprom(FIRMWARE_VERSION, f, 2);
+        nfc.readEEprom(EEPROM_VERSION,   e, 2);
+        Serial.printf("  product %d.%d  firmware %d.%d  eeprom %d.%d\n",
+                      p[1], p[0], f[1], f[0], e[1], e[0]);
+        const bool dead = (p[0] == 0xFF && p[1] == 0xFF) ||
+                          (p[0] == 0x00 && p[1] == 0x00);
+        if (dead) {
+            Serial.println("  no answer -> SPI itself isn't reaching the chip:");
+            Serial.printf("     check NSS=%d, and SCK=%d / MOSI=%d at the module end\n",
+                          PN5180_NSS, SPI_SCK, SPI_MOSI);
+        } else {
+            Serial.println("  *** CHIP ANSWERS — it works. The fault is the RST wire. ***");
+            Serial.printf("     check GPIO %d -> the module's RST pin\n", PN5180_RESET);
+        }
+    }
+    Serial.flush();
+
     // Sample BUSY across the reset pulse. A chip that is alive toggles BUSY;
     // a flat line means nothing is driving the pin.
     Serial.println("nfc.reset()…  <-- if this is the last line, the chip is silent");
