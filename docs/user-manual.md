@@ -155,6 +155,7 @@ still work as a fallback.)
 - **Inventory** — remaining filament by material; the spool currently on the scale.
 - **Spools** — the full list; click a spool for its weigh history + a remaining-over-time sparkline (with CSV export).
 - **Onboard** — fill in details for a new/blank spool.
+- **Usage** — how much filament the lab actually consumes, per material and per month; CSV download.
 - **Reorder** — standard-stock items at or below threshold; download a CSV to place the order.
 - **Config** — edit the vendor/material/color/spool-profile/stock-item tables.
 - **Backup** — download the event log; restore from an uploaded backup.
@@ -163,8 +164,11 @@ still work as a fallback.)
 ### Changing the WiFi network
 
 **Option A — web (device currently connected):** browse to
-`http://weighstation.local/reset`. The device reboots and opens the
-`WeighStation-Setup` AP; connect and reconfigure as in initial setup.
+`http://weighstation.local/reset` and press **Reset WiFi**. The device reboots
+and opens the `WeighStation-Setup` AP; connect and reconfigure as in initial
+setup. (Visiting the page does nothing on its own — the button is what triggers
+it, so a stray link can't wipe the network config. If an API key is set, you'll
+be asked for it.)
 
 **Option B — power cycle (device unreachable):** power-cycle it. If stored
 credentials fail, the captive portal opens for **2 minutes** — connect within
@@ -176,9 +180,102 @@ clears WiFi credentials.)
 
 ### Recalibrating / backups
 
-Recalibrate any time via the **Calibrate** page. Take periodic **Backup**
-downloads (and, once the SD card is wired, automatic snapshots) so history
-survives a device swap.
+Recalibrate any time via the **Calibrate** page.
+
+**Back up by downloading the event log** from the **Backup** page — that one
+file is the whole backup. It carries current spool state *and* the permanent
+consumption totals, and **Restore** puts it back. There is no SD card: the
+ESP32-S3 ran out of SPI peripherals, so the slot on the display board is not
+wired and nothing is saved to it.
+
+Download a copy whenever you'd mind losing the data — before a firmware
+update, before a device swap, or on a monthly reminder. It can be automated;
+see the API section below.
+
+**About storage limits.** The log is append-only and the device has about 2 MB
+for it. Long before that fills, the station compacts the log on its own while
+nothing is on the scale: each spool's history collapses to a single checkpoint
+and recent events are kept as-is. **Monthly consumption totals are kept forever
+and are never affected.** What compaction gives up is individual weigh readings
+older than the retained tail — so if you want the complete weigh-by-weigh
+record long-term, download the log periodically. The **Backup** page shows the
+current log size and warns you if writes ever start failing.
+
+---
+
+## For Administrators: HTTP API
+
+Other programs on the network can read from the station directly — a dashboard,
+a spreadsheet job, a monitoring script. Everything is plain HTTP on the same
+address as the web app. Full reference: [`api.md`](./api.md).
+
+### Reading data (no setup needed)
+
+Read-only endpoints are open, so nothing needs configuring first:
+
+| URL | What you get |
+|---|---|
+| `/usage.csv` | Consumption per month per vendor + material — a spreadsheet file |
+| `/export` | The complete event log (the same file the Backup page downloads) |
+| `/api/status` | Everything at a glance: what the station is doing, what's on the scale, WiFi, storage health |
+| `/api/spools` | Every spool and its remaining filament, as JSON |
+| `/api/usage` | The same data as `/usage.csv`, as JSON |
+
+Automated monthly consumption pull:
+
+```bash
+curl -sf "http://weighstation.local/usage.csv" -o "usage-$(date +%F).csv"
+```
+
+Nightly off-device backup, which is the same thing the Backup page gives you:
+
+```bash
+curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
+```
+
+> **Use the IP address, not `weighstation.local`, for anything scheduled.**
+> The `.local` name relies on mDNS, which is unreliable from some machines and
+> across network segments. Give the station a fixed address in your router's
+> DHCP reservations and use that.
+
+> **Poll gently** — every few seconds at most, one program at a time. The
+> station is a microcontroller and handles only a handful of connections.
+> `/api/status` exists so a dashboard can get everything in one request.
+
+### Protecting the write endpoints
+
+By default **anything on the network can change the station** — onboard spools,
+edit the config tables, recalibrate the scale, replace the event log, reset
+WiFi. On a trusted lab network that's usually fine and keeps things simple.
+
+To require a password for those actions, set an **API key** on the **Config**
+page (bottom of the page, *API access*). Reading stays open; only changes need
+the key. The web app will prompt you for it the first time you save something.
+
+Scripts pass it in whichever way suits them:
+
+```bash
+curl -X POST -H "X-API-Key: YOURKEY" http://weighstation.local/api/cal-zero
+curl -X POST -u :YOURKEY http://weighstation.local/api/cal-zero
+```
+
+**If you lose the key,** connect a USB cable, open a serial monitor at 115200
+baud, and type:
+
+```
+APIKEY none
+```
+
+That clears it and reopens the write endpoints. It is the only way back —
+changing the key from the web app requires the current one — so the USB port is
+worth keeping accessible. `APIKEY` on its own shows the current key.
+
+**What the key is and isn't.** It stops mistakes and casual poking: a script
+aimed at the wrong machine, someone exploring endpoints, a browser following a
+link to something destructive. It is **not** encryption — the key travels over
+the network in the clear, so anyone able to watch lab traffic could capture it.
+Treat the network itself as the real boundary, and don't put the station
+somewhere a guest network can reach it.
 
 ---
 
