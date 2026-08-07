@@ -482,12 +482,18 @@ bool storeBegin() {
     // second — on a fresh device that produced a steady stream of
     // "does not exist, no permits for creation" errors that look like a fault
     // and aren't. An empty log replays to an empty index, which is correct.
-    if (!LittleFS.exists(LOG_PATH)) {
-        File f = LittleFS.open(LOG_PATH, "w");
-        if (f) f.close();
-    }
+    //
+    // Opened "a" rather than guarded by exists(): append creates the file when
+    // it is missing and writes nothing when it is not, and it never takes the
+    // read path. exists() falls back to open(...,"r") internally, so guarding
+    // with it logged the very error it was meant to prevent.
+    { File f = LittleFS.open(LOG_PATH, "a"); if (f) f.close(); }
+
+    // Read-WRITE, deliberately. Opening a namespace read-only before it exists
+    // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
+    // creates it silently and costs one write, once.
     Preferences p;
-    p.begin("store", true);
+    p.begin("store", false);
     sNextId = p.getUInt("counter", 1);
     p.end();
     storeRebuildIndices();

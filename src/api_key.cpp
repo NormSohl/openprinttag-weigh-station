@@ -6,8 +6,11 @@
 static String sKey;
 
 void apiKeyBegin() {
+    // Read-write so a fresh device creates the namespace quietly. Read-only
+    // open of a namespace that does not exist yet logs an ESP_LOGE at boot,
+    // which reads as a fault on an otherwise clean log.
     Preferences p;
-    p.begin("api", true);
+    p.begin("api", false);
     sKey = p.getString("key", "");
     p.end();
 }

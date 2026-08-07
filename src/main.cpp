@@ -129,6 +129,13 @@ void setup() {
     // Display first, on this task, while nothing else can touch the SPI bus.
     bootMark("display init (TFT + NeoPixel + buzzer)");
     displayBegin();
+    // TFT_eSPI asks the HAL for "no MISO" (TFT_MISO is -1 because the ILI9488's
+    // SDO never tri-states), and the S3 HAL has no default MISO pin for HSPI to
+    // fall back on, so it logs an error and returns — which is exactly what we
+    // want it to do. Say so, because an unexplained [E] in a boot log sends the
+    // next person debugging in the wrong direction.
+    Serial.println("[display] the 'HSPI Does not have default pins' error above "
+                   "is expected — the display is write-only by design");
     bootMark("display ok");
 
     // Core 1: time-sensitive hardware polling
