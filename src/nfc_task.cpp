@@ -405,45 +405,77 @@ void nfcTask(void* param) {
                           (unsigned)numBlocks, (unsigned)blockSize,
                           (unsigned)numBlocks * blockSize);
 
-            size_t payloadOff = optBuildBlankTag(numBlocks, blockSize,
-                                                 initBuf, sizeof(initBuf), &initMeta);
-            if (payloadOff == SIZE_MAX) {
-                Serial.printf("[nfc] optBuildBlankTag REFUSED this geometry "
-                              "(%u blocks x %u B, buffer %u B). Nothing was written "
-                              "to the tag.\n",
-                              (unsigned)numBlocks, (unsigned)blockSize,
-                              (unsigned)sizeof(initBuf));
-                setState(DeviceState::TagReadError);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
+            // Some tags refuse a write to their FINAL block while accepting every
+            // other one and reading that block back fine. Observed on the ICODE
+            // SLIX2 tags in use here: blocks 0..78 program, block 79 returns 0x0F
+            // on all three attempts, every time. Root cause unconfirmed — 0x0F is
+            // ISO15693's generic error and NXP does not document the last block as
+            // special — so rather than hardcode a rule from one part, adapt: if the
+            // ONLY block that failed is the last one, rebuild the layout one block
+            // shorter and try again.
+            //
+            // Costs one block (4 bytes) on tags that need it, nothing on tags that
+            // do not, and keeps working if a future tag has a different quirk.
+            uint8_t  usable    = numBlocks;
+            size_t   payloadOff = SIZE_MAX;
+            bool     writeOk   = false;
 
-            const uint32_t t0 = millis();
-            bool writeOk = true;
-            for (uint8_t b = 0; b < numBlocks; b++) {
-                ISO15693ErrorCode rc = writeBlockRetry(nfc, uid, b,
-                                                       initBuf + b * blockSize, blockSize);
-                if (rc != ISO15693_EC_OK) {
-                    Serial.printf("[nfc] format FAILED at block %u of %u after %d "
-                                  "attempts: rc=%d %s\n",
-                                  (unsigned)b, (unsigned)numBlocks, TAG_WRITE_RETRIES,
-                                  (int)rc, isoErrName(rc));
-                    // Block 0 failing means it never programmed anything; a later
-                    // block means the tag is now half-written and must be
-                    // re-formatted before use. Worth knowing which.
-                    if (b == 0)
-                        Serial.println("[nfc]   nothing was written — tag is untouched.");
-                    else
-                        Serial.printf("[nfc]   blocks 0..%u were written — the tag is "
-                                      "PARTIALLY formatted and needs another pass.\n",
-                                      (unsigned)(b - 1));
-                    writeOk = false;
+            for (int pass = 0; pass < 2 && !writeOk; pass++) {
+                payloadOff = optBuildBlankTag(usable, blockSize,
+                                              initBuf, sizeof(initBuf), &initMeta);
+                if (payloadOff == SIZE_MAX) {
+                    Serial.printf("[nfc] optBuildBlankTag REFUSED this geometry "
+                                  "(%u blocks x %u B, buffer %u B). Nothing was "
+                                  "written to the tag.\n",
+                                  (unsigned)usable, (unsigned)blockSize,
+                                  (unsigned)sizeof(initBuf));
                     break;
                 }
+
+                const uint32_t t0 = millis();
+                uint8_t           failedAt = 0;
+                ISO15693ErrorCode failRc   = ISO15693_EC_OK;
+                writeOk = true;
+                for (uint8_t b = 0; b < usable; b++) {
+                    ISO15693ErrorCode rc = writeBlockRetry(nfc, uid, b,
+                                                           initBuf + b * blockSize, blockSize);
+                    if (rc != ISO15693_EC_OK) {
+                        writeOk = false; failedAt = b; failRc = rc;
+                        break;
+                    }
+                }
+
+                if (writeOk) {
+                    Serial.printf("[nfc] format ok: %u blocks in %u ms%s\n",
+                                  (unsigned)usable, (unsigned)(millis() - t0),
+                                  usable == numBlocks ? ""
+                                                      : " (last block reserved)");
+                    break;
+                }
+
+                // Only the final block refused, and we have room to give one up.
+                if (pass == 0 && failedAt == (uint8_t)(usable - 1) && usable > 2) {
+                    Serial.printf("[nfc] only the final block (%u) refused: rc=%d %s — "
+                                  "retrying with %u blocks\n",
+                                  (unsigned)failedAt, (int)failRc, isoErrName(failRc),
+                                  (unsigned)(usable - 1));
+                    usable--;
+                    continue;
+                }
+
+                Serial.printf("[nfc] format FAILED at block %u of %u after %d "
+                              "attempts: rc=%d %s\n",
+                              (unsigned)failedAt, (unsigned)usable, TAG_WRITE_RETRIES,
+                              (int)failRc, isoErrName(failRc));
+                if (failedAt == 0)
+                    Serial.println("[nfc]   nothing was written — tag is untouched.");
+                else
+                    Serial.printf("[nfc]   blocks 0..%u were written — the tag is "
+                                  "PARTIALLY formatted and needs another pass.\n",
+                                  (unsigned)(failedAt - 1));
+                break;
             }
-            if (writeOk)
-                Serial.printf("[nfc] format ok: %u blocks in %u ms\n",
-                              (unsigned)numBlocks, (unsigned)(millis() - t0));
+
             if (!writeOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -452,8 +484,11 @@ void nfcTask(void* param) {
 
             // Mirror the written bytes into the task-local raw buffer so subsequent
             // aux/main writes via writeSection() use the correct offsets.
-            memcpy(sRawBuf, initBuf, (size_t)numBlocks * blockSize);
-            sRawLen        = (size_t)numBlocks * blockSize;
+            // `usable`, not numBlocks: if the final block was reserved, the
+            // layout and every subsequent writeSection() offset are based on the
+            // shorter tag, and sRawLen is what bounds those writes.
+            memcpy(sRawBuf, initBuf, (size_t)usable * blockSize);
+            sRawLen        = (size_t)usable * blockSize;
             sPayloadOffset = payloadOff;
 
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
