@@ -416,7 +416,17 @@ void nfcTask(void* param) {
             //
             // Costs one block (4 bytes) on tags that need it, nothing on tags that
             // do not, and keeps working if a future tag has a different quirk.
-            uint8_t  usable    = numBlocks;
+            // Once a tag has refused its final block, assume the rest of the
+            // batch will too. Without this every tag pays for the discovery
+            // twice — ~4.5 s writing 80 blocks, failing, then ~4.1 s writing 79
+            // — and a 8.6 s "Registering..." screen is long enough that someone
+            // lifts the spool early and leaves the tag half-written.
+            //
+            // Per boot, not persisted: a different tag type in the drawer should
+            // get its full memory, and a power cycle re-tests.
+            static bool sLastBlockRefused = false;
+            uint8_t  usable    = (sLastBlockRefused && numBlocks > 2)
+                                     ? (uint8_t)(numBlocks - 1) : numBlocks;
             size_t   payloadOff = SIZE_MAX;
             bool     writeOk   = false;
 
@@ -448,13 +458,17 @@ void nfcTask(void* param) {
                 if (writeOk) {
                     Serial.printf("[nfc] format ok: %u blocks in %u ms%s\n",
                                   (unsigned)usable, (unsigned)(millis() - t0),
-                                  usable == numBlocks ? ""
-                                                      : " (last block reserved)");
+                                  usable == numBlocks
+                                      ? ""
+                                      : (sLastBlockRefused
+                                             ? " (last block reserved — known for this session)"
+                                             : " (last block reserved)"));
                     break;
                 }
 
                 // Only the final block refused, and we have room to give one up.
                 if (pass == 0 && failedAt == (uint8_t)(usable - 1) && usable > 2) {
+                    sLastBlockRefused = true;
                     Serial.printf("[nfc] only the final block (%u) refused: rc=%d %s — "
                                   "retrying with %u blocks\n",
                                   (unsigned)failedAt, (int)failRc, isoErrName(failRc),

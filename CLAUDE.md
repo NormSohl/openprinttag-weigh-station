@@ -131,10 +131,6 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 - **Primary: the web app Calibrate page** (Zero, then Set calibration with a known weight). scaleTask performs the NAU7802 work; the web handlers just set request flags.
 - **Fallback: serial commands** (115200 baud): `ZERO` (tare, nothing on the scale) and `CAL <grams>` (calibrate with a known weight currently on the scale).
 
-## Bring-up status
-
-**Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, and — as of the SPI handoff — **PN5180 tag reads with the display running concurrently** (ICODE UID read while the panel repaints).
-
 ## Gotchas paid for in blood
 
 - **`getSystemInfo(uid, blockSize, numBlocks)`** — blockSize is the SECOND argument. Passing them swapped reads an 80x4 tag as 4x80. The total size is identical either way, so nothing looks wrong until every write is rejected with `NO_CARD` for asking a 4-byte block to hold 80 bytes. `nfcTask` now validates the geometry (blockSize 1..32, total <= `sRawBuf`) on every detection.
@@ -145,6 +141,10 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 - **`gSpiMutex` is not recursive — never nest a bus take.** A task that takes it twice blocks against itself forever *while holding the bus*, so every other SPI user stops too. No panic, no backtrace: the station simply freezes. `writeSection()` -> `writeBlockRetry()` was exactly this. `spiBusTake*()` now waits in 5 s steps and names the caller, so a repeat says so on the wire instead of going silent.
 - **Some tags refuse a write to their final block.** Observed on the ICODE SLIX2 tags in use: blocks 0..78 program, block 79 returns 0x0F on every attempt, and reads of it work. Root cause unconfirmed. `nfcTask` does not hardcode a rule — if the *only* block that failed is the last one, it rebuilds the layout one block shorter and retries once, costing 4 bytes on tags that need it and nothing on tags that don't.
 - **A half-formatted tag does not read as blank.** `optIsBlank()` returns false once block 0 carries the 0xE1 NDEF magic and a Meta section exists, so a format that failed partway leaves a tag that is neither blank nor decodable, with no automatic way out. `TAGFORMAT` over serial is the recovery.
+
+## Bring-up status
+
+**Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, PN5180 reads concurrent with the display, and — as of the geometry fix — **blank-tag onboarding end to end**: detect, 5 s countdown, format (79 of 80 blocks; the last is refused, see the gotcha above), stub record created, back to idle.
 
 ## Pending (requires hardware)
 - End-to-end state machine validation: tag **write**-back (Auxiliary on weigh, Main on reconcile), blank-tag onboarding countdown + stub creation, foreign-tag adoption, local persistence across power cycles, and the ~1 Hz reconciliation loop.
