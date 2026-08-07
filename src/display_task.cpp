@@ -2,6 +2,7 @@
 #include <TFT_eSPI.h>
 #include <Adafruit_NeoPixel.h>
 #include "config.h"
+#include "spi_bus.h"
 #include "device_state.h"
 #include "opt_tag.h"
 
@@ -122,12 +123,11 @@ static void title(const char* text, uint16_t color) {
 // Hardware init for the display, NeoPixel and buzzer. Called from setup() on
 // the main task BEFORE any task is created — deliberately not from displayTask.
 //
-// TFT_eSPI and the PN5180 library both initialise the shared SPI bus
-// (nfc.begin() calls SPI.begin() internally). Doing that from two tasks on two
-// cores races: gSpiMutex only guards transactions, not bus setup, and the loser
-// ends up with an uninitialised bus — which panics TFT_eSPI with a null-pointer
-// StoreProhibited inside begin_tft_write(). Serialising init here removes the
-// race entirely: the display owns the bus first, then tasks start.
+// TFT_eSPI and the PN5180 library each initialise their own SPI peripheral,
+// and both grab the shared GPIO 11/12. Doing that from two tasks on two cores
+// races, so init is serialised here: the display sets itself up before any
+// task exists, and from then on spi_bus.cpp re-points the pins on every
+// handoff. tft.init() must run under spiBusTakeTft() like any other TFT work.
 void displayBegin() {
     pixel.begin();
     pixel.setBrightness(80);
@@ -135,11 +135,11 @@ void displayBegin() {
 
     BZ_ATTACH();
 
-    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    spiBusTakeTft();
     tft.init();
     tft.setRotation(TFT_ROTATION);
     tft.fillScreen(TFT_BLACK);
-    xSemaphoreGive(gSpiMutex);
+    spiBusGive();
 }
 
 void displayTask(void* param) {
@@ -165,9 +165,9 @@ void displayTask(void* param) {
         bool stateChanged = (state != prevState);
         if (stateChanged) {
             buzz(prevState, state);
-            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            spiBusTakeTft();
             cls();
-            xSemaphoreGive(gSpiMutex);
+            spiBusGive();
             rendered  = false;
             lastCount = -1;
             if (state == DeviceState::AwaitingFormatConfirm) {
@@ -183,9 +183,9 @@ void displayTask(void* param) {
         bool calNow = gScaleCalibrated;
         if (calNow != lastCal) {
             lastCal = calNow;
-            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            spiBusTakeTft();
             cls();
-            xSemaphoreGive(gSpiMutex);
+            spiBusGive();
             rendered = false;
         }
 
@@ -214,7 +214,7 @@ void displayTask(void* param) {
 
         // ── Static states: render once on entry ───────────────────────────────
         if (!rendered) {
-            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            spiBusTakeTft();
 
             switch (state) {
 
@@ -332,7 +332,7 @@ void displayTask(void* param) {
                 break;
             }
 
-            xSemaphoreGive(gSpiMutex);
+            spiBusGive();
             rendered = true;
             pixel.setPixelColor(0, pixelColor);
             pixel.show();
@@ -347,13 +347,13 @@ void displayTask(void* param) {
 
             if (countdown != lastCount) {
                 // Size-8 digit: 48x64px per char; center at x≈216 for single digit.
-                xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+                spiBusTakeTft();
                 tft.fillRect(0, 160, 480, 100, TFT_BLACK);
                 tft.setTextSize(8);
                 tft.setTextColor(tft.color565(220, 140, 0), TFT_BLACK);
                 tft.setCursor(216, 168);
                 tft.print(countdown);
-                xSemaphoreGive(gSpiMutex);
+                spiBusGive();
                 lastCount = countdown;
             }
 

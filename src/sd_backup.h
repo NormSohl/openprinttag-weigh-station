@@ -3,8 +3,9 @@
 #include <stdint.h>
 
 // SD-card backup/archive (redesign Phase 6). The microSD on the display board
-// sits on its own SPI host (SD_SCK/MOSI/MISO/CS in config.h), isolated from the
-// PN5180 + TFT bus, so nothing here touches gSpiMutex.
+// has its own pins (SD_SCK/MOSI/MISO/CS in config.h) but NOT its own SPI
+// peripheral — see the warning in sd_backup.cpp. Disabled until that is
+// resolved (SD_BACKUP_ENABLED in config.h).
 //
 // SD is pure backup: the event log on LittleFS stays the source of truth. A
 // snapshot is a fresh, CRC-verified copy promoted by rename, with the previous

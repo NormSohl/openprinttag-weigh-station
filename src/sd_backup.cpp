@@ -22,12 +22,16 @@ static const char* F_MANIFEST  = "/backup/manifest.json";
 static const char* IMPORT_TMP  = "/log/sd-restore.staging"; // LittleFS scratch for restore
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// Dedicated 2nd SPI host — nothing here touches gSpiMutex. On the ESP32-S3
-// Arduino core HSPI == bus 1 == the SPI3 peripheral (bus 0 == SPI2 carries the
-// shared PN5180 + TFT bus). That separation only holds because TFT_eSPI is
-// built WITHOUT USE_HSPI_PORT; defining it would put the display on SPI3 too
-// and this "dedicated" host would silently collide with the card.
-// See the tft_flags comment in platformio.ini.
+// WARNING — this host is NOT actually free. On the ESP32-S3 Arduino core HSPI
+// == bus 1 == the SPI3 peripheral, which is exactly the peripheral TFT_eSPI is
+// pinned to (see the tft_flags comment in platformio.ini). Bringing the card up
+// would attach GPIO 10/18 to SPI3 alongside the display's GPIO 11/12, and the
+// two would share one peripheral's clock/mode config with no arbitration.
+//
+// SD_BACKUP_ENABLED is 0 for this reason. Resolving it means either putting the
+// card on bus 0 with the PN5180 and extending spi_bus.cpp to a three-way
+// handoff, or dropping the display's SD in favour of the Thing Plus's own SDIO
+// slot. Not yet decided.
 static SPIClass          sSdSpi(HSPI);
 static SemaphoreHandle_t sMtx = nullptr;
 static SdStatus          sStatus;

@@ -3,6 +3,7 @@
 #include <PN5180ISO15693.h>
 #include <string.h>
 #include "config.h"
+#include "spi_bus.h"
 #include "device_state.h"
 #include "opt_tag.h"
 
@@ -89,11 +90,11 @@ static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
 static bool nfcSelfTest(PN5180ISO15693& nfc) {
     uint8_t prod[2] = {0xFF, 0xFF}, fw[2] = {0xFF, 0xFF}, eep[2] = {0xFF, 0xFF};
 
-    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    spiBusTakeNfc();
     nfc.readEEprom(PRODUCT_VERSION,  prod, 2);
     nfc.readEEprom(FIRMWARE_VERSION, fw,   2);
     nfc.readEEprom(EEPROM_VERSION,   eep,  2);
-    xSemaphoreGive(gSpiMutex);
+    spiBusGive();
 
     Serial.printf("[nfc] PN5180 product %d.%d  firmware %d.%d  eeprom %d.%d\n",
                   prod[1], prod[0], fw[1], fw[0], eep[1], eep[0]);
@@ -134,18 +135,34 @@ void nfcTask(void* param) {
                   digitalRead(PN5180_BUSY) ? "HIGH (suspect: unpowered/miswired)"
                                            : "LOW (normal idle)");
 
+    // These three MUST hold the bus. displayBegin() has already run and left
+    // GPIO 11/12 routed to the display's peripheral (SPI3); spiBusTakeNfc()
+    // points them back at the PN5180's (SPI2). Without it the reader never
+    // sees a clock edge and reset() spins forever. See spi_bus.h.
+    //
+    // Tradeoff: reset() waits on the chip with an unbounded loop, so a reader
+    // that never answers now holds the bus and stalls displayTask too. Before
+    // the handoff the display stayed alive because reset() ran unlocked — but
+    // it also ran without the pins, which is precisely why it hung. A dead
+    // reader has to be visible somewhere; the boot log names the call.
     Serial.println("[nfc] begin()…");
+    spiBusTakeNfc();
     nfc.begin();
+    spiBusGive();
     Serial.println("[nfc] begin() ok");
 
     Serial.println("[nfc] reset()… (spins forever if the chip never answers)");
+    spiBusTakeNfc();
     nfc.reset();
+    spiBusGive();
     Serial.println("[nfc] reset() ok");
 
     nfcSelfTest(nfc);   // logs whether the chip is alive before we poll for tags
 
     Serial.println("[nfc] setupRF()…");
+    spiBusTakeNfc();
     nfc.setupRF();
+    spiBusGive();
     Serial.println("[nfc] setupRF() ok — polling for tags");
 
     uint8_t uid[8]       = {};
@@ -161,13 +178,13 @@ void nfcTask(void* param) {
         // ── Poll for tag presence ─────────────────────────────────────────────
         uint8_t  detectedUid[8] = {};
         uint8_t  detectedNumBlocks, detectedBlockSize;
-        xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+        spiBusTakeNfc();
         bool tagPresent = (nfc.getInventory(detectedUid) == ISO15693_EC_OK);
         if (tagPresent) {
             tagPresent = (nfc.getSystemInfo(detectedUid, &detectedNumBlocks, &detectedBlockSize)
                           == ISO15693_EC_OK);
         }
-        xSemaphoreGive(gSpiMutex);
+        spiBusGive();
 
         // ── States where we're waiting for a tag ──────────────────────────────
         if (state == DeviceState::Idle || state == DeviceState::IdleNoWiFi) {
@@ -196,9 +213,9 @@ void nfcTask(void* param) {
             }
 
             // Tag confirmed — read all blocks and classify
-            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            spiBusTakeNfc();
             bool readOk = readAllBlocks(nfc, uid, numBlocks, blockSize);
-            xSemaphoreGive(gSpiMutex);
+            spiBusGive();
             if (!readOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -261,7 +278,7 @@ void nfcTask(void* param) {
                 continue;
             }
 
-            xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+            spiBusTakeNfc();
             bool writeOk = true;
             for (uint8_t b = 0; b < numBlocks; b++) {
                 if (nfc.writeSingleBlock(uid, b, initBuf + b * blockSize, blockSize)
@@ -270,7 +287,7 @@ void nfcTask(void* param) {
                     break;
                 }
             }
-            xSemaphoreGive(gSpiMutex);
+            spiBusGive();
             if (!writeOk) {
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -339,9 +356,9 @@ void nfcTask(void* param) {
             if (auxOffset > 0) {
                 size_t n = optEncodeAux(aux, cborBuf, sizeof(cborBuf));
                 if (n > 0) {
-                    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+                    spiBusTakeNfc();
                     writeSection(nfc, uid, blockSize, auxOffset, cborBuf, n);
-                    xSemaphoreGive(gSpiMutex);
+                    spiBusGive();
                 }
             }
         }
@@ -355,9 +372,9 @@ void nfcTask(void* param) {
             xSemaphoreGive(gTagMutex);
             size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
             if (n > 0) {
-                xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+                spiBusTakeNfc();
                 writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
-                xSemaphoreGive(gSpiMutex);
+                spiBusGive();
                 // Leave ReconcilingMainSection — syncTask's next poll will confirm
                 if (getState() == DeviceState::ReconcilingMainSection)
                     setState(DeviceState::Present);

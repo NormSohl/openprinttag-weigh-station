@@ -17,7 +17,8 @@
 #define I2C_SCL  9
 
 // ── 3.5" ILI9488 SPI TFT display ─────────────────────────────
-// Shares MOSI/SCK/MISO with PN5180 — gSpiMutex guards the bus.
+// Shares MOSI/SCK with the PN5180, on a DIFFERENT SPI peripheral — see
+// spi_bus.h. Take the bus via spiBusTakeTft(), never gSpiMutex directly.
 // TFT_CS/TFT_DC/TFT_RST are also passed to TFT_eSPI as -D flags (platformio.ini).
 #define TFT_CS   15
 #define TFT_DC   16
@@ -38,10 +39,15 @@
 // free header GPIOs on the Thing Plus ESP32-S3.
 //
 // Host allocation on the S3 (only two general-purpose SPI hosts exist):
-//   bus 0 (Arduino FSPI = SPI2 peripheral) — PN5180 + TFT, GPIO 11/12/13,
-//                                            shared, serialised by gSpiMutex
-//   bus 1 (Arduino HSPI = SPI3 peripheral) — microSD alone, GPIO 10/18/21/42
-// Three consumers, two hosts: this is the only allocation that fits.
+//   bus 0 (Arduino FSPI = SPI2 peripheral) — PN5180, GPIO 11/12/13
+//   bus 1 (Arduino HSPI = SPI3 peripheral) — TFT, GPIO 11/12 (forced by
+//                                            TFT_eSPI's S3 port)
+// Both hosts are spoken for, and the two share GPIO 11/12 — spi_bus.cpp
+// re-routes them per transaction.
+//
+// UNRESOLVED: that leaves no free host for the SD below. SPIClass(HSPI) is the
+// display's. Keep SD_BACKUP_ENABLED at 0 until this is settled — the card will
+// need to join the same handoff scheme on one of the two hosts.
 //
 // NOTE for the build: the Thing Plus has its OWN onboard microSD slot on the
 // SDIO bus (GPIO 33/34/38/39/40/47, detect 48) — those are NOT broken out. We
@@ -91,15 +97,16 @@
 // ── SD backup (Phase 6) ───────────────────────────────────────
 // Set to 0 to skip SD bring-up entirely.
 //
-// Historically this was dangerous: a FAILED SD.begin() (no card, or mis-wired)
-// tears down SPI state on its way out, and back when TFT_eSPI was built with
-// USE_HSPI_PORT the card and the display shared bus 1 — so a missing card
-// could leave the display's bus handle NULL and panic TFT_eSPI with a
-// StoreProhibited inside begin_tft_write().
+// Two reasons it stays off, and the second is the blocking one:
 //
-// That collision is gone: the display now shares bus 0 with the PN5180 and the
-// card has bus 1 to itself (see platformio.ini), so an SD teardown can only
-// affect the card. Still 0 until the card is validated on real hardware.
+//  1. A FAILED SD.begin() (no card, or mis-wired) tears down SPI state on its
+//     way out, which has been observed to leave a bus handle NULL — and a null
+//     handle is a StoreProhibited inside begin_tft_write(), i.e. a boot loop.
+//  2. SPIClass(HSPI) in sd_backup.cpp is the SAME peripheral (SPI3) TFT_eSPI is
+//     pinned to on the S3. The card does not have a host of its own, so (1) can
+//     take the display down with it.
+//
+// See the warning in sd_backup.cpp for the ways out.
 #define SD_BACKUP_ENABLED 0
 #define SD_SPI_FREQ_HZ        20000000  // SD SPI clock (20 MHz; drop to 10M if flaky)
 #define SD_HISTORY_KEEP             20  // dated snapshots retained under /backup/history

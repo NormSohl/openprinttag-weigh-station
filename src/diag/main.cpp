@@ -9,14 +9,19 @@
 //      permanently, so every PN5180 reply read back as 0x00.
 //      Fixed in hardware (SDO off the splice) and in config (TFT_MISO=-1).
 //
-//   2. TFT_eSPI was built with USE_HSPI_PORT, putting the display on its own
-//      SPIClass(HSPI) = bus 1 = SPI3, while the PN5180 library hardcodes the
-//      global `SPI` = bus 0 = SPI2. Both peripherals claimed GPIO 11/12, and
-//      spiAttachSCK() ends in pinMatrixOutAttach() — a write to the pin's
-//      single-valued func_out_sel register. Last attach wins, silently.
+//   2. The display sits on SPI3 and the PN5180 on SPI2, yet both drive GPIO
+//      11/12. spiAttachSCK() ends in pinMatrixOutAttach(), a write to the pin's
+//      single-valued func_out_sel register, so the last attach wins silently.
 //      displayBegin() runs after SPI.begin(), so the display took the pins and
-//      the PN5180 never saw a clock edge. Fixed by dropping USE_HSPI_PORT so
-//      TFT_eSPI binds the same global SPI object.
+//      the PN5180 never saw a clock edge.
+//
+//      Neither device can move. TFT_eSPI's S3 port resolves REG_SPI_BASE() to
+//      DR_REG_SPI3_BASE for every legal SPI_PORT value, so its register writes
+//      always hit SPI3 — building without USE_HSPI_PORT just makes the Arduino
+//      layer drive SPI2 while those writes still go to SPI3, which panics.
+//      The PN5180 library hardcodes the global `SPI` (SPI2). So the fix is to
+//      re-point the pins on every handoff, which is what claimNfc/claimTft
+//      below do — the same thing src/spi_bus.cpp does for the real firmware.
 //
 // A PN5180-only diag proved (1) — it read a tag UID with the display unlinked.
 // It could not test (2) at all, because it had no display.
@@ -27,8 +32,8 @@
 // (as displayBegin() does), then the PN5180, then both run concurrently: tag
 // polling on loop() with a display repaint on every pass.
 //
-//   both work            -> the host allocation is right; the real firmware
-//                           should behave identically.
+//   both work            -> the handoff is correct; the real firmware should
+//                           behave identically.
 //   display blank/frozen -> the TFT lost the pins. Bus config, not app code.
 //   NFC silent           -> the PN5180 lost the pins (or reset() hangs again).
 //   TFT panic in
@@ -39,6 +44,7 @@
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <esp32-hal-spi.h>
 #include <TFT_eSPI.h>
 #include <PN5180.h>
 #include <PN5180ISO15693.h>
@@ -49,11 +55,28 @@
 static PN5180ISO15693 nfc(PN5180_NSS, PN5180_BUSY, PN5180_RESET);
 static TFT_eSPI       tft;
 
+// Pin-ownership handoff, the single-threaded twin of src/spi_bus.cpp. No mutex
+// needed here — this sketch has one thread — but the routing is identical.
+static void claimNfc() {
+    spi_t* bus = SPI.bus();
+    if (!bus) return;
+    spiAttachSCK(bus, SPI_SCK);
+    spiAttachMOSI(bus, SPI_MOSI);
+    spiAttachMISO(bus, SPI_MISO);
+}
+static void claimTft() {
+    spi_t* bus = TFT_eSPI::getSPIinstance().bus();
+    if (!bus) return;
+    spiAttachSCK(bus, SPI_SCK);
+    spiAttachMOSI(bus, SPI_MOSI);
+}
+
 static uint32_t sTagCount = 0;
 static uint32_t sPollCount = 0;
 static char     sLastUid[24] = "(none yet)";
 
 static void drawScreen(const char* status, uint16_t colour) {
+    claimTft();
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
@@ -116,20 +139,24 @@ void setup() {
 
     Serial.println("nfc.begin()…");
     Serial.flush();
+    claimNfc();
     nfc.begin();
 
     Serial.println("nfc.reset()…  <-- if this is the last line, the reader is deaf");
     Serial.flush();
+    claimNfc();
     nfc.reset();
     Serial.println("nfc.reset() ok");
 
     uint8_t prod[2] = {}, fw[2] = {}, eep[2] = {};
+    claimNfc();
     nfc.readEEprom(PRODUCT_VERSION,  prod, 2);
     nfc.readEEprom(FIRMWARE_VERSION, fw,   2);
     nfc.readEEprom(EEPROM_VERSION,   eep,  2);
     Serial.printf("product %d.%d  firmware %d.%d  eeprom %d.%d\n",
                   prod[1], prod[0], fw[1], fw[0], eep[1], eep[0]);
 
+    claimNfc();
     nfc.setupRF();
     Serial.println("setupRF() ok — polling. Present a tag; watch the SCREEN too.");
     Serial.flush();
@@ -143,6 +170,7 @@ void loop() {
     // No mutex here on purpose: this sketch is single-threaded, so the two
     // drivers already interleave strictly. The real firmware runs them from
     // two tasks on two cores and needs gSpiMutex.
+    claimNfc();
     ISO15693ErrorCode rc = nfc.getInventory(uid);
     sPollCount++;
 

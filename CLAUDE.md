@@ -12,14 +12,18 @@ Self-contained NFC-based filament inventory system for Seattle Makers' 3D printi
 
 **Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 46). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (SparkFun Thing Plus ESP32-S3 default SPI — SCK 12 / MOSI 11 / MISO 13; GPIO 33–37 are not broken out on this board); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via -D build flags in `platformio.ini` (NOT a User_Setup.h — the flags must reach the library's own TUs). The display board's microSD is on a **dedicated second SPI host** (SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42), isolated from the shared bus — backup/archive only, and the Thing Plus's own onboard SD slot is left empty. See `hardware/netlist.md`.
 
-**SPI host allocation (load-bearing — see the `tft_flags` comment in `platformio.ini`).** The S3 has only two general-purpose SPI hosts, and there are three consumers:
+**SPI peripheral allocation (load-bearing — see `src/spi_bus.h` and the `tft_flags` comment in `platformio.ini`).** The S3 has two general-purpose SPI peripherals and neither device can be moved off its own:
 
-| Arduino bus | Peripheral | Owner | Pins |
+| Device | Peripheral | Why it can't move | Pins |
 |---|---|---|---|
-| 0 (`FSPI`) | SPI2 | PN5180 **+** TFT, serialised by `gSpiMutex` | 11/12/13 |
-| 1 (`HSPI`) | SPI3 | microSD alone | 10/18/21/42 |
+| TFT | SPI3 (`USE_HSPI_PORT`) | TFT_eSPI's S3 port defines `REG_SPI_BASE(i) (((i)>1) ? DR_REG_SPI3_BASE : DR_REG_SPI2_BASE)`, and `SPI_PORT` is only ever 2 or 3 — both `>1`. Its register writes always hit SPI3. Building without `USE_HSPI_PORT` drives SPI2 from the Arduino layer while still poking SPI3, which panics `StoreProhibited` in `begin_tft_write()`. | 11/12 |
+| PN5180 | SPI2 (global `SPI`) | ATrappmann's library hardcodes the global `SPI` object, which the core constructs as `SPIClass(FSPI)` = bus 0 = SPI2. | 11/12/13 |
 
-TFT_eSPI is built with **neither `USE_HSPI_PORT` nor `USE_FSPI_PORT`**, which makes it bind the *global* `SPI` object — the same one ATrappmann's PN5180 library hardcodes. That is what puts them on one host. Defining `USE_HSPI_PORT` gives the display its own `SPIClass(HSPI)`; both peripherals then claim GPIO 11/12, and `spiAttachSCK()` ends in `pinMatrixOutAttach()`, a write to the pin's single-valued `func_out_sel` register — so the last attach silently wins and the other device goes deaf. It also collides with the SD's "dedicated" host. Two further consequences: `main.cpp` must call `SPI.begin()` **before** `displayBegin()` (TFT_eSPI's own `spi.begin()` early-returns once the handle exists), and `TFT_MISO` is **-1** because the ILI9488's SDO never tri-states.
+Both therefore drive GPIO 11 and 12. The S3 routes a pin's *output* from exactly one peripheral (`func_out_sel` holds a single signal index), and `spiAttachSCK()`/`spiAttachMOSI()` end in `pinMatrixOutAttach()`, which overwrites it — **last attach silently wins and the other device goes deaf.** That is why `nfcTask` once hung forever in `PN5180::reset()`.
+
+`src/spi_bus.cpp` fixes this by making pin ownership part of the lock: **always take the bus via `spiBusTakeNfc()` / `spiBusTakeTft()` / `spiBusGive()`, never `gSpiMutex` directly** — a raw take gets the lock but not the pins. MISO needs no handoff (input routing is per-signal), and `TFT_MISO` is **-1** because the ILI9488's SDO never tri-states — its SDO must also be physically off the MISO splice.
+
+**The microSD has no peripheral left.** `SPIClass(HSPI)` in `sd_backup.cpp` is the display's SPI3. `SD_BACKUP_ENABLED` is 0 until this is resolved — either put the card on SPI2 and extend `spi_bus.cpp` to a three-way handoff, or use the Thing Plus's own SDIO slot instead.
 
 **Firmware stack:** PlatformIO + Arduino framework, FreeRTOS tasks for scale/NFC/sync/display, plus an async web app (ESPAsyncWebServer) started from syncTask. Local storage: `store.*` (event log + rebuildable indices on LittleFS, NVS spool-ID counter), `config_store.*` (onboarding catalog tables), `web_app.*` (the built-in UI). ATrappmann's PN5180-Library (`readSingleBlock` / `writeSingleBlock` / `getSystemInfo` cover both reading and writing ISO15693 tags). **Never call `lockICODESLIX2`** — tags must remain rewritable for the life of the spool.
 
