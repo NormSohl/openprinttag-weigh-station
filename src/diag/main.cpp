@@ -49,6 +49,38 @@ void setup() {
                   digitalRead(PN5180_BUSY) ? "HIGH" : "LOW (normal idle)");
     Serial.flush();
 
+    // ── Is the wire even connected? (software continuity test) ────────────────
+    // Read each pin twice, once with the ESP32's internal pull-up and once with
+    // its pull-down. A pin with nothing on the far end simply follows whichever
+    // resistor is enabled; a pin connected to a powered chip is held at the
+    // chip's level and ignores both. This distinguishes "open wire" from "chip
+    // present but idle low", which a plain digitalRead() cannot.
+    //
+    //   pullup=1 pulldown=0 -> FLOATING: no connection, or the far end is
+    //                         unpowered/high-impedance
+    //   pullup=0 pulldown=0 -> something is actively driving it LOW
+    //   pullup=1 pulldown=1 -> something is actively driving it HIGH
+    auto pinProbe = [](const char* name, int pin) {
+        pinMode(pin, INPUT_PULLUP);   delay(5);
+        const int up = digitalRead(pin);
+        pinMode(pin, INPUT_PULLDOWN); delay(5);
+        const int dn = digitalRead(pin);
+        pinMode(pin, INPUT);
+        const char* verdict = (up && !dn) ? "FLOATING (nothing driving it)"
+                            : (!up && !dn) ? "driven LOW  (chip present)"
+                            : (up && dn)   ? "driven HIGH (chip present)"
+                                           : "inconsistent";
+        Serial.printf("  %-4s GPIO %2d: pullup=%d pulldown=%d -> %s\n",
+                      name, pin, up, dn, verdict);
+    };
+
+    Serial.println("pin continuity probe (internal pull-up vs pull-down):");
+    pinProbe("BUSY", PN5180_BUSY);
+    pinProbe("MISO", SPI_MISO);
+    Serial.println("  BUSY FLOATING => the PN5180 is unpowered or that wire is open;");
+    Serial.println("  BUSY driven   => the chip is alive, look at NSS/SCK/MOSI instead.");
+    Serial.flush();
+
     // ── Hang-proof liveness probe ─────────────────────────────────────────────
     // Drive RST ourselves and watch BUSY. Per the PN5180 datasheet the chip
     // raises BUSY while it starts up after reset and drops it when ready, so a
