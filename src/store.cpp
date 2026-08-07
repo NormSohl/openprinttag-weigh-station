@@ -174,6 +174,46 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     return true;
 }
 
+// ── Buffered line reader ──────────────────────────────────────────────────────
+// File::readStringUntil('\n') costs one VFS call per BYTE — Stream::timedRead()
+// down through esp_vfs to LittleFS, for every character. Replaying 1583 log
+// lines that way took 6.4 s at boot, and it scales linearly: ~24 s at the
+// compaction threshold and nearly a minute on a full partition. Boot time is
+// not somewhere to spend that.
+//
+// Reading a block at a time and splitting lines in memory removes essentially
+// all of it. Every full-log pass — index rebuild, line count, weigh history,
+// compaction, import — goes through this.
+class LogReader {
+public:
+    explicit LogReader(File& f) : f_(f) {}
+
+    // Fills `out` with the next line (newline stripped). False at EOF.
+    bool next(String& out) {
+        out = "";
+        bool any = false;
+        for (;;) {
+            if (pos_ >= len_) {
+                if (!f_.available()) return any;
+                len_ = f_.read(buf_, sizeof(buf_));
+                pos_ = 0;
+                if (len_ == 0) return any;
+            }
+            while (pos_ < len_) {
+                const char c = (char)buf_[pos_++];
+                if (c == '\n') return true;
+                if (c != '\r') { out += c; any = true; }
+            }
+        }
+    }
+
+private:
+    File&   f_;
+    uint8_t buf_[512];
+    size_t  len_ = 0;
+    size_t  pos_ = 0;
+};
+
 // ── Index maintenance (helpers assume the caller holds the lock) ──────────────
 static int findByUuid_(const char* uuid) {
     auto it = sByUuid.find(uuid);
@@ -321,8 +361,9 @@ static bool rebuildIndices_() {
     if (!LittleFS.exists(LOG_PATH)) { sInvDirty = true; return true; }
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
-        while (f.available()) {
-            String line = f.readStringUntil('\n');
+        LogReader rd(f);
+        String line;
+        while (rd.next(line)) {
             line.trim();
             if (line.length() == 0) continue;
             StoreEvent e;
@@ -413,11 +454,9 @@ size_t storeLogLineCount() {
     File f = LittleFS.open(LOG_PATH, "r");
     if (!f) return 0;
     size_t n = 0;
-    while (f.available()) {
-        String l = f.readStringUntil('\n');
-        l.trim();
-        if (l.length()) n++;
-    }
+    LogReader rd(f);
+    String l;
+    while (rd.next(l)) { l.trim(); if (l.length()) n++; }
     f.close();
     return n;
 }
@@ -509,8 +548,9 @@ size_t storeForEachWeigh(uint32_t spool,
     File f = LittleFS.open(LOG_PATH, "r");
     if (!f) return 0;
     size_t n = 0;
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
+    LogReader rd(f);
+    String line;
+    while (rd.next(line)) {
         line.trim();
         if (line.length() == 0) continue;
         StoreEvent e;
@@ -534,8 +574,9 @@ bool storeImportLogFile(const char* stagingPath) {
         Lock lk;
         File f = LittleFS.open(stagingPath, "r");
         if (!f) return false;
-        while (f.available()) {
-            String line = f.readStringUntil('\n');
+        LogReader rd(f);
+        String line;
+        while (rd.next(line)) {
             line.trim();
             if (line.length() == 0) continue;
             StoreEvent e;
@@ -600,11 +641,9 @@ bool storeCompact() {
     {
         File f = LittleFS.open(LOG_PATH, "r");
         if (!f) return false;
-        while (f.available()) {
-            String l = f.readStringUntil('\n');
-            l.trim();
-            if (l.length()) total++;
-        }
+        LogReader rd(f);
+        String l;
+        while (rd.next(l)) { l.trim(); if (l.length()) total++; }
         f.close();
     }
     const size_t skip = (total > STORE_LOG_KEEP_EVENTS) ? total - STORE_LOG_KEEP_EVENTS : 0;
@@ -630,9 +669,10 @@ bool storeCompact() {
     {
         File in = LittleFS.open(LOG_PATH, "r");
         if (!in) return false;
+        LogReader rd(in);
+        String l;
         size_t seen = 0;
-        while (in.available() && seen < skip) {
-            String l = in.readStringUntil('\n');
+        while (seen < skip && rd.next(l)) {
             l.trim();
             if (l.length() == 0) continue;
             seen++;
@@ -689,9 +729,10 @@ bool storeCompact() {
         File in = LittleFS.open(LOG_PATH, "r");
         if (!in) ok = false;
         else {
+            LogReader rd(in);
+            String l;
             size_t seen = 0;
-            while (in.available()) {
-                String l = in.readStringUntil('\n');
+            while (rd.next(l)) {
                 l.trim();
                 if (l.length() == 0) continue;
                 if (seen++ < skip) continue;      // folded above
