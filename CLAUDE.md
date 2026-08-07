@@ -135,6 +135,12 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 
 **Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, and — as of the SPI handoff — **PN5180 tag reads with the display running concurrently** (ICODE UID read while the panel repaints).
 
+## Gotchas paid for in blood
+
+- **`getSystemInfo(uid, blockSize, numBlocks)`** — blockSize is the SECOND argument. Passing them swapped reads an 80x4 tag as 4x80. The total size is identical either way, so nothing looks wrong until every write is rejected with `NO_CARD` for asking a 4-byte block to hold 80 bytes. `nfcTask` now validates the geometry (blockSize 1..32, total <= `sRawBuf`) on every detection.
+- **Tasks that touch the store need real stack.** `storeAppendEvent` -> `FS::open` -> `lfs_dir_fetchmatch` -> `esp_flash_read` is deep, on top of String/JSON work. scaleTask at 3072 overflowed its canary on the first `SEED`; it is 8192 now. nfcTask 6144, syncTask 8192.
+- **A half-formatted tag does not read as blank.** `optIsBlank()` returns false once block 0 carries the 0xE1 NDEF magic and a Meta section exists, so a format that failed partway leaves a tag that is neither blank nor decodable, with no automatic way out. `TAGFORMAT` over serial is the recovery.
+
 ## Pending (requires hardware)
 - End-to-end state machine validation: tag **write**-back (Auxiliary on weigh, Main on reconcile), blank-tag onboarding countdown + stub creation, foreign-tag adoption, local persistence across power cycles, and the ~1 Hz reconciliation loop.
 - Known tradeoff: `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering now stalls `displayTask` too. Acceptable while the reader is reliable; if it ever isn't, the fix is a bounded wait in a vendored copy of the library.

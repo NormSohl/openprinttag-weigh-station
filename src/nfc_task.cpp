@@ -26,7 +26,8 @@ extern SemaphoreHandle_t    gSpiMutex;
 extern volatile bool        gTagForceFormat;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
-// Sized for the largest expected ICODE SLIX2 tag (40 blocks × 4 B = 160 B; 512 is comfortable headroom).
+// An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
+// larger ISO15693 parts. Geometry is validated against this size on detection.
 static uint8_t sRawBuf[512];
 static size_t  sRawLen        = 0;
 static size_t  sPayloadOffset = SIZE_MAX;  // byte offset of NDEF payload in sRawBuf
@@ -252,8 +253,28 @@ void nfcTask(void* param) {
         spiBusTakeNfc();
         bool tagPresent = (nfc.getInventory(detectedUid) == ISO15693_EC_OK);
         if (tagPresent) {
-            tagPresent = (nfc.getSystemInfo(detectedUid, &detectedNumBlocks, &detectedBlockSize)
+            // Argument order is (uid, blockSize, numBlocks) — blockSize SECOND.
+            // These were swapped, which read an 80-block x 4-byte tag as 4
+            // blocks of 80 bytes. Total size came out right (320 B), so nothing
+            // looked wrong; but every write then asked the tag to store 80 bytes
+            // in a 4-byte block, which is a malformed command it simply ignores.
+            // That is the "NO_CARD" every write was returning.
+            tagPresent = (nfc.getSystemInfo(detectedUid, &detectedBlockSize, &detectedNumBlocks)
                           == ISO15693_EC_OK);
+            // Per ISO15693 blockSize is 1..32 and numBlocks 1..256. Anything
+            // outside that, or more memory than we can buffer, means we have
+            // misread the geometry — refuse rather than issue writes against it.
+            if (tagPresent) {
+                const size_t bytes = (size_t)detectedNumBlocks * detectedBlockSize;
+                if (detectedBlockSize == 0 || detectedBlockSize > 32 ||
+                    detectedNumBlocks == 0 || bytes > sizeof(sRawBuf)) {
+                    Serial.printf("[nfc] implausible tag geometry: %u blocks x %u B "
+                                  "= %u B (buffer %u B) — ignoring this tag\n",
+                                  (unsigned)detectedNumBlocks, (unsigned)detectedBlockSize,
+                                  (unsigned)bytes, (unsigned)sizeof(sRawBuf));
+                    tagPresent = false;
+                }
+            }
         }
         spiBusGive();
 

@@ -148,7 +148,11 @@ void setup() {
     bootMark("starting nfcTask (PN5180)");
     xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
     bootMark("starting scaleTask (NAU7802)");
-    xTaskCreatePinnedToCore(scaleTask,   "scale",   3072, nullptr, 2, nullptr, 1);
+    // 8192, not 3072: the serial harness runs on this task, and SEED / COMPACT /
+    // DUMP call into the store. storeAppendEvent -> FS::open -> lfs_dir_fetchmatch
+    // -> esp_flash_read is a deep chain on top of the String and JSON work, and
+    // 3072 overflowed the stack canary on the first SEED.
+    xTaskCreatePinnedToCore(scaleTask,   "scale",   8192, nullptr, 2, nullptr, 1);
 
     // Core 0: I/O — co-located with the WiFi stack
     bootMark("starting displayTask (TFT)");
