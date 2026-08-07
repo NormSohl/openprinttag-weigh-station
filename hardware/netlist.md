@@ -50,7 +50,7 @@ Bridge **VCC→LED** on the display module so the backlight needs no separate le
 |---|---|---|
 | MOSI | GPIO 11 (`11/PICO`) | PN5180 MOSI · TFT SDI |
 | SCK  | GPIO 12 (`12/SCK`)  | PN5180 SCK · TFT SCK |
-| MISO | GPIO 13 (`13/POCI`) | PN5180 MISO · TFT SDO |
+| MISO | GPIO 13 (`13/POCI`) | PN5180 MISO **only** — *do NOT add TFT SDO, see Cautions* |
 | 3V3  | 3V3     | PN5180 3.3V · TFT VCC |
 | GND  | GND     | PN5180 GND · TFT GND · Buzzer − |
 
@@ -168,8 +168,16 @@ terminal — both already reliable, nothing to change.
   Wire **VUSB → PN5180 5V** and **3V3 → PN5180 3.3V**.
   *(An earlier revision of this file said "3.3 V only — do not connect to 5 V".
   That was wrong: it conflated the logic level with the module's power pins.)*
-- PN5180 + TFT **share MOSI/SCK/MISO**; only the CS lines differ (GPIO 5 vs 15).
-  A firmware mutex (`gSpiMutex`) keeps them off the bus simultaneously.
+- PN5180 + TFT share **MOSI and SCK only** — never MISO. A firmware mutex
+  (`gSpiMutex`) keeps them off the bus simultaneously.
+- **Leave the display's `SDO` pin unconnected.** The ILI9488's SDO does **not**
+  tri-state when its CS is high (documented TFT_eSPI limitation), so wiring it
+  to the shared MISO line makes the panel drive MISO permanently — every reply
+  from any other device on the bus reads back as 0x00. Symptom: the display
+  works fine while the PN5180 appears completely dead. We only write to the
+  display, so nothing is lost; `TFT_MISO` is set to -1 in `platformio.ini`.
+  *(An earlier revision of this file wired TFT SDO into the MISO splice. That
+  was wrong and is what kept the NFC reader from ever answering.)*
 - Load-cell orientation: force axis vertical, sealed/potted face **down** for
   positive output. Calibrate at 50–80 % of rated range via the web
   **Calibrate** page (or serial `ZERO` / `CAL <grams>`).
