@@ -27,6 +27,9 @@ extern volatile bool        gSpoolNeedsOnboarding;
 extern volatile bool        gScaleCalibrated;
 extern volatile bool        gCalZeroReq;
 extern volatile float       gCalSetGrams;
+// SoftAP SSID when the station fell back to its own AP; empty in station
+// mode. Reported by /api/status.
+extern char                 gApSsid[24];
 
 static AsyncWebServer sServer(80);
 

@@ -107,12 +107,6 @@ static String encodeBody(const StoreEvent& e) {
         snprintf(n, sizeof(n), "%.1f", e.usage_g);              b += "\"grams\":";  b += n; b += ",";
         snprintf(n, sizeof(n), "%u", (unsigned)e.usage_weighs); b += "\"weighs\":"; b += n; b += ",";
     }
-    if (e.ev == StoreEv::Usage) {
-        strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
-        strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
-        e.usage_g      = doc["grams"]  | 0.0f;
-        e.usage_weighs = doc["weighs"] | 0u;
-    }
     if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
         e.ev == StoreEv::Checkpoint) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
@@ -159,6 +153,12 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.gross_g     = doc["gross_g"]     | 0.0f;
         e.remaining_g = doc["remaining_g"] | 0.0f;
         e.used_g      = doc["used_g"]      | 0.0f;
+    }
+    if (e.ev == StoreEv::Usage) {
+        strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
+        strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
+        e.usage_g      = doc["grams"]  | 0.0f;
+        e.usage_weighs = doc["weighs"] | 0u;
     }
     if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
         e.ev == StoreEv::Checkpoint) {
