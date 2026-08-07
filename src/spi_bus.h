@@ -33,6 +33,12 @@
 //
 // Anything else that wants the bus must go through these too; a raw
 // xSemaphoreTake(gSpiMutex) will get the lock but not the pins.
+//
+// NOT RECURSIVE. Never call a helper that takes the bus from inside a
+// region that already holds it — the task blocks against itself forever,
+// still holding the bus, and every other SPI user stops with it. There is
+// no panic and no backtrace; the device just stops. writeSection() ->
+// writeBlockRetry() was exactly this, and it froze the whole station.
 
 void spiBusTakeNfc();   // take the bus, route SCK/MOSI to the PN5180 (SPI2)
 void spiBusTakeTft();   // take the bus, route SCK/MOSI to the display (SPI3)

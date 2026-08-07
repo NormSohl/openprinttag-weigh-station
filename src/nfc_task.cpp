@@ -547,9 +547,11 @@ void nfcTask(void* param) {
             if (auxOffset > 0) {
                 size_t n = optEncodeAux(aux, cborBuf, sizeof(cborBuf));
                 if (n > 0) {
-                    spiBusTakeNfc();
+                    // No spiBusTake here: writeSection -> writeBlockRetry takes and
+                    // releases the bus per block. gSpiMutex is not recursive, so
+                    // holding it across this call deadlocks the task against
+                    // itself and freezes displayTask with it.
                     writeSection(nfc, uid, blockSize, auxOffset, cborBuf, n);
-                    spiBusGive();
                 }
             }
         }
@@ -563,9 +565,11 @@ void nfcTask(void* param) {
             xSemaphoreGive(gTagMutex);
             size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
             if (n > 0) {
-                spiBusTakeNfc();
+                // No spiBusTake here: writeSection -> writeBlockRetry takes and
+                // releases the bus per block. gSpiMutex is not recursive, so
+                // holding it across this call deadlocks the task against itself
+                // and freezes displayTask with it.
                 writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
-                spiBusGive();
                 // Leave ReconcilingMainSection — syncTask's next poll will confirm
                 if (getState() == DeviceState::ReconcilingMainSection)
                     setState(DeviceState::Present);

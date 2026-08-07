@@ -17,6 +17,25 @@ extern SemaphoreHandle_t gSpiMutex;
 enum class BusOwner : uint8_t { None, Nfc, Tft };
 static BusOwner sOwner = BusOwner::None;
 
+// Take gSpiMutex, complaining if it takes unreasonably long.
+//
+// gSpiMutex is NOT recursive: taking it twice from one task blocks that task
+// against itself forever, and because it holds the bus while doing so every
+// other SPI user stops too. The device simply freezes — no panic, no backtrace,
+// nothing on the wire. That happened once, when writeSection() (called with the
+// bus held) grew an inner take.
+//
+// portMAX_DELAY makes that failure completely silent. Waiting in bounded steps
+// and naming the caller turns it into an obvious message, while still blocking
+// forever as a correct mutex must — we never proceed without the lock.
+static void takeOrComplain(const char* who) {
+    while (xSemaphoreTake(gSpiMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        Serial.printf("[spi] %s has waited 5 s for the bus — if this repeats, "
+                      "something is holding it (a nested take deadlocks: "
+                      "gSpiMutex is not recursive)\n", who);
+    }
+}
+
 // Re-point the shared output pins at `bus`. spiAttach* are no-ops on a null
 // handle, which is what we want before a peripheral has been started.
 static inline void routeOutputs(spi_t* bus) {
@@ -26,7 +45,7 @@ static inline void routeOutputs(spi_t* bus) {
 }
 
 void spiBusTakeNfc() {
-    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    takeOrComplain("nfc");
     if (sOwner == BusOwner::Nfc) return;
 
     // The PN5180 library talks through the global SPI object.
@@ -38,7 +57,7 @@ void spiBusTakeNfc() {
 }
 
 void spiBusTakeTft() {
-    xSemaphoreTake(gSpiMutex, portMAX_DELAY);
+    takeOrComplain("tft");
     if (sOwner == BusOwner::Tft) return;
 
     // Null until tft.init() has run — displayBegin() takes the bus around that
