@@ -36,6 +36,12 @@ SemaphoreHandle_t gTagMutex     = nullptr;
 volatile bool gWriteMainPending = false;
 volatile bool gWriteAuxPending  = false;
 
+// Set by the TAGFORMAT serial command, consumed by nfcTask: reformat whatever
+// tag is present regardless of how it classifies. Recovery for a tag left
+// half-written by a format that failed partway — those stop reading as blank
+// and stop decoding, so nothing else can get them back.
+volatile bool gTagForceFormat = false;
+
 // SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
 // Both tasks must take this mutex before any SPI transaction.
 SemaphoreHandle_t gSpiMutex = nullptr;

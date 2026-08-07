@@ -3,6 +3,8 @@
 #include <SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h>
 #include "config.h"
 #include "api_key.h"
+
+extern volatile bool gTagForceFormat;
 #include "device_state.h"
 #include "store.h"          // route store test commands (EV / DUMP / …) here too
 #include "config_store.h"   // …and CFG commands
@@ -63,6 +65,10 @@ static void handleSerialCommand(NAU7802& nau) {
         doZero(nau);
     } else if (cmd.startsWith("CAL ") || cmd.startsWith("cal ")) {
         doCalibrate(nau, cmd.substring(4).toFloat());
+    } else if (cmd.equalsIgnoreCase("TAGFORMAT")) {
+        gTagForceFormat = true;
+        Serial.println("[nfc] TAGFORMAT armed — place the tag (or leave it in "
+                       "place and lift/replace it) to reformat it.");
     } else if (cmd.equalsIgnoreCase("APIKEY")) {
         Serial.printf("[api] key is %s%s\n",
                       apiKeyIsSet() ? "set: " : "NOT set (write endpoints are open)",

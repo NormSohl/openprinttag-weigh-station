@@ -20,6 +20,10 @@ extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
 extern SemaphoreHandle_t    gSpiMutex;
+// Set by the TAGFORMAT serial command: force a reformat of whatever tag is
+// present, regardless of how it currently classifies. The escape hatch for a
+// tag left half-written by a failed format.
+extern volatile bool        gTagForceFormat;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // Sized for the largest expected ICODE SLIX2 tag (40 blocks × 4 B = 160 B; 512 is comfortable headroom).
@@ -40,20 +44,6 @@ static DeviceState getState() {
     DeviceState s = gState;
     xSemaphoreGive(gStateMutex);
     return s;
-}
-
-// Read every ISO15693 block into sRawBuf. Returns true on success.
-// Verify signatures against installed ATrappmann/PN5180-Library version if compile errors occur.
-static bool readAllBlocks(PN5180ISO15693& nfc, uint8_t* uid,
-                          uint8_t numBlocks, uint8_t blockSize) {
-    size_t total = (size_t)numBlocks * blockSize;
-    if (total > sizeof(sRawBuf)) total = sizeof(sRawBuf);
-    for (uint8_t b = 0; b < numBlocks && (size_t)b * blockSize < sizeof(sRawBuf); b++) {
-        if (nfc.readSingleBlock(uid, b, sRawBuf + b * blockSize, blockSize) != ISO15693_EC_OK)
-            return false;
-    }
-    sRawLen = total;
-    return true;
 }
 
 // Human-readable ISO15693 status. The distinction matters for diagnosis:
@@ -84,6 +74,24 @@ static const char* isoErrName(ISO15693ErrorCode rc) {
         case ISO15693_EC_CUSTOM_CMD_ERROR:        return "CUSTOM_CMD_ERROR";
     }
     return "?";
+}
+
+// Read every ISO15693 block into sRawBuf. Returns true on success.
+// Verify signatures against installed ATrappmann/PN5180-Library version if compile errors occur.
+static bool readAllBlocks(PN5180ISO15693& nfc, uint8_t* uid,
+                          uint8_t numBlocks, uint8_t blockSize) {
+    size_t total = (size_t)numBlocks * blockSize;
+    if (total > sizeof(sRawBuf)) total = sizeof(sRawBuf);
+    for (uint8_t b = 0; b < numBlocks && (size_t)b * blockSize < sizeof(sRawBuf); b++) {
+        ISO15693ErrorCode rc = nfc.readSingleBlock(uid, b, sRawBuf + b * blockSize, blockSize);
+        if (rc != ISO15693_EC_OK) {
+            Serial.printf("[nfc] read FAILED at block %u of %u: rc=%d %s\n",
+                          (unsigned)b, (unsigned)numBlocks, (int)rc, isoErrName(rc));
+            return false;
+        }
+    }
+    sRawLen = total;
+    return true;
 }
 
 // Write one block, retrying a few times before giving up.
@@ -280,8 +288,21 @@ void nfcTask(void* param) {
             bool readOk = readAllBlocks(nfc, uid, numBlocks, blockSize);
             spiBusGive();
             if (!readOk) {
+                Serial.printf("[nfc] could not read the tag (%u blocks x %u B). "
+                              "RF/coupling, or the tag moved mid-read.\n",
+                              (unsigned)numBlocks, (unsigned)blockSize);
                 setState(DeviceState::TagReadError);
                 vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            // Forced reformat wins over classification: the whole point is to
+            // recover a tag whose current contents we cannot make sense of.
+            if (gTagForceFormat) {
+                gTagForceFormat = false;
+                Serial.println("[nfc] TAGFORMAT: forcing a reformat of this tag");
+                setState(DeviceState::FormattingAndRegistering);
+                vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
 
@@ -292,6 +313,27 @@ void nfcTask(void* param) {
                 OptMain  main = {};
                 OptAuxiliary aux = {};
                 if (!optDecode(sRawBuf, sRawLen, &meta, &main, &aux)) {
+                    // Read cleanly but makes no sense. The likeliest cause by far
+                    // is a tag left half-written by a format that failed partway:
+                    // block 0 carries the 0xE1 NDEF magic and a Meta section, so
+                    // optIsBlank() no longer calls it blank, but Main/Aux were
+                    // never written — and there is no automatic way out of that.
+                    //
+                    // Deliberately NOT auto-reformatted. A tag we merely fail to
+                    // parse might be a legitimate foreign format, and wiping it
+                    // would be irreversible. Recovery is the explicit TAGFORMAT
+                    // serial command.
+                    Serial.printf("[nfc] tag read OK (%u B) but does not decode as OPT.\n",
+                                  (unsigned)sRawLen);
+                    Serial.print("[nfc]   first bytes:");
+                    for (size_t i = 0; i < 24 && i < sRawLen; i++)
+                        Serial.printf(" %02x", sRawBuf[i]);
+                    Serial.println();
+                    Serial.printf("[nfc]   %s\n",
+                                  (sRawLen && sRawBuf[0] == 0xE1)
+                                      ? "starts 0xE1 — NDEF-formatted, so probably a "
+                                        "PARTIAL format. Send TAGFORMAT to rewrite it."
+                                      : "no NDEF magic — foreign or corrupt content.");
                     setState(DeviceState::TagReadError);
                 } else {
                     sPayloadOffset = optPayloadOffset(sRawBuf, sRawLen);

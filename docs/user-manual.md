@@ -299,6 +299,25 @@ somewhere a guest network can reach it.
 - If the SSID list in the portal is empty, wait ~30 seconds for the scan and
   refresh the page.
 
+### Tag stuck on "Read error" after a failed registration
+
+If registering a new tag failed partway, the tag is left half-written: it is no
+longer blank, but it isn't valid OpenPrintTag data either, so the station shows
+**Read Error** every time and there is no way back through the normal flow.
+
+Recover it over USB serial (115200 baud):
+
+```
+TAGFORMAT
+```
+
+Then lift the spool and place it again. The station rewrites the tag from
+scratch and registers it normally.
+
+This is deliberately a manual command rather than something automatic — a tag
+the station can't read might be a legitimate tag in a format it doesn't
+understand, and reformatting is irreversible.
+
 ### NFC tag not reading ("Read error")
 
 - Reposition the spool so the tag is centered over the reader.
