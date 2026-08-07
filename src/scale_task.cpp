@@ -5,6 +5,11 @@
 #include "api_key.h"
 
 extern volatile bool gTagForceFormat;
+
+// False until the ADC answers. ZERO/CAL are still reachable over serial
+// while it is missing, and averaging 32 samples from a chip that is not
+// there just wastes time — refuse with a reason instead.
+static bool sNauPresent = false;
 #include "device_state.h"
 #include "store.h"          // route store test commands (EV / DUMP / …) here too
 #include "config_store.h"   // …and CFG commands
@@ -34,12 +39,14 @@ static void saveCalibration(NAU7802& nau) {
 
 // Shared zero/cal operations — driven by both the serial console and the web UI.
 static void doZero(NAU7802& nau) {
+    if (!sNauPresent) { Serial.println("[scale] no NAU7802 — command ignored"); return; }
     nau.calculateZeroOffset(32);
     saveCalibration(nau);
     Serial.printf("[scale] Zero offset set: %ld\n", (long)nau.getZeroOffset());
 }
 
 static bool doCalibrate(NAU7802& nau, float knownGrams) {
+    if (!sNauPresent) { Serial.println("[scale] no NAU7802 — command ignored"); return false; }
     if (knownGrams <= 0) return false;
     nau.calculateCalibrationFactor(knownGrams, 32);
     saveCalibration(nau);
@@ -88,13 +95,60 @@ static void handleSerialCommand(NAU7802& nau) {
 
 // ── Task ──────────────────────────────────────────────────────────────────────
 
+// Bring the ADC up and restore its calibration. Split out so it can be retried
+// if the chip is missing at boot and appears later (a nudged Qwiic cable).
+static bool scaleInit(NAU7802& nau);
+
 void scaleTask(void* param) {
     NAU7802 nau;
-    if (!nau.begin()) {
-        Serial.println("[scale] NAU7802 not found — task halted");
-        vTaskDelete(nullptr);
-        return;
+
+    // A missing load cell must NOT take this task down. The serial console is
+    // hosted here — ZERO, CAL, SEED, COMPACT, DUMP, APIKEY, TAGFORMAT all run
+    // on this task — so deleting it on a failed nau.begin() removed the only
+    // diagnostic channel the device has, precisely when something is wrong.
+    // Worse in the cabinet, where serial over USB is the last way in.
+    //
+    // Instead: stay alive, keep servicing commands, and retry the ADC. Weight
+    // stays 0 and the display's "not calibrated" banner is already the signal
+    // that readings are not to be trusted.
+    bool nauOk = scaleInit(nau);
+    if (!nauOk)
+        Serial.println("[scale] NAU7802 not found — weighing disabled, retrying every 5 s. "
+                       "Serial commands still work. Check the Qwiic cable.");
+
+    TickType_t lastRetry = xTaskGetTickCount();
+    while (!nauOk) {
+        handleSerialCommand(nau);
+        if (xTaskGetTickCount() - lastRetry >= pdMS_TO_TICKS(5000)) {
+            lastRetry = xTaskGetTickCount();
+            nauOk = scaleInit(nau);
+            if (nauOk) Serial.println("[scale] NAU7802 appeared — weighing enabled.");
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
+
+    for (;;) {
+        handleSerialCommand(nau);
+        handleCalRequests(nau);   // web-initiated zero/calibrate
+
+        // getWeight() blocks internally while averaging SCALE_SAMPLES readings.
+        // At 80 SPS each sample is ~12.5 ms; 10 samples ≈ 125 ms.  The
+        // Arduino delay(1) inside getAverage() cooperates with FreeRTOS, so
+        // nfcTask stays responsive while we average.
+        float w = nau.getWeight(false, SCALE_SAMPLES);
+        if (w < 0.0f) w = 0.0f;
+
+        xSemaphoreTake(gWeightMutex, portMAX_DELAY);
+        gWeightGrams = w;
+        xSemaphoreGive(gWeightMutex);
+
+        vTaskDelay(pdMS_TO_TICKS(10));  // brief yield between averaging cycles
+    }
+}
+
+static bool scaleInit(NAU7802& nau) {
+    if (!nau.begin()) { sNauPresent = false; return false; }
+    sNauPresent = true;
     nau.setSampleRate(NAU7802_SPS_80);
     nau.calibrateAFE();
 
@@ -120,22 +174,5 @@ void scaleTask(void* param) {
 
     Serial.printf("[scale] Ready. Zero=%ld Cal=%.4f\n",
                   (long)nau.getZeroOffset(), nau.getCalibrationFactor());
-
-    for (;;) {
-        handleSerialCommand(nau);
-        handleCalRequests(nau);   // web-initiated zero/calibrate
-
-        // getWeight() blocks internally while averaging SCALE_SAMPLES readings.
-        // At 80 SPS each sample is ~12.5 ms; 10 samples ≈ 125 ms.  The
-        // Arduino delay(1) inside getAverage() cooperates with FreeRTOS, so
-        // nfcTask stays responsive while we average.
-        float w = nau.getWeight(false, SCALE_SAMPLES);
-        if (w < 0.0f) w = 0.0f;
-
-        xSemaphoreTake(gWeightMutex, portMAX_DELAY);
-        gWeightGrams = w;
-        xSemaphoreGive(gWeightMutex);
-
-        vTaskDelay(pdMS_TO_TICKS(10));  // brief yield between averaging cycles
-    }
+    return true;
 }
