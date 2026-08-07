@@ -95,7 +95,11 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 - **Primary: the web app Calibrate page** (Zero, then Set calibration with a known weight). scaleTask performs the NAU7802 work; the web handlers just set request flags.
 - **Fallback: serial commands** (115200 baud): `ZERO` (tare, nothing on the scale) and `CAL <grams>` (calibrate with a known weight currently on the scale).
 
+## Bring-up status
+
+**Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, and — as of the SPI handoff — **PN5180 tag reads with the display running concurrently** (ICODE UID read while the panel repaints).
+
 ## Pending (requires hardware)
-- Scale calibration: run the Calibrate flow (web or serial) with a known reference weight once the load cell is wired and mounted.
-- End-to-end state machine validation: NFC read/write, blank tag onboarding flow, local persistence, reconciliation loop.
-- SD-card backup snapshots: implemented in `sd_backup.*` (dedicated 2nd SPI host on its own `SPIClass`; stage → CRC-verify → promote-by-rename → dated history + prune + card-full reclaim; manifest; restore via the validated import path; web controls on `/backup`; idle auto-snapshot). **Pending: on-card validation** with a real microSD once the board is up.
+- End-to-end state machine validation: tag **write**-back (Auxiliary on weigh, Main on reconcile), blank-tag onboarding countdown + stub creation, foreign-tag adoption, local persistence across power cycles, and the ~1 Hz reconciliation loop.
+- SD-card backup snapshots: implemented in `sd_backup.*` (stage → CRC-verify → promote-by-rename → dated history + prune + card-full reclaim; manifest; restore via the validated import path; web controls on `/backup`; idle auto-snapshot). **Blocked, not merely untested:** `SPIClass(HSPI)` is the display's SPI3 — the card has no peripheral of its own. Resolve by extending `spi_bus.cpp` to a three-way handoff on SPI2, or by using the Thing Plus's onboard SDIO slot. `SD_BACKUP_ENABLED` stays 0 until then.
+- Known tradeoff: `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering now stalls `displayTask` too. Acceptable while the reader is reliable; if it ever isn't, the fix is a bounded wait in a vendored copy of the library.
