@@ -263,7 +263,13 @@ void syncTask(void* param) {
                 // shown address from the SoftAP IP to the mDNS hostname.
                 if (state == DeviceState::IdleNoWiFi && WiFi.status() == WL_CONNECTED) {
                     gApSsid[0] = '\0';
-                    snprintf(gWebAddr, sizeof(gWebAddr), "%s.local", DEVICE_HOSTNAME);
+                    // gWebAddr always holds the NUMERIC address. The display
+                    // shows the .local hostname separately and the QR encodes
+                    // the IP, because mDNS is the part that isn't universal.
+                    // This used to write the hostname here and the IP at join
+                    // time, so which one you saw depended on whether WiFi was
+                    // up at boot — an accident, not a decision.
+                    WiFi.localIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
                     setState(DeviceState::Idle);
                 }
                 // Event-log compaction, only while nothing is on the scale:

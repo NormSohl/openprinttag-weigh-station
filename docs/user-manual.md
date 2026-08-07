@@ -32,6 +32,16 @@ The 3.5" screen shows one of these, depending on what's happening:
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
 
+> **Opening the web app from your phone.** The idle screen shows a **QR code** on
+> the right — scan it with the camera and it opens the app directly. The address
+> is also printed as text: `weighstation.local` for typing, with the numeric IP
+> underneath as a fallback. Use the numeric one if `.local` doesn't resolve,
+> which happens on some Android browsers and across some networks. (The QR
+> always encodes the numeric address, for exactly that reason.)
+>
+> *The screenshots above predate the QR code and show the older single-line
+> address.*
+
 ### Status light (NeoPixel)
 
 | Color | Meaning |
