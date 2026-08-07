@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h>
 #include "config.h"
+#include "api_key.h"
 #include "device_state.h"
 #include "store.h"          // route store test commands (EV / DUMP / …) here too
 #include "config_store.h"   // …and CFG commands
@@ -62,6 +63,17 @@ static void handleSerialCommand(NAU7802& nau) {
         doZero(nau);
     } else if (cmd.startsWith("CAL ") || cmd.startsWith("cal ")) {
         doCalibrate(nau, cmd.substring(4).toFloat());
+    } else if (cmd.equalsIgnoreCase("APIKEY")) {
+        Serial.printf("[api] key is %s%s\n",
+                      apiKeyIsSet() ? "set: " : "NOT set (write endpoints are open)",
+                      apiKeyIsSet() ? apiKeyGet().c_str() : "");
+    } else if (cmd.startsWith("APIKEY ") || cmd.startsWith("apikey ")) {
+        String k = cmd.substring(7); k.trim();
+        // "APIKEY none" clears it — a station in a cabinet must always have a
+        // way back to an open API if the secret is lost.
+        if (k.equalsIgnoreCase("none") || k.equalsIgnoreCase("clear")) k = "";
+        apiKeySet(k.c_str());
+        Serial.printf("[api] key %s\n", k.length() ? "set" : "cleared (endpoints now open)");
     } else if (!storeSerialCommand(cmd)) {
         // Not a scale or store command — try the config catalog harness.
         cfgSerialCommand(cmd);

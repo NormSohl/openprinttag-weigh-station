@@ -65,6 +65,11 @@
 // The /reset endpoint clears WiFi credentials and reboots into the portal.
 #define DEVICE_HOSTNAME  "weighstation"
 
+// Reported by GET /api/status so a fleet dashboard can tell builds apart.
+// NB: deliberately NOT called FIRMWARE_VERSION — the PN5180 library uses
+// that name for a chip EEPROM register address.
+#define FW_VERSION       "1.0.0"
+
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
 // ── Event-log capacity ────────────────────────────────────────

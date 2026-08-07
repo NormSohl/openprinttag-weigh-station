@@ -12,6 +12,7 @@
 #include "opt_tag.h"
 #include "store.h"
 #include "config_store.h"
+#include "api_key.h"
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -30,6 +31,26 @@ extern volatile float       gCalSetGrams;
 static AsyncWebServer sServer(80);
 
 // ── Small HTML helpers ────────────────────────────────────────────────────────
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+// Applied to state-changing endpoints only; GETs stay open so dashboards and
+// scrapers need no credentials. See api_key.h for the threat model and why an
+// unset key deliberately leaves everything open.
+//
+// Returns true if the request may proceed. On refusal it has already sent the
+// 401, so the caller must simply return.
+static bool authOk(AsyncWebServerRequest* req) {
+    if (!apiKeyIsSet()) return true;                 // not configured: open
+    const String key = apiKeyGet();
+    if (req->hasHeader("X-API-Key") && req->header("X-API-Key") == key) return true;
+    if (req->hasParam("key") && req->getParam("key")->value() == key)   return true;
+    // Basic auth accepts any username: the secret is the password. Lets browsers
+    // prompt natively and `curl -u :secret` work without a header.
+    if (req->authenticate("", key.c_str()) ||
+        req->authenticate("admin", key.c_str()))     return true;
+    req->requestAuthentication();                    // sends 401 + WWW-Authenticate
+    return false;
+}
 
 static String esc(const char* s) {
     String o;
@@ -370,6 +391,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
 
 // ── POST /api/tare — one load-cell reading ────────────────────────────────────
 static void handleApiTare(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
     xSemaphoreTake(gWeightMutex, portMAX_DELAY);
     float w = gWeightGrams;
     xSemaphoreGive(gWeightMutex);
@@ -378,6 +400,7 @@ static void handleApiTare(AsyncWebServerRequest* req) {
 
 // ── POST /api/onboard — apply the form, write the tag, log a reconcile ────────
 static void handleApiOnboard(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
     auto arg = [&](const char* k) -> String {
         const AsyncWebParameter* pp = req->getParam(k, true);
         return pp ? pp->value() : String();
@@ -558,11 +581,50 @@ static void handleConfig(AsyncWebServerRequest* req) {
     configTableForm(p, "Spool profiles", "spool-profiles");
     configTableForm(p, "Colors",         "colors");
     configTableForm(p, "Stock items",    "stock-items");
+
+    p += "<h3>API access</h3>";
+    if (apiKeyIsSet())
+        p += "<div class='card'><p>An API key <b>is set</b>. Endpoints that change "
+             "state require it; read-only endpoints stay open.</p>";
+    else
+        p += "<div class='card' style='border-color:#a70'><p><b class='ob'>No API key "
+             "set.</b> Anything on this network can onboard spools, edit these tables, "
+             "recalibrate the scale, replace the event log, or reset WiFi.</p>";
+    p += "<label>API key <span class='muted'>(blank clears it and reopens the API)</span></label>"
+         "<input id='ak' type='text' placeholder='a long random string' autocomplete='off'>"
+         "<div style='margin-top:8px'><button type='button' onclick='sk()'>Save key</button></div>"
+         "<p class='muted' id='akmsg'></p>"
+         "<p class='muted'>Send it as <code>X-API-Key: &lt;key&gt;</code>, as "
+         "<code>?key=&lt;key&gt;</code>, or as HTTP Basic auth "
+         "(<code>curl -u :&lt;key&gt;</code>). Lost it? Clear it over serial with "
+         "<code>APIKEY none</code>.</p></div>";
+    p += "<script>"
+         "function sk(){var k=document.getElementById('ak').value;"
+         "fetch('/api/apikey',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+         "body:'key='+encodeURIComponent(k)})"
+         ".then(r=>{document.getElementById('akmsg').textContent="
+         "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') \u2014 "
+         "the current key is required to change it.';});}"
+         "</script>";
+
     p += FOOT;
     req->send(200, "text/html", p);
 }
 
+// Set or clear the shared secret. Guarded by the CURRENT key, so the first one
+// can be set on an open device but rotating it needs the old one.
+static void handleApiKeySet(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    String k;
+    if (req->hasParam("key", true))      k = req->getParam("key", true)->value();
+    else if (req->hasParam("key"))       k = req->getParam("key")->value();
+    apiKeySet(k.c_str());
+    req->send(200, "application/json",
+              String("{\"ok\":true,\"required\":") + (apiKeyIsSet() ? "true" : "false") + "}");
+}
+
 static void handleApiConfigSave(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
     const AsyncWebParameter* pw = req->getParam("which", true);
     const AsyncWebParameter* pj = req->getParam("json", true);
     if (!pw || !pj) { req->send(400, "text/plain", "missing which/json"); return; }
@@ -581,6 +643,69 @@ static const char* IMPORT_STAGING = "/log/import.staging";
 // ── Consumption history ───────────────────────────────────────────────────────
 // Which filament the lab actually goes through, as opposed to what is on the
 // shelf. Sourced from UsageRow, which survives log compaction — see store.h.
+// ── Device status ─────────────────────────────────────────────────────────────
+// One poll for everything a dashboard wants: what the machine is doing, what is
+// on it, and whether it is healthy. Open (no key) — it is read-only.
+static void handleApiStatus(AsyncWebServerRequest* req) {
+    xSemaphoreTake(gStateMutex, portMAX_DELAY);
+    const DeviceState st = gState;
+    xSemaphoreGive(gStateMutex);
+
+    xSemaphoreTake(gWeightMutex, portMAX_DELAY);
+    const float w = gWeightGrams;
+    xSemaphoreGive(gWeightMutex);
+
+    const bool sta = (WiFi.status() == WL_CONNECTED);
+
+    String j = "{";
+    j += "\"firmware\":\"";  j += FW_VERSION;
+    j += "\",\"state\":\"";   j += deviceStateName(st);
+    j += "\",\"uptime_s\":";  j += String((unsigned)(millis() / 1000));
+    j += ",\"heap_free\":";   j += String((unsigned)ESP.getFreeHeap());
+
+    j += ",\"scale\":{\"weight_g\":"; j += String(w, 1);
+    j += ",\"calibrated\":";           j += gScaleCalibrated ? "true" : "false";
+    j += "}";
+
+    // Spool currently on the scale, if any. -1 when nothing is present.
+    const int cur = currentSpool();
+    j += ",\"spool\":";
+    if (cur > 0) {
+        SpoolRecord r;
+        if (storeGetSpool((uint32_t)cur, r)) {
+            char rgb[8];
+            snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
+            j += "{\"id\":";             j += String((unsigned)r.spool);
+            j += ",\"uuid\":\"";          j += r.uuid;
+            j += "\",\"vendor\":\"";      j += esc(r.vendor);
+            j += "\",\"material\":\"";    j += esc(r.material);
+            j += "\",\"color\":\"";       j += rgb;
+            j += "\",\"remaining_g\":";  j += String(r.remaining_g, 1);
+            j += ",\"needs_onboarding\":"; j += r.needs_ob ? "true" : "false";
+            j += "}";
+        } else j += "null";
+    } else j += "null";
+
+    j += ",\"wifi\":{\"mode\":\"";  j += sta ? "station" : (gApSsid[0] ? "ap" : "none");
+    j += "\",\"ssid\":\"";          j += sta ? esc(WiFi.SSID().c_str()) : esc(gApSsid);
+    j += "\",\"ip\":\"";            j += sta ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+    j += "\",\"rssi\":";            j += String(sta ? WiFi.RSSI() : 0);
+    j += "}";
+
+    j += ",\"storage\":{\"spools\":";  j += String((unsigned)storeSpoolCount());
+    j += ",\"log_bytes\":";             j += String((unsigned)storeLogBytes());
+    j += ",\"log_lines\":";             j += String((unsigned)storeLogLineCount());
+    j += ",\"usage_rows\":";            j += String((unsigned)storeUsageCount());
+    j += ",\"free_bytes\":";            j += String((unsigned)storeFreeBytes());
+    j += ",\"compact_due\":";           j += storeCompactNeeded() ? "true" : "false";
+    j += ",\"write_failed\":";          j += storeWriteFailed() ? "true" : "false";
+    j += "}";
+
+    j += ",\"auth\":{\"required\":"; j += apiKeyIsSet() ? "true" : "false";
+    j += "}}";
+    req->send(200, "application/json", j);
+}
+
 static void handleUsagePage(AsyncWebServerRequest* req) {
     String p = head("Usage", "/usage");
     p += "<h3>Filament consumed</h3>";
@@ -756,14 +881,23 @@ static void handleExport(AsyncWebServerRequest* req) {
 }
 
 // Streams the multipart upload to a staging file, chunk by chunk.
+// Checked once at the start of the upload and remembered for the rest of it:
+// authOk() sends a 401 when it fails, and re-running it per chunk would emit a
+// response for every chunk of the body.
+static bool sImportAuthed = false;
+
 static void handleImportUpload(AsyncWebServerRequest* req, const String& filename,
                                size_t index, uint8_t* data, size_t len, bool final) {
+    if (index == 0) sImportAuthed = !apiKeyIsSet() || authOk(req);
+    if (!sImportAuthed) return;      // discard the body; Done finishes the refusal
     File f = LittleFS.open(IMPORT_STAGING, index == 0 ? "w" : "a");
     if (f) { f.write(data, len); f.close(); }
 }
 
 // Called after the upload completes: validate + promote, or reject.
 static void handleImportDone(AsyncWebServerRequest* req) {
+    if (!sImportAuthed) { LittleFS.remove(IMPORT_STAGING); return; }  // 401 already sent
+    if (!authOk(req)) return;
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
@@ -790,11 +924,13 @@ static void handleApiScale(AsyncWebServerRequest* req) {
 }
 
 static void handleApiCalZero(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
     gCalZeroReq = true;                       // scaleTask tares on its next loop
     req->send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleApiCal(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
     const AsyncWebParameter* pp = req->getParam("grams", true);
     float g = pp ? pp->value().toFloat() : 0.0f;
     if (g <= 0.0f) { req->send(400, "text/plain", "need grams>0"); return; }
@@ -837,6 +973,28 @@ void webAppBegin() {
     if (MDNS.begin(DEVICE_HOSTNAME))
         MDNS.addService("http", "tcp", 80);
 
+    // ── CORS ──────────────────────────────────────────────────────────────
+    // Without these a browser-based dashboard served from any other origin
+    // cannot read the JSON endpoints at all. Non-browser clients (curl, Python,
+    // Home Assistant, Grafana) never cared — CORS is enforced by browsers only.
+    //
+    // "*" is right here: this is a read-mostly device on a lab LAN, and the
+    // wildcard deliberately makes browsers refuse to send cookies or Basic-auth
+    // credentials cross-origin. A cross-origin caller that needs to POST must
+    // present X-API-Key explicitly, which is exactly the intent.
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers",
+                                         "Content-Type, X-API-Key, Authorization");
+    DefaultHeaders::Instance().addHeader("Access-Control-Max-Age", "600");
+
+    // Sending X-API-Key makes a cross-origin POST "non-simple", so the browser
+    // fires a preflight OPTIONS first. Answer every path, unauthenticated — a
+    // preflight carries no body and performs no action.
+    sServer.on("/*", HTTP_OPTIONS, [](AsyncWebServerRequest* req) {
+        req->send(204);
+    });
+
     sServer.on("/",            HTTP_GET,  handleRoot);
     sServer.on("/spools",      HTTP_GET,  handleSpools);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
@@ -858,10 +1016,17 @@ void webAppBegin() {
     sServer.on("/usage",          HTTP_GET,  handleUsagePage);
     sServer.on("/usage.csv",      HTTP_GET,  handleUsageCsv);
     sServer.on("/api/usage",      HTTP_GET,  handleApiUsage);
+    sServer.on("/api/status",     HTTP_GET,  handleApiStatus);
+    sServer.on("/api/apikey",     HTTP_POST, handleApiKeySet);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.
-    sServer.on("/reset", HTTP_GET, [](AsyncWebServerRequest* req) {
+    //
+    // POST, not GET: this wipes the network config, and as a GET any page on
+    // the LAN that merely links to or embeds the URL could trigger it just by
+    // being loaded in someone's browser.
+    sServer.on("/reset", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!authOk(req)) return;
         req->send(200, "text/html",
             "<!DOCTYPE html><body><h2>Resetting WiFi&hellip;</h2>"
             "<p>Credentials cleared; the device is restarting.</p>"
@@ -872,6 +1037,15 @@ void webAppBegin() {
         WiFi.disconnect(true, true);   // wifioff=true, eraseap=true
         delay(400);                    // let the response flush before reboot
         ESP.restart();
+    });
+    // GET still lands somewhere useful instead of 404ing, but only offers the
+    // button — it changes nothing by itself.
+    sServer.on("/reset", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "text/html",
+            "<!DOCTYPE html><body><h2>Reset WiFi credentials</h2>"
+            "<p>Clears the stored network and reboots into the setup portal.</p>"
+            "<form method='POST' action='/reset'>"
+            "<button type='submit'>Reset WiFi</button></form></body>");
     });
 
     sServer.onNotFound([](AsyncWebServerRequest* req) {

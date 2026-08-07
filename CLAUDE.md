@@ -92,6 +92,17 @@ Surfaced on the web app's **Usage** page, `/usage.csv`, `/api/usage`, and `DUMP 
 
 A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyInto_` falls through from it into the identity case.
 
+## HTTP API
+
+Full reference: `docs/api.md`. Shape of it:
+
+- **Reads are open** (`/api/status`, `/api/spools`, `/api/usage`, `/usage.csv`, `/api/scale`, `/api/storage`, `/export`) so dashboards and scrapers need no credentials.
+- **Writes are guarded** by a shared secret in NVS (`api_key.*`) once one is set — accepted as `X-API-Key`, `?key=`, or HTTP Basic (any username). **An unset key leaves writes open on purpose:** the station is cabinet-mounted with no reachable BOOT button, so it must never be able to lock its operators out. Set/clear with `APIKEY <secret>` / `APIKEY none` over serial, or on the Config page.
+- `/reset` is **POST-only** — as a GET, any page linking to the URL could wipe the WiFi config just by being loaded on the LAN.
+- **CORS** is `*` on everything, with `OPTIONS` answered 204. The wildcard makes browsers refuse to send credentials cross-origin, which is why cross-origin writes must use the `X-API-Key` header.
+- No TLS. The key is a guard rail against misaimed scripts and stray clicks, not transport security; the LAN is the real boundary.
+- `deviceStateName()` in `device_state.h` is part of the API surface — external dashboards match on those strings.
+
 ## Device State Machine
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, and the steady "present" state with background reconciliation.

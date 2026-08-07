@@ -6,6 +6,7 @@
 #include "opt_tag.h"
 #include "store.h"          // local-storage core (redesign Phase 1)
 #include "config_store.h"   // config catalog (redesign Phase 3)
+#include "api_key.h"        // shared secret for mutating HTTP endpoints
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -116,6 +117,11 @@ void setup() {
                   (unsigned)cfgVendorCount(), (unsigned)cfgMaterialCount(),
                   (unsigned)cfgProfileCount(), (unsigned)cfgColorCount(),
                   (unsigned)cfgStockCount());
+
+    apiKeyBegin();
+    Serial.printf("[api] write endpoints are %s\n",
+                  apiKeyIsSet() ? "protected by an API key"
+                                : "UNPROTECTED (no key set — see APIKEY over serial)");
 
     Serial.printf("[store] filesystem: %u kB free / %u kB\n",
                   (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10));
