@@ -71,11 +71,24 @@ static String esc(const char* s) {
 
 static const char* STYLE =
     "<style>"
-    "body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}"
-    "header{background:#1c2b1c;padding:14px 18px;font-size:20px;font-weight:600}"
-    "header a{color:#8f8;text-decoration:none;margin-right:16px;font-size:15px;font-weight:400}"
-    "header a.active{color:#fff;font-weight:600;border-bottom:2px solid #8f8;padding-bottom:3px}"
-    "main{padding:18px;max-width:760px;margin:0 auto}"
+    // -webkit-text-size-adjust stops iOS inflating text when a phone is turned
+    // to landscape, which otherwise reflows every page unpredictably.
+    "body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee;"
+    "-webkit-text-size-adjust:100%}"
+    // Flex, not float. Eight nav links floated right do not fit a phone: they
+    // collide with the title and wrap into an unreadable stack. Flex-wrap drops
+    // them onto their own line instead, and margin-left:auto keeps them right-
+    // aligned whenever there IS room.
+    "header{background:#1c2b1c;padding:12px 16px;font-size:20px;font-weight:600;"
+    "display:flex;flex-wrap:wrap;align-items:baseline}"
+    "header nav{display:flex;flex-wrap:wrap;gap:4px 16px;margin-left:auto}"
+    "header a{color:#8f8;text-decoration:none;font-size:15px;font-weight:400;"
+    "padding:4px 0}"
+    "header a.active{color:#fff;font-weight:600;border-bottom:2px solid #8f8}"
+    // overflow-x on main, not on the page: a table wider than the phone scrolls
+    // inside the content area instead of sliding the whole layout sideways,
+    // which is the usual way a page "looks broken" on mobile.
+    "main{padding:18px;max-width:760px;margin:0 auto;overflow-x:auto}"
     "table{border-collapse:collapse;width:100%}"
     "th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #333}"
     "th{color:#9c9}"
@@ -88,6 +101,17 @@ static const char* STYLE =
     ".card{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:14px;margin-bottom:14px}"
     ".big{font-size:28px;font-weight:700}"
     ".muted{color:#888}"
+    // Phone-width tuning. Tighter cells and slightly smaller type let the wider
+    // tables (Usage has five columns) fit without scrolling at all on most
+    // handsets; the ones that still don't fit scroll inside main.
+    "@media(max-width:520px){"
+      "main{padding:12px}"
+      "header{font-size:18px;padding:10px 12px}"
+      "th,td{padding:5px 6px;font-size:14px}"
+      ".big{font-size:24px}"
+      "button{width:100%;padding:12px 18px}"
+      "button.sec{width:auto}"
+    "}"
     "</style>";
 
 // One nav link, marked `active` when its href matches the current page.
@@ -107,7 +131,7 @@ static String head(const char* title, const char* active = "") {
     h += title;
     h += "</title>";
     h += STYLE;
-    h += "</head><body><header>Weigh Station<span style='float:right'>";
+    h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
     navlink(h, "/spools",    "Spools",    active);
     navlink(h, "/onboard",   "Onboard",   active);
@@ -116,7 +140,7 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/config",    "Config",    active);
     navlink(h, "/calibrate", "Calibrate", active);
     navlink(h, "/backup",    "Backup",    active);
-    h += "</span></header><main>";
+    h += "</nav></header><main>";
     return h;
 }
 
