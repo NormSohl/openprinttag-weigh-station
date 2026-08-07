@@ -93,7 +93,10 @@ spool ID).
 
 ### Phase 6 — Backup & restore  *(implemented — pending on-card validation)*
 - SD snapshot: stage → CRC-verify → promote by rename → dated history,
-  with card-full oldest-first reclaim. — `src/sd_backup.*`
+  with card-full oldest-first reclaim. — **REMOVED.** The S3 has no third SPI
+  peripheral (PN5180 has SPI2, TFT has SPI3), so the card never had a host.
+  Superseded by web-app export/import plus in-place log compaction
+  (`storeCompact()`), which is what actually bounds storage growth.
 - `GET /export` (host download), `POST /import`, `POST /restore` (SD), plus
   idle auto-snapshot and web controls on `/backup`.
 - **Milestone:** snapshot to SD, wipe LittleFS, restore from SD **and** from

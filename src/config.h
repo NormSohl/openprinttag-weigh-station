@@ -31,33 +31,6 @@
 // same binary — a flip across a reboot means the panel moved, not the code.)
 #define TFT_ROTATION 1
 
-// ── microSD on the display board — dedicated second SPI host ──
-// The Hosyond ILI9488's SD lines are on a *separate* header, NOT bonded to
-// the display SPI bus (see docs/datasheets/display-hosyond-ili9488.md), so
-// the SD gets its own SPI host — no gSpiMutex traffic, isolated from NFC/TFT
-// I/O. Backup/archive only; the device runs fine with no card. Assigned to
-// free header GPIOs on the Thing Plus ESP32-S3.
-//
-// Host allocation on the S3 (only two general-purpose SPI hosts exist):
-//   bus 0 (Arduino FSPI = SPI2 peripheral) — PN5180, GPIO 11/12/13
-//   bus 1 (Arduino HSPI = SPI3 peripheral) — TFT, GPIO 11/12 (forced by
-//                                            TFT_eSPI's S3 port)
-// Both hosts are spoken for, and the two share GPIO 11/12 — spi_bus.cpp
-// re-routes them per transaction.
-//
-// UNRESOLVED: that leaves no free host for the SD below. SPIClass(HSPI) is the
-// display's. Keep SD_BACKUP_ENABLED at 0 until this is settled — the card will
-// need to join the same handoff scheme on one of the two hosts.
-//
-// NOTE for the build: the Thing Plus has its OWN onboard microSD slot on the
-// SDIO bus (GPIO 33/34/38/39/40/47, detect 48) — those are NOT broken out. We
-// use the *display's* SD instead (front-panel accessible), so LEAVE THE ONBOARD
-// SLOT EMPTY. These four are free broken-out header pins (42 = "FREEBIE" spare).
-#define SD_SCK   10
-#define SD_MOSI  18
-#define SD_MISO  21
-#define SD_CS    42
-
 // ── WS2812 NeoPixel (onboard) ────────────────────────────────
 // The external porch NeoPixel is superseded by the TFT display.
 // SparkFun Thing Plus ESP32-S3 onboard RGB is GPIO46 (GPIO48 is the onboard
@@ -94,23 +67,24 @@
 
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
-// ── SD backup (Phase 6) ───────────────────────────────────────
-// Set to 0 to skip SD bring-up entirely.
+// ── Event-log capacity ────────────────────────────────────────
+// The log is append-only and never shrinks on its own. A weigh line is about
+// 150 bytes, so the 2 MB LittleFS partition holds on the order of 13k events —
+// months, not years, at plausible lab volume. Two mechanisms keep that from
+// becoming silent data loss:
 //
-// Two reasons it stays off, and the second is the blocking one:
+//   - storeAppendEvent() checks every byte it writes, so a full filesystem is
+//     reported instead of quietly dropping records.
+//   - Above the high-water mark below, syncTask compacts the log while the
+//     scale is idle: one checkpoint per spool plus the most recent events.
 //
-//  1. A FAILED SD.begin() (no card, or mis-wired) tears down SPI state on its
-//     way out, which has been observed to leave a bus handle NULL — and a null
-//     handle is a StoreProhibited inside begin_tft_write(), i.e. a boot loop.
-//  2. SPIClass(HSPI) in sd_backup.cpp is the SAME peripheral (SPI3) TFT_eSPI is
-//     pinned to on the S3. The card does not have a host of its own, so (1) can
-//     take the display down with it.
-//
-// See the warning in sd_backup.cpp for the ways out.
-#define SD_BACKUP_ENABLED 0
-#define SD_SPI_FREQ_HZ        20000000  // SD SPI clock (20 MHz; drop to 10M if flaky)
-#define SD_HISTORY_KEEP             20  // dated snapshots retained under /backup/history
-#define SD_SNAPSHOT_MIN_INTERVAL_MS (5*60*1000UL) // auto-snapshot throttle when idle
+// Sizing: ~2000 retained events (~300 kB) plus a checkpoint per spool
+// (~250 bytes each) lands well under the mark, so compaction is rare and each
+// run frees a large margin rather than thrashing near the threshold.
+#define STORE_LOG_COMPACT_BYTES  (900UL * 1024)  // compact once the log exceeds this
+#define STORE_LOG_KEEP_EVENTS         2000       // recent events kept verbatim
+#define STORE_FREE_WARN_BYTES    (128UL * 1024)  // warn below this much free space
+
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing

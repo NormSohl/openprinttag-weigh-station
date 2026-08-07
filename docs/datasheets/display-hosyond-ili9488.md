@@ -69,10 +69,15 @@ choice:
 
 | Display SD header | MCU GPIO |
 |---|---|
-| SD_SCK  | 10 |
-| SD_MOSI | 18 |
-| SD_MISO | 21 |
-| SD_CS   | 42 |
+| SD_SCK  | ~~10~~ |
+| SD_MOSI | ~~18~~ |
+| SD_MISO | ~~21~~ |
+| SD_CS   | ~~42~~ |
+
+> **Not wired — the SD slot is unused.** These assignments are kept only as a
+> record of what was planned. The ESP32-S3 has two general-purpose SPI
+> peripherals and both are taken (PN5180 on SPI2, TFT on SPI3), so the card had
+> no host. Backup goes through the web app instead.
 
 All four are free broken-out header pins (GPIO 42 is SparkFun's silk-labeled
 "FREEBIE" spare). The Thing Plus's **own** onboard microSD slot is on the SDIO

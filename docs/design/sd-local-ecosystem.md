@@ -1,8 +1,19 @@
 # Redesign: Local-Storage Ecosystem (Spoolman-free)
 
-Status: **design draft** — no code moved yet. Target for the
-`redesign/sd-local-ecosystem` branch. (Primary storage is the ESP32-S3's
-internal flash; SD is backup/archive — see Storage architecture below.)
+Status: **implemented**, with one part superseded.
+
+> **The SD card was removed.** Every SD section below is kept as a record of
+> the original design, not as a description of the build. The ESP32-S3 has two
+> general-purpose SPI peripherals and both are taken — PN5180 on SPI2, TFT on
+> SPI3, which TFT_eSPI's S3 port hard-wires — so the card never had a host it
+> could use. It also cost more than it bought: a failed `SD.begin()` boot-looped
+> the device once, and an unattended backup nobody audits mainly manufactures
+> false confidence.
+>
+> What replaced it: the web app's **Backup** page (`/export`, `/import`) for
+> off-device copies, and in-place **log compaction** (`storeCompact()`) to bound
+> growth — which is what actually threatened storage, and which an SD mirror of
+> the same file would not have fixed. See the *Storage* section of `CLAUDE.md`.
 
 ## Goal
 

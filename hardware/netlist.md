@@ -54,25 +54,6 @@ Bridge **VCC→LED** on the display module so the backlight needs no separate le
 | 3V3  | 3V3     | PN5180 3.3V · TFT VCC |
 | GND  | GND     | PN5180 GND · TFT GND · Buzzer − |
 
-### microSD (on the display board) — dedicated second SPI bus
-
-Four wires from the display's **separate SD header** (left side of the board —
-*not* the main display header) to free GPIOs on the Thing Plus. This is its
-**own SPI host**, independent of the shared PN5180 + TFT bus, so SD I/O never
-touches `gSpiMutex`. Backup/archive only — the station runs fine with no card.
-
-| # | From (MCU) | To (display SD header) |
-|---|---|---|
-| S1 | GPIO 10 | SD_SCK |
-| S2 | GPIO 18 | SD_MOSI |
-| S3 | GPIO 21 | SD_MISO |
-| S4 | GPIO 42 | SD_CS |
-
-> **Free header pins** (42 is SparkFun's silk-labeled "FREEBIE" spare). The
-> Thing Plus's **own** onboard microSD is on the SDIO bus (GPIO 33/34/38/39/40/47,
-> detect 48) — those are **not** broken out. We use the display's SD for
-> front-panel access, so **leave the onboard slot empty**.
-
 ### NAU7802 load-cell ADC — one Qwiic cable
 
 Not jumpers — a single 4-conductor Qwiic cable from the Thing Plus Qwiic
@@ -95,8 +76,14 @@ connector to the NAU7802 board carries all four:
 | L4 | ⬜ White (白)  | Signal −     | A− |
 | L5 | 🟨 Yellow (黄) | Shield/drain | GND *(omit if absent)* |
 
-**Totals:** 8 direct wires + 5 soldered splices (13 legs) + 4 SD wires +
-1 Qwiic cable + 4–5 load-cell leads.
+**Totals:** 8 direct wires + 5 soldered splices (13 legs) + 1 Qwiic cable +
+4–5 load-cell leads.
+
+> **The display's microSD slot is not wired and is not used.** The ESP32-S3 has
+> only two general-purpose SPI peripherals and both are taken (PN5180 on SPI2,
+> TFT on SPI3 — see `platformio.ini`), so the card had no host of its own. The
+> event log lives on internal flash and is backed up through the web app's
+> **Backup** page. Leave the Thing Plus's own SD slot empty too.
 
 ---
 
@@ -153,7 +140,7 @@ terminal — both already reliable, nothing to change.
 
 | Device | Interface | Status |
 |---|---|---|
-| microSD (on display board) | own SPI host (2nd bus) | **wired** — see the SD table above (GPIO 10/18/21/42). Firmware snapshot/restore implemented (`src/sd_backup.*`); pending on-card validation |
+| microSD (on display board) | would need a 3rd SPI host | **removed** — no SPI peripheral available (PN5180 has SPI2, TFT has SPI3). Backup is via the web app's Backup page instead |
 | Resistive touch (T_CLK/T_CS/T_DIN/T_DO/T_IRQ) | SPI slave, same header | **out of scope** — intentionally unwired |
 | PN5180 IRQ | — | unused (firmware polls BUSY) |
 
@@ -168,12 +155,12 @@ terminal — both already reliable, nothing to change.
   Wire **VUSB → PN5180 5V** and **3V3 → PN5180 3.3V**.
   *(An earlier revision of this file said "3.3 V only — do not connect to 5 V".
   That was wrong: it conflated the logic level with the module's power pins.)*
-- PN5180 + TFT share **MOSI and SCK only** — never MISO. A firmware mutex
-  (`gSpiMutex`) keeps them off the bus simultaneously. They must also sit on
-  the **same SPI peripheral** — the ESP32-S3 routes each pin's output from
-  exactly one peripheral, so two hosts on one pin means whoever initialises
-  last silently takes it. See the `tft_flags` comment in `platformio.ini`;
-  this is a build-config constraint, not a wiring one.
+- PN5180 + TFT share **MOSI and SCK only** — never MISO. They sit on *different*
+  SPI peripherals (SPI2 and SPI3) and neither can be moved, so the firmware
+  re-points those two pins on every handoff (`src/spi_bus.cpp`) — the S3 routes
+  a pin's output from exactly one peripheral, and whoever attaches last silently
+  takes it. Nothing to do at the wiring bench; noted here because it explains
+  why this looks like a plain shared bus but is not one.
 - **Leave the display's `SDO` pin unconnected.** The ILI9488's SDO does **not**
   tri-state when its CS is high (documented TFT_eSPI limitation), so wiring it
   to the shared MISO line makes the panel drive MISO permanently — every reply

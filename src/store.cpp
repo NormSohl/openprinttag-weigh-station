@@ -1,4 +1,5 @@
 #include "store.h"
+#include "config.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
@@ -11,13 +12,15 @@
 #include "freertos/semphr.h"
 
 // ── State ─────────────────────────────────────────────────────────────────────
-static const char*        LOG_PATH = "/log/events.ndjson";
+static const char*        LOG_PATH    = "/log/events.ndjson";
+static const char*        COMPACT_TMP = "/log/compact.staging";
 static SemaphoreHandle_t  sMutex   = nullptr;
 static std::vector<SpoolRecord>  sSpools;
 static std::unordered_map<std::string, size_t> sByUuid;   // uuid → sSpools index (O(1) lookup)
 static std::vector<MatInventory> sInv;
 static bool               sInvDirty = true;   // rebuild sInv lazily on next query
 static bool               sLogEndsNL = true;  // does the log end with a newline?
+static bool               sWriteFailed = false; // last append was short/failed
 static uint32_t           sNextId  = 1;
 
 // RAII lock. No public function that takes the lock calls another that does,
@@ -35,6 +38,7 @@ const char* storeEvName(StoreEv ev) {
         case StoreEv::Reconcile:   return "reconcile";
         case StoreEv::ReorderFlag: return "reorder_flag";
         case StoreEv::Export:      return "export";
+        case StoreEv::Checkpoint:  return "checkpoint";
         default:                   return "unknown";
     }
 }
@@ -44,6 +48,7 @@ StoreEv storeEvFromName(const char* s) {
     if (!strcmp(s, "reconcile"))    return StoreEv::Reconcile;
     if (!strcmp(s, "reorder_flag")) return StoreEv::ReorderFlag;
     if (!strcmp(s, "export"))       return StoreEv::Export;
+    if (!strcmp(s, "checkpoint"))   return StoreEv::Checkpoint;
     return StoreEv::Unknown;
 }
 
@@ -86,11 +91,15 @@ static String encodeBody(const StoreEvent& e) {
     snprintf(n, sizeof(n), "%u", (unsigned)e.spool);
     b += "\"spool\":"; b += n; b += ",";
 
-    if (e.ev == StoreEv::Weigh) {
+    // A Checkpoint is an Onboard and a Weigh rolled into one record, so it
+    // emits both groups. Independent ifs, not if/else.
+    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
         snprintf(n, sizeof(n), "%.1f", e.gross_g);     b += "\"gross_g\":";     b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.remaining_g); b += "\"remaining_g\":"; b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.used_g);      b += "\"used_g\":";      b += n; b += ",";
-    } else if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile) {
+    }
+    if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
+        e.ev == StoreEv::Checkpoint) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
         b += "\"mat\":\"";    b += jsonEsc(e.material);  b += "\",";
         b += "\"abbr\":\"";   b += jsonEsc(e.abbr);      b += "\",";
@@ -131,11 +140,13 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     strlcpy(e.ts,   doc["ts"]   | "", sizeof(e.ts));
     strlcpy(e.uuid, doc["uuid"] | "", sizeof(e.uuid));
     e.spool = doc["spool"] | 0u;
-    if (e.ev == StoreEv::Weigh) {
+    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
         e.gross_g     = doc["gross_g"]     | 0.0f;
         e.remaining_g = doc["remaining_g"] | 0.0f;
         e.used_g      = doc["used_g"]      | 0.0f;
-    } else if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile) {
+    }
+    if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
+        e.ev == StoreEv::Checkpoint) {
         strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
         strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
         strlcpy(e.abbr,     doc["abbr"]   | "", sizeof(e.abbr));
@@ -171,6 +182,12 @@ static void applyEvent_(const StoreEvent& e) {
     if (e.spool) r.spool = e.spool;
     strlcpy(r.last_ts, e.ts, sizeof(r.last_ts));
     switch (e.ev) {
+        // A checkpoint is the folded state of everything that came before it,
+        // so it sets both halves of the record.
+        case StoreEv::Checkpoint:
+            r.remaining_g = e.remaining_g;
+            r.used_g      = e.used_g;
+            // fall through
         case StoreEv::Onboard:
         case StoreEv::Reconcile:
             strlcpy(r.vendor,   e.vendor,   sizeof(r.vendor));
@@ -213,8 +230,8 @@ static void ensureInventory_() {
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
-bool storeRebuildIndices() {
-    Lock lk;
+// Caller holds the lock.
+static bool rebuildIndices_() {
     sSpools.clear();
     sByUuid.clear();
     File f = LittleFS.open(LOG_PATH, "r");
@@ -233,6 +250,18 @@ bool storeRebuildIndices() {
     return true;
 }
 
+bool storeRebuildIndices() { Lock lk; return rebuildIndices_(); }
+
+// Does the log end with a newline? Caller holds the lock.
+static void primeLogEndsNL_() {
+    sLogEndsNL = true;
+    File rf = LittleFS.open(LOG_PATH, "r");
+    if (rf) {
+        if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
+        rf.close();
+    }
+}
+
 bool storeAppendEvent(const StoreEvent& in) {
     StoreEvent e = in;
     if (e.ts[0] == 0) storeNowIso(e.ts, sizeof(e.ts));
@@ -240,19 +269,47 @@ bool storeAppendEvent(const StoreEvent& in) {
 
     Lock lk;
     File f = LittleFS.open(LOG_PATH, "a");
-    if (!f) return false;
+    if (!f) { sWriteFailed = true; return false; }
+
+    // Every byte is accounted for. A full LittleFS does not fail open() and
+    // does not throw from print() — it just writes fewer bytes than asked. An
+    // unchecked append therefore goes on reporting success while recording
+    // nothing at all, which for a logbook is the worst possible failure mode.
+    //
     // If the file ended without a newline (torn tail from a prior power cut),
     // start on a fresh line so our record stays parseable. Tracked in a flag
     // so we don't re-read the file on every append.
-    if (!sLogEndsNL) f.print('\n');
-    f.print(line);
-    f.print('\n');
+    size_t want = line.length() + 1;                    // line + '\n'
+    size_t got  = 0;
+    if (!sLogEndsNL) { want += 1; got += f.print('\n'); }
+    got += f.print(line);
+    got += f.print('\n');
     f.flush();
     f.close();
-    sLogEndsNL = true;
 
-    applyEvent_(e);   // marks inventory dirty; rebuilt lazily on next query
+    if (got != want) {
+        // A partial line may be on disk. Its CRC cannot match, so replay skips
+        // it and the log stays parseable; flag the tail as unterminated so the
+        // next append starts cleanly. Deliberately do NOT applyEvent_() — an
+        // index that holds data the log does not would silently disagree with
+        // itself after the next reboot.
+        sWriteFailed = true;
+        sLogEndsNL   = false;
+        return false;
+    }
+
+    sWriteFailed = false;
+    sLogEndsNL   = true;
+    applyEvent_(e);   // only once the bytes are durably on disk
     return true;
+}
+
+// ── Health ────────────────────────────────────────────────────────────────────
+bool   storeWriteFailed() { return sWriteFailed; }
+size_t storeTotalBytes()  { return LittleFS.totalBytes(); }
+size_t storeFreeBytes()   {
+    size_t total = LittleFS.totalBytes(), used = LittleFS.usedBytes();
+    return (total > used) ? total - used : 0;
 }
 
 size_t storeLogBytes() {
@@ -329,13 +386,7 @@ bool storeBegin() {
     sNextId = p.getUInt("counter", 1);
     p.end();
     storeRebuildIndices();
-    // Prime the newline flag: does the existing log end cleanly?
-    sLogEndsNL = true;
-    File rf = LittleFS.open(LOG_PATH, "r");
-    if (rf) {
-        if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
-        rf.close();
-    }
+    { Lock lk; primeLogEndsNL_(); }   // does the existing log end cleanly?
     return true;
 }
 
@@ -403,12 +454,8 @@ bool storeImportLogFile(const char* stagingPath) {
     storeRebuildIndices();
     {
         Lock lk;
-        sLogEndsNL = true;
-        File rf = LittleFS.open(LOG_PATH, "r");
-        if (rf) {
-            if (rf.size() > 0) { rf.seek(rf.size() - 1); if (rf.read() != '\n') sLogEndsNL = false; }
-            rf.close();
-        }
+        primeLogEndsNL_();
+        sWriteFailed = false;
         // 4) Advance the ID counter past the highest imported id (no reuse).
         Preferences p;
         p.begin("store", false);
@@ -418,6 +465,111 @@ bool storeImportLogFile(const char* stagingPath) {
         else            { sNextId = cur; }
         p.end();
     }
+    return true;
+}
+
+// ── Compaction ────────────────────────────────────────────────────────────────
+bool storeCompactNeeded() {
+    return storeLogBytes() > STORE_LOG_COMPACT_BYTES;   // takes the lock itself
+}
+
+// Rewrite the log as: one Checkpoint per spool (its folded state), then the
+// most recent STORE_LOG_KEEP_EVENTS lines verbatim.
+//
+// The live indices in sSpools ARE the folded state — they are exactly what a
+// full replay produces — so the checkpoints are written straight from memory
+// rather than by re-reading the log a second time.
+//
+// Everything is built in a separate staging file and promoted by rename, so a
+// failure, a full disk, or a power cut at any point before the promote leaves
+// the original log untouched.
+bool storeCompact() {
+    Lock lk;
+
+    // 1) Count good lines to find the cutoff. Everything before the last
+    //    STORE_LOG_KEEP_EVENTS is what the checkpoints will stand in for.
+    size_t total = 0;
+    {
+        File f = LittleFS.open(LOG_PATH, "r");
+        if (!f) return false;
+        while (f.available()) {
+            String l = f.readStringUntil('\n');
+            l.trim();
+            if (l.length()) total++;
+        }
+        f.close();
+    }
+    const size_t skip = (total > STORE_LOG_KEEP_EVENTS) ? total - STORE_LOG_KEEP_EVENTS : 0;
+    if (skip == 0) return false;   // nothing old enough to be worth folding
+
+    // 2) Build the replacement.
+    LittleFS.remove(COMPACT_TMP);
+    File out = LittleFS.open(COMPACT_TMP, "w");
+    if (!out) return false;
+    bool ok = true;
+
+    auto emit = [&out](const String& line) -> bool {
+        return out.print(line) == line.length() && out.print('\n') == 1;
+    };
+
+    for (const auto& r : sSpools) {
+        if (!r.valid || r.uuid[0] == 0) continue;
+        StoreEvent c;
+        c.ev = StoreEv::Checkpoint;
+        strlcpy(c.ts, r.last_ts[0] ? r.last_ts : "1970-01-01T00:00:00Z", sizeof(c.ts));
+        strlcpy(c.uuid, r.uuid, sizeof(c.uuid));
+        c.spool       = r.spool;
+        c.remaining_g = r.remaining_g;
+        c.used_g      = r.used_g;
+        strlcpy(c.vendor,   r.vendor,   sizeof(c.vendor));
+        strlcpy(c.material, r.material, sizeof(c.material));
+        strlcpy(c.abbr,     r.abbr,     sizeof(c.abbr));
+        memcpy(c.rgba, r.rgba, 4);
+        c.dia = r.dia; c.empty_g = r.empty_g; c.nom_g = r.nom_g;
+        c.needs_ob = r.needs_ob;
+        if (!emit(encodeLine(c))) { ok = false; break; }
+    }
+
+    if (ok) {
+        File in = LittleFS.open(LOG_PATH, "r");
+        if (!in) ok = false;
+        else {
+            size_t seen = 0;
+            while (in.available()) {
+                String l = in.readStringUntil('\n');
+                l.trim();
+                if (l.length() == 0) continue;
+                if (seen++ < skip) continue;      // folded into a checkpoint above
+                if (!emit(l)) { ok = false; break; }
+            }
+            in.close();
+        }
+    }
+    out.flush();
+    out.close();
+
+    if (!ok) {                       // short write => disk full mid-compaction
+        LittleFS.remove(COMPACT_TMP);
+        sWriteFailed = true;
+        return false;
+    }
+
+    // 3) Promote. Try an atomic replace first; only fall back to
+    //    remove-then-rename if the filesystem refuses to overwrite.
+    if (!LittleFS.rename(COMPACT_TMP, LOG_PATH)) {
+        LittleFS.remove(LOG_PATH);
+        if (!LittleFS.rename(COMPACT_TMP, LOG_PATH)) {
+            LittleFS.remove(COMPACT_TMP);
+            rebuildIndices_();       // resync to whatever is actually on disk
+            primeLogEndsNL_();
+            sWriteFailed = true;
+            return false;
+        }
+    }
+
+    rebuildIndices_();
+    primeLogEndsNL_();
+    sWriteFailed = false;
     return true;
 }
 

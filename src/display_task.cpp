@@ -3,6 +3,7 @@
 #include <Adafruit_NeoPixel.h>
 #include "config.h"
 #include "spi_bus.h"
+#include "store.h"
 #include "device_state.h"
 #include "opt_tag.h"
 
@@ -150,6 +151,7 @@ void displayTask(void* param) {
     TickType_t  lastBlink  = 0;
     int         lastCount  = -1;
     bool        lastCal    = gScaleCalibrated;
+    bool        lastWrFail = storeWriteFailed();
 
     for (;;) {
         xSemaphoreTake(gStateMutex, portMAX_DELAY);
@@ -183,6 +185,18 @@ void displayTask(void* param) {
         bool calNow = gScaleCalibrated;
         if (calNow != lastCal) {
             lastCal = calNow;
+            spiBusTakeTft();
+            cls();
+            spiBusGive();
+            rendered = false;
+        }
+
+        // Same for the storage banner. A log that has stopped accepting writes
+        // is silent everywhere else — nobody has the web app open when it
+        // happens — so the idle screen has to say so.
+        bool wrFail = storeWriteFailed();
+        if (wrFail != lastWrFail) {
+            lastWrFail = wrFail;
             spiBusTakeTft();
             cls();
             spiBusGive();
@@ -236,7 +250,10 @@ void displayTask(void* param) {
             case DeviceState::Idle:
                 title("Seattle Makers", TFT_GREEN);
                 row(2, "Place spool to begin", TFT_WHITE);
-                if (!gScaleCalibrated) {
+                if (storeWriteFailed()) {
+                    row(3, "STORAGE FULL - not", TFT_RED);
+                    row(4, "recording weighs!", TFT_RED);
+                } else if (!gScaleCalibrated) {
                     row(3, "Scale not calibrated", tft.color565(220, 140, 0));
                     row(4, "Calibrate in web app", tft.color565(220, 140, 0));
                 }
@@ -250,7 +267,9 @@ void displayTask(void* param) {
             case DeviceState::IdleNoWiFi:
                 title("Weigh Station", tft.color565(220, 140, 0));
                 row(2, "Place spool to weigh", TFT_WHITE);
-                if (!gScaleCalibrated)
+                if (storeWriteFailed())
+                    row(3, "STORAGE FULL - not saving", TFT_RED);
+                else if (!gScaleCalibrated)
                     row(3, "Uncalibrated - web app", tft.color565(220, 140, 0));
                 if (gApSsid[0]) {
                     row(4, "Join WiFi:", TFT_DARKGREY);

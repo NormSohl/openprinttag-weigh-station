@@ -19,6 +19,7 @@ enum class StoreEv : uint8_t {
     Reconcile,   // identity changed (Main-section reconcile)
     ReorderFlag, // stock item crossed its low-water mark
     Export,      // a backup/export was taken
+    Checkpoint,  // compaction summary: one spool's full state, folds its history
     Unknown
 };
 
@@ -83,6 +84,34 @@ bool   storeAppendEvent(const StoreEvent& e);   // serialize, append, flush, ind
 bool   storeRebuildIndices();                   // replay log; skip torn/bad lines
 size_t storeLogLineCount();
 size_t storeLogBytes();
+
+// ── Log health ────────────────────────────────────────────────────────────────
+// True if the most recent append could not be written in full — filesystem
+// full, or an I/O error. Sticky until an append succeeds.
+//
+// This matters more than it looks: a full LittleFS does not make open() fail or
+// print() throw, it just returns a short count. An unchecked append therefore
+// keeps reporting success while recording nothing, which for a logbook is the
+// worst available failure. An event that did not reach the log is deliberately
+// NOT applied to the indices, so if this is true the device is losing data now.
+bool   storeWriteFailed();
+size_t storeFreeBytes();
+size_t storeTotalBytes();
+
+// ── Compaction ────────────────────────────────────────────────────────────────
+// The log is append-only and never shrinks on its own; at roughly 150 bytes per
+// weigh line a 2 MB partition holds on the order of 13k events, which is months
+// rather than years at lab volume.
+//
+// storeCompact() rewrites it as one Checkpoint event per spool — that spool's
+// full derived state — followed by the most recent STORE_LOG_KEEP_EVENTS lines
+// verbatim. Replaying the result reproduces identical indices; what is given up
+// is old per-spool weigh HISTORY beyond the retained tail (storeForEachWeigh).
+//
+// storeCompactNeeded() is cheap. storeCompact() rewrites the whole log while
+// holding the store lock, so run it only when the scale is idle.
+bool storeCompactNeeded();
+bool storeCompact();
 
 // ── Queries (read-only, mutex-guarded snapshots) ──────────────────────────────
 bool   storeGetSpool(uint32_t id, SpoolRecord& out);

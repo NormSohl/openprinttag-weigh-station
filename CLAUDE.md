@@ -10,7 +10,7 @@ Self-contained NFC-based filament inventory system for Seattle Makers' 3D printi
 
 > **History:** the project originally synced to Spoolman (self-hosted inventory backend) and kept history in Prometheus. Both were removed in the local-storage redesign — see `docs/design/sd-local-ecosystem.md` and `implementation-plan.md`. Storage is now an append-only event log on LittleFS + NVS counters, with the built-in web app replacing Spoolman's UI.
 
-**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 46). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (SparkFun Thing Plus ESP32-S3 default SPI — SCK 12 / MOSI 11 / MISO 13; GPIO 33–37 are not broken out on this board); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via -D build flags in `platformio.ini` (NOT a User_Setup.h — the flags must reach the library's own TUs). The display board's microSD is on a **dedicated second SPI host** (SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42), isolated from the shared bus — backup/archive only, and the Thing Plus's own onboard SD slot is left empty. See `hardware/netlist.md`.
+**Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 46). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (SparkFun Thing Plus ESP32-S3 default SPI — SCK 12 / MOSI 11 / MISO 13; GPIO 33–37 are not broken out on this board); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via -D build flags in `platformio.ini` (NOT a User_Setup.h — the flags must reach the library's own TUs). Neither SD slot (the display's or the Thing Plus's own) is wired — see the peripheral table below. Storage is internal flash only. See `hardware/netlist.md`.
 
 **SPI peripheral allocation (load-bearing — see `src/spi_bus.h` and the `tft_flags` comment in `platformio.ini`).** The S3 has two general-purpose SPI peripherals and neither device can be moved off its own:
 
@@ -23,7 +23,7 @@ Both therefore drive GPIO 11 and 12. The S3 routes a pin's *output* from exactly
 
 `src/spi_bus.cpp` fixes this by making pin ownership part of the lock: **always take the bus via `spiBusTakeNfc()` / `spiBusTakeTft()` / `spiBusGive()`, never `gSpiMutex` directly** — a raw take gets the lock but not the pins. MISO needs no handoff (input routing is per-signal), and `TFT_MISO` is **-1** because the ILI9488's SDO never tri-states — its SDO must also be physically off the MISO splice.
 
-**The microSD has no peripheral left.** `SPIClass(HSPI)` in `sd_backup.cpp` is the display's SPI3. `SD_BACKUP_ENABLED` is 0 until this is resolved — either put the card on SPI2 and extend `spi_bus.cpp` to a three-way handoff, or use the Thing Plus's own SDIO slot instead.
+**There is no peripheral left for an SD card**, which is why SD support was removed rather than fixed — see *Storage* below.
 
 **Firmware stack:** PlatformIO + Arduino framework, FreeRTOS tasks for scale/NFC/sync/display, plus an async web app (ESPAsyncWebServer) started from syncTask. Local storage: `store.*` (event log + rebuildable indices on LittleFS, NVS spool-ID counter), `config_store.*` (onboarding catalog tables), `web_app.*` (the built-in UI). ATrappmann's PN5180-Library (`readSingleBlock` / `writeSingleBlock` / `getSystemInfo` cover both reading and writing ISO15693 tags). **Never call `lockICODESLIX2`** — tags must remain rewritable for the life of the spool.
 
@@ -67,6 +67,17 @@ The physical tag is a paper/aluminum-foil/PET-foil/adhesive laminate (see OpenPr
 
 For the (currently being phased out) fleet of reusable spool bodies: reuse is handled for free by the Main-section reconciliation mechanism above — refill the spool, edit its record in the web app, and the next placement rewrites the same physical tag in place. No peeling, no separate mechanism needed.
 
+## Storage
+
+The event log (`/log/events.ndjson`) on a 2 MB LittleFS partition is the source of truth; indices are rebuildable. NVS namespace `"store"` holds the spool-ID counter. **There is no SD card** — the S3's two SPI peripherals are both taken (PN5180, TFT), so the card never had a host. Backup is the web app's **Backup** page: `/export` downloads the log, `/import` validates and replaces it.
+
+Two mechanisms keep append-only growth from becoming silent data loss:
+
+- **Checked writes.** A full LittleFS does not fail `open()` and does not throw from `print()` — it just writes fewer bytes. `storeAppendEvent()` therefore accounts for every byte and, on a short write, sets a sticky failure flag and **does not** apply the event to the indices (an index holding data the log doesn't would disagree with itself after the next reboot). The failure surfaces on the idle screen and on `/api/storage`.
+- **Compaction.** Above `STORE_LOG_COMPACT_BYTES`, syncTask calls `storeCompact()` while the scale is idle — never mid-weigh, since it rewrites the whole log under the store lock. The log becomes one `Checkpoint` event per spool (that spool's full folded state, written straight from the live indices) followed by the most recent `STORE_LOG_KEEP_EVENTS` lines verbatim. Built in a staging file and promoted by rename, so any failure leaves the original intact. **What is given up:** old per-spool weigh *history* beyond the retained tail (`storeForEachWeigh`). Current totals stay exact.
+
+A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyEvent_` falls through from it into the identity case.
+
 ## Device State Machine
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, and the steady "present" state with background reconciliation.
@@ -101,5 +112,4 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 
 ## Pending (requires hardware)
 - End-to-end state machine validation: tag **write**-back (Auxiliary on weigh, Main on reconcile), blank-tag onboarding countdown + stub creation, foreign-tag adoption, local persistence across power cycles, and the ~1 Hz reconciliation loop.
-- SD-card backup snapshots: implemented in `sd_backup.*` (stage → CRC-verify → promote-by-rename → dated history + prune + card-full reclaim; manifest; restore via the validated import path; web controls on `/backup`; idle auto-snapshot). **Blocked, not merely untested:** `SPIClass(HSPI)` is the display's SPI3 — the card has no peripheral of its own. Resolve by extending `spi_bus.cpp` to a three-way handoff on SPI2, or by using the Thing Plus's onboard SDIO slot. `SD_BACKUP_ENABLED` stays 0 until then.
 - Known tradeoff: `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering now stalls `displayTask` too. Acceptable while the reader is reliable; if it ever isn't, the fix is a bounded wait in a vendored copy of the library.
