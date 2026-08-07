@@ -20,6 +20,7 @@ enum class StoreEv : uint8_t {
     ReorderFlag, // stock item crossed its low-water mark
     Export,      // a backup/export was taken
     Checkpoint,  // compaction summary: one spool's full state, folds its history
+    Usage,       // consumption rollup for one period+vendor+material; permanent
     Unknown
 };
 
@@ -46,6 +47,11 @@ struct StoreEvent {
     uint8_t  rgba[4] = {};
     float    dia = 0, empty_g = 0, nom_g = 0;
     bool     needs_ob = false;
+
+    // Usage rollup (Usage). `ts` holds the period as "YYYY-MM" rather than a
+    // timestamp; vendor + material are the grouping key.
+    float    usage_g      = 0;   // grams consumed in this period + category
+    uint32_t usage_weighs = 0;   // weigh events that contributed
 };
 
 // ── Current-state record (derived) ────────────────────────────────────────────
@@ -61,6 +67,26 @@ struct SpoolRecord {
     bool     needs_ob = false;
     char     last_ts[25] = {};
     bool     valid = false;
+};
+
+// ── Consumption rollup (PRIMARY DATA — not derived) ───────────────────────────
+// Grams consumed per calendar month per vendor+material: what gets asked when
+// the question is "which filament do we actually go through", as opposed to
+// "what is on the shelf right now".
+//
+// Unlike SpoolRecord this is NOT rebuildable from scratch once the log has been
+// compacted — compaction folds raw weigh events into Usage records and those
+// records become the only remaining evidence. They are never discarded, and
+// they ride in the same log file so /export still captures everything.
+//
+// Growth is bounded by months x categories (order of 100 rows/year), not by
+// event count, which is why keeping them forever is affordable.
+struct UsageRow {
+    char     period[8]    = {};  // "YYYY-MM"
+    char     vendor[64]   = {};
+    char     material[64] = {};
+    float    grams  = 0;         // consumed during this period
+    uint32_t weighs = 0;         // weigh events contributing
 };
 
 // ── Inventory rollup (derived) ────────────────────────────────────────────────
@@ -108,6 +134,11 @@ size_t storeTotalBytes();
 // verbatim. Replaying the result reproduces identical indices; what is given up
 // is old per-spool weigh HISTORY beyond the retained tail (storeForEachWeigh).
 //
+// Consumption totals are NOT lost: before discarding the old events their
+// weight deltas are folded into Usage records, which are kept forever. What is
+// given up is per-spool weigh-by-weigh granularity (storeForEachWeigh) beyond
+// the retained tail — monthly totals per vendor+material stay exact.
+//
 // storeCompactNeeded() is cheap. storeCompact() rewrites the whole log while
 // holding the store lock, so run it only when the scale is idle.
 bool storeCompactNeeded();
@@ -120,6 +151,8 @@ size_t storeSpoolCount();
 bool   storeSpoolAt(size_t idx, SpoolRecord& out);
 size_t storeInventoryCount();
 bool   storeInventoryAt(size_t idx, MatInventory& out);
+size_t storeUsageCount();
+bool   storeUsageAt(size_t idx, UsageRow& out);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) over `len` bytes.
@@ -147,6 +180,9 @@ bool storeImportLogFile(const char* stagingPath);
 // ── Serial test harness (Phase 1) ─────────────────────────────────────────────
 // Handles one command line and returns true if it was a store command:
 //   EV onboard <uuid> <vendor> <material> | EV weigh <uuid> <gross_g>
-//   DUMP spools | DUMP inv | REBUILD | LOGSTATS | TORN | WIPE
+//   DUMP spools | DUMP inv | DUMP usage | REBUILD | LOGSTATS | TORN | WIPE
 //   SEED <spools> <events_per_spool>   — bulk-fill for capacity testing
+//   COMPACT                            — force a fold now, ignoring the size
+//                                        threshold (SEED, DUMP usage, COMPACT,
+//                                        DUMP usage: totals must match)
 bool storeSerialCommand(const String& line);

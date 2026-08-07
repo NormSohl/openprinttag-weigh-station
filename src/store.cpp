@@ -18,6 +18,7 @@ static SemaphoreHandle_t  sMutex   = nullptr;
 static std::vector<SpoolRecord>  sSpools;
 static std::unordered_map<std::string, size_t> sByUuid;   // uuid → sSpools index (O(1) lookup)
 static std::vector<MatInventory> sInv;
+static std::vector<UsageRow>     sUsage;   // permanent consumption rollup
 static bool               sInvDirty = true;   // rebuild sInv lazily on next query
 static bool               sLogEndsNL = true;  // does the log end with a newline?
 static bool               sWriteFailed = false; // last append was short/failed
@@ -39,6 +40,7 @@ const char* storeEvName(StoreEv ev) {
         case StoreEv::ReorderFlag: return "reorder_flag";
         case StoreEv::Export:      return "export";
         case StoreEv::Checkpoint:  return "checkpoint";
+        case StoreEv::Usage:       return "usage";
         default:                   return "unknown";
     }
 }
@@ -49,6 +51,7 @@ StoreEv storeEvFromName(const char* s) {
     if (!strcmp(s, "reorder_flag")) return StoreEv::ReorderFlag;
     if (!strcmp(s, "export"))       return StoreEv::Export;
     if (!strcmp(s, "checkpoint"))   return StoreEv::Checkpoint;
+    if (!strcmp(s, "usage"))        return StoreEv::Usage;
     return StoreEv::Unknown;
 }
 
@@ -97,6 +100,18 @@ static String encodeBody(const StoreEvent& e) {
         snprintf(n, sizeof(n), "%.1f", e.gross_g);     b += "\"gross_g\":";     b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.remaining_g); b += "\"remaining_g\":"; b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.used_g);      b += "\"used_g\":";      b += n; b += ",";
+    }
+    if (e.ev == StoreEv::Usage) {
+        b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
+        b += "\"mat\":\"";    b += jsonEsc(e.material); b += "\",";
+        snprintf(n, sizeof(n), "%.1f", e.usage_g);              b += "\"grams\":";  b += n; b += ",";
+        snprintf(n, sizeof(n), "%u", (unsigned)e.usage_weighs); b += "\"weighs\":"; b += n; b += ",";
+    }
+    if (e.ev == StoreEv::Usage) {
+        strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
+        strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
+        e.usage_g      = doc["grams"]  | 0.0f;
+        e.usage_weighs = doc["weighs"] | 0u;
     }
     if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
         e.ev == StoreEv::Checkpoint) {
@@ -165,20 +180,83 @@ static int findByUuid_(const char* uuid) {
     return (it == sByUuid.end()) ? -1 : (int)it->second;
 }
 
-static void applyEvent_(const StoreEvent& e) {
+// "2026-08-07T01:14:09Z" -> "2026-08". Anything unparseable buckets together
+// rather than being dropped — an unattributed gram still happened.
+static void periodOf_(const char* ts, char* out, size_t n) {
+    if (ts && strlen(ts) >= 7 && ts[4] == '-') snprintf(out, n, "%.7s", ts);
+    else                                       strlcpy(out, "unknown", n);
+}
+
+// Merge grams/weighs into the (period, vendor, material) bucket. The table is
+// months x categories — order of 100 rows — so a linear scan is the right shape
+// here, same as rebuildInventory_.
+static void usageAdd_(std::vector<UsageRow>& tbl, const char* period,
+                      const char* vendor, const char* material,
+                      float grams, uint32_t weighs) {
+    const char* mat = (material && material[0]) ? material : "(unspecified)";
+    const char* ven = (vendor   && vendor[0])   ? vendor   : "(unspecified)";
+    for (auto& u : tbl) {
+        if (!strcmp(u.period, period) && !strcmp(u.vendor, ven) &&
+            !strcmp(u.material, mat)) {
+            u.grams += grams; u.weighs += weighs;
+            return;
+        }
+    }
+    UsageRow r;
+    strlcpy(r.period,   period, sizeof(r.period));
+    strlcpy(r.vendor,   ven,    sizeof(r.vendor));
+    strlcpy(r.material, mat,    sizeof(r.material));
+    r.grams = grams; r.weighs = weighs;
+    tbl.push_back(r);
+}
+
+// Replay one event into an arbitrary index + usage table.
+//
+// Parameterised rather than hard-wired to the globals because storeCompact()
+// needs a SECOND, independent fold covering only the events it is about to
+// discard — see the comment there for why the latest state is the wrong thing
+// to checkpoint.
+static void applyInto_(std::vector<SpoolRecord>& spools,
+                       std::unordered_map<std::string, size_t>& byUuid,
+                       std::vector<UsageRow>& usage,
+                       const StoreEvent& e) {
+    // Usage rollups carry no spool identity — they ARE the folded history.
+    if (e.ev == StoreEv::Usage) {
+        char p[8];
+        strlcpy(p, e.ts, sizeof(p));        // ts holds "YYYY-MM" for these
+        usageAdd_(usage, p, e.vendor, e.material, e.usage_g, e.usage_weighs);
+        return;
+    }
     if (e.uuid[0] == 0) return;
-    int idx = findByUuid_(e.uuid);
+    auto it = byUuid.find(e.uuid);
+    int idx = (it == byUuid.end()) ? -1 : (int)it->second;
     if (idx < 0) {
         SpoolRecord r;
         strlcpy(r.uuid, e.uuid, sizeof(r.uuid));
         r.spool = e.spool;
         r.valid = true;
-        sSpools.push_back(r);
-        idx = (int)sSpools.size() - 1;
-        sByUuid[e.uuid] = (size_t)idx;   // vector indices are stable (append-only)
+        spools.push_back(r);
+        idx = (int)spools.size() - 1;
+        byUuid[e.uuid] = (size_t)idx;    // vector indices are stable (append-only)
     }
-    sInvDirty = true;                    // inventory recomputed lazily
-    SpoolRecord& r = sSpools[idx];
+    SpoolRecord& r = spools[idx];
+
+    // Consumption = drop in remaining weight since this spool's previous
+    // reading, and the record still HOLDS that previous reading until the
+    // switch below overwrites it — so the delta must be taken here, before.
+    //
+    // Ignoring non-positive deltas covers three cases at once: sensor noise, a
+    // spool that was refilled or swapped onto the same tag, and a spool's very
+    // first weigh (previous remaining is 0, so the delta is negative). None of
+    // those is filament anyone consumed.
+    if (e.ev == StoreEv::Weigh) {
+        const float delta = r.remaining_g - e.remaining_g;
+        if (delta > 0.05f) {
+            char p[8]; periodOf_(e.ts, p, sizeof(p));
+            usageAdd_(usage, p, r.vendor, r.material, delta, 1);
+        }
+    }
+
     if (e.spool) r.spool = e.spool;
     strlcpy(r.last_ts, e.ts, sizeof(r.last_ts));
     switch (e.ev) {
@@ -204,6 +282,11 @@ static void applyEvent_(const StoreEvent& e) {
         default:
             break;
     }
+}
+
+static void applyEvent_(const StoreEvent& e) {
+    applyInto_(sSpools, sByUuid, sUsage, e);
+    sInvDirty = true;                    // inventory recomputed lazily
 }
 
 static void rebuildInventory_() {
@@ -234,6 +317,7 @@ static void ensureInventory_() {
 static bool rebuildIndices_() {
     sSpools.clear();
     sByUuid.clear();
+    sUsage.clear();
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
         while (f.available()) {
@@ -367,6 +451,14 @@ bool storeSpoolAt(size_t idx, SpoolRecord& out) {
     out = sSpools[idx];
     return true;
 }
+size_t storeUsageCount() { Lock lk; return sUsage.size(); }
+bool storeUsageAt(size_t idx, UsageRow& out) {
+    Lock lk;
+    if (idx >= sUsage.size()) return false;
+    out = sUsage[idx];
+    return true;
+}
+
 size_t storeInventoryCount() { Lock lk; ensureInventory_(); return sInv.size(); }
 bool storeInventoryAt(size_t idx, MatInventory& out) {
     Lock lk;
@@ -473,12 +565,8 @@ bool storeCompactNeeded() {
     return storeLogBytes() > STORE_LOG_COMPACT_BYTES;   // takes the lock itself
 }
 
-// Rewrite the log as: one Checkpoint per spool (its folded state), then the
-// most recent STORE_LOG_KEEP_EVENTS lines verbatim.
-//
-// The live indices in sSpools ARE the folded state — they are exactly what a
-// full replay produces — so the checkpoints are written straight from memory
-// rather than by re-reading the log a second time.
+// Rewrite the log as: the folded consumption rollup, one Checkpoint per spool,
+// then the most recent STORE_LOG_KEEP_EVENTS lines verbatim.
 //
 // Everything is built in a separate staging file and promoted by rename, so a
 // failure, a full disk, or a power cut at any point before the promote leaves
@@ -502,7 +590,39 @@ bool storeCompact() {
     const size_t skip = (total > STORE_LOG_KEEP_EVENTS) ? total - STORE_LOG_KEEP_EVENTS : 0;
     if (skip == 0) return false;   // nothing old enough to be worth folding
 
-    // 2) Build the replacement.
+    // 2) Replay ONLY the region being discarded, into its own index.
+    //
+    //    It would be cheaper to write checkpoints straight from sSpools, but
+    //    that is wrong in a way that corrupts the usage totals: sSpools holds
+    //    each spool's LATEST remaining weight, i.e. its state after the
+    //    retained tail. A checkpoint carrying that value, followed by the tail
+    //    replayed on top of it, would measure the tail's weigh deltas against
+    //    the wrong baseline and double-count or lose consumption on every
+    //    compaction. The checkpoint has to capture the fold boundary exactly.
+    //
+    //    Folding this region also produces the Usage rows that preserve what
+    //    the discarded weigh events were evidence of. Pre-existing Usage rows
+    //    in the region merge in naturally, so totals accumulate across repeated
+    //    compactions instead of resetting.
+    std::vector<SpoolRecord> foldSpools;
+    std::unordered_map<std::string, size_t> foldByUuid;
+    std::vector<UsageRow>    foldUsage;
+    {
+        File in = LittleFS.open(LOG_PATH, "r");
+        if (!in) return false;
+        size_t seen = 0;
+        while (in.available() && seen < skip) {
+            String l = in.readStringUntil('\n');
+            l.trim();
+            if (l.length() == 0) continue;
+            seen++;
+            StoreEvent e;
+            if (decodeLine(l, e)) applyInto_(foldSpools, foldByUuid, foldUsage, e);
+        }
+        in.close();
+    }
+
+    // 3) Build the replacement.
     LittleFS.remove(COMPACT_TMP);
     File out = LittleFS.open(COMPACT_TMP, "w");
     if (!out) return false;
@@ -512,7 +632,21 @@ bool storeCompact() {
         return out.print(line) == line.length() && out.print('\n') == 1;
     };
 
-    for (const auto& r : sSpools) {
+    // Usage first: it is independent of spool state, and putting it at the head
+    // keeps it obvious in an exported file.
+    for (const auto& u : foldUsage) {
+        StoreEvent x;
+        x.ev = StoreEv::Usage;
+        strlcpy(x.ts,       u.period,   sizeof(x.ts));
+        strlcpy(x.vendor,   u.vendor,   sizeof(x.vendor));
+        strlcpy(x.material, u.material, sizeof(x.material));
+        x.usage_g      = u.grams;
+        x.usage_weighs = u.weighs;
+        if (!emit(encodeLine(x))) { ok = false; break; }
+    }
+
+    // Then one checkpoint per spool, at the fold boundary.
+    if (ok) for (const auto& r : foldSpools) {
         if (!r.valid || r.uuid[0] == 0) continue;
         StoreEvent c;
         c.ev = StoreEv::Checkpoint;
@@ -530,6 +664,7 @@ bool storeCompact() {
         if (!emit(encodeLine(c))) { ok = false; break; }
     }
 
+    // Then the retained tail, byte for byte.
     if (ok) {
         File in = LittleFS.open(LOG_PATH, "r");
         if (!in) ok = false;
@@ -539,7 +674,7 @@ bool storeCompact() {
                 String l = in.readStringUntil('\n');
                 l.trim();
                 if (l.length() == 0) continue;
-                if (seen++ < skip) continue;      // folded into a checkpoint above
+                if (seen++ < skip) continue;      // folded above
                 if (!emit(l)) { ok = false; break; }
             }
             in.close();
@@ -554,7 +689,7 @@ bool storeCompact() {
         return false;
     }
 
-    // 3) Promote. Try an atomic replace first; only fall back to
+    // 4) Promote. Try an atomic replace first; only fall back to
     //    remove-then-rename if the filesystem refuses to overwrite.
     if (!LittleFS.rename(COMPACT_TMP, LOG_PATH)) {
         LittleFS.remove(LOG_PATH);
@@ -628,6 +763,18 @@ bool storeSerialCommand(const String& lineIn) {
             for (size_t i = 0; i < storeInventoryCount(); i++)
                 if (storeInventoryAt(i, m))
                     Serial.printf("  %-16s %8.1f g  (%u spools)\n", m.material, m.remaining_g, m.count);
+        } else if (what == "usage") {
+            Serial.printf("[store] usage (%u buckets):\n", (unsigned)storeUsageCount());
+            UsageRow u;
+            float total = 0;
+            for (size_t i = 0; i < storeUsageCount(); i++)
+                if (storeUsageAt(i, u)) {
+                    Serial.printf("  %-8s %-12s %-10s %9.1f g  (%u weighs)\n",
+                                  u.period, u.vendor, u.material, u.grams,
+                                  (unsigned)u.weighs);
+                    total += u.grams;
+                }
+            Serial.printf("  total %.1f g (%.2f kg)\n", total, total / 1000.0f);
         } else {
             Serial.printf("[store] spools (%u):\n", (unsigned)storeSpoolCount());
             SpoolRecord r;
@@ -649,6 +796,27 @@ bool storeSerialCommand(const String& lineIn) {
         Serial.printf("[store] log: %u lines, %u bytes, next id #%u\n",
                       (unsigned)storeLogLineCount(), (unsigned)storeLogBytes(),
                       (unsigned)storePeekSpoolId());
+        Serial.printf("[store] fs: %u kB free / %u kB%s%s\n",
+                      (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10),
+                      storeCompactNeeded() ? "  [compaction due]" : "",
+                      storeWriteFailed()   ? "  [WRITES FAILING]" : "");
+        Serial.printf("[store] usage: %u buckets\n", (unsigned)storeUsageCount());
+        return true;
+    }
+    // Force a compaction regardless of the size threshold. The point is to make
+    // the fold testable on the bench — SEED a few thousand events, DUMP usage,
+    // COMPACT, DUMP usage again: the totals must be identical, and the spool
+    // records unchanged. Waiting for the log to reach 900 kB naturally is not a
+    // test anyone will run.
+    if (cmd == "COMPACT") {
+        const size_t before = storeLogBytes(), lines = storeLogLineCount();
+        const bool ok = storeCompact();
+        Serial.printf("[store] compact %s: %u -> %u bytes, %u -> %u lines, "
+                      "%u usage buckets\n",
+                      ok ? "ok" : "skipped/failed",
+                      (unsigned)before, (unsigned)storeLogBytes(),
+                      (unsigned)lines, (unsigned)storeLogLineCount(),
+                      (unsigned)storeUsageCount());
         return true;
     }
     if (cmd == "TORN") {

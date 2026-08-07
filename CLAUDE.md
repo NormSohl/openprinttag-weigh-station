@@ -74,9 +74,23 @@ The event log (`/log/events.ndjson`) on a 2 MB LittleFS partition is the source 
 Two mechanisms keep append-only growth from becoming silent data loss:
 
 - **Checked writes.** A full LittleFS does not fail `open()` and does not throw from `print()` — it just writes fewer bytes. `storeAppendEvent()` therefore accounts for every byte and, on a short write, sets a sticky failure flag and **does not** apply the event to the indices (an index holding data the log doesn't would disagree with itself after the next reboot). The failure surfaces on the idle screen and on `/api/storage`.
-- **Compaction.** Above `STORE_LOG_COMPACT_BYTES`, syncTask calls `storeCompact()` while the scale is idle — never mid-weigh, since it rewrites the whole log under the store lock. The log becomes one `Checkpoint` event per spool (that spool's full folded state, written straight from the live indices) followed by the most recent `STORE_LOG_KEEP_EVENTS` lines verbatim. Built in a staging file and promoted by rename, so any failure leaves the original intact. **What is given up:** old per-spool weigh *history* beyond the retained tail (`storeForEachWeigh`). Current totals stay exact.
+- **Compaction.** Above `STORE_LOG_COMPACT_BYTES`, syncTask calls `storeCompact()` while the scale is idle — never mid-weigh, since it rewrites the whole log under the store lock. The log becomes: the consumption rollup, one `Checkpoint` per spool, then the most recent `STORE_LOG_KEEP_EVENTS` lines verbatim. Built in a staging file and promoted by rename, so any failure leaves the original intact.
 
-A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyEvent_` falls through from it into the identity case.
+### Consumption rollup — the analytics requirement
+
+Material *popularity* (grams consumed per month per vendor+material) is a first-class requirement, and it is exactly what naive compaction would destroy. `UsageRow` records carry it:
+
+- Consumption is the **drop in a spool's remaining weight between two weighings**, attributed to the vendor/material in effect at that time. `applyInto_` takes the delta *before* the switch overwrites `r.remaining_g` — the record still holds the previous reading at that point. Non-positive deltas are ignored, which covers sensor noise, refills, and a spool's first weighing (baseline).
+- Usage records **ride in the same log file** and are never discarded, so `/export` still captures everything in one artifact and `/import` restores it. Growth is bounded by months × categories (~100 rows/year), not by event count.
+- They are **primary data, not derived** — once the raw events are folded away, these records are the only remaining evidence. Do not "rebuild" them from scratch.
+
+`storeCompact()` therefore replays **only the region it is about to discard**, into its own index (`applyInto_` is parameterised for exactly this). Writing checkpoints from the live `sSpools` instead would be wrong in a way that silently corrupts the totals: `sSpools` holds each spool's state *after* the retained tail, so replaying the tail on top of such a checkpoint measures its deltas against the wrong baseline. Pre-existing `Usage` rows in the folded region merge in, so totals accumulate across repeated compactions.
+
+**What is still given up:** individual weigh readings older than the retained tail (`storeForEachWeigh`). Monthly per-material totals stay exact.
+
+Surfaced on the web app's **Usage** page, `/usage.csv`, `/api/usage`, and `DUMP usage` over serial. Test the fold on the bench with `SEED` → `DUMP usage` → `COMPACT` → `DUMP usage`; the totals must match.
+
+A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyInto_` falls through from it into the identity case.
 
 ## Device State Machine
 

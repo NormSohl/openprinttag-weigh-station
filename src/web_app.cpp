@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <vector>
+#include <algorithm>
 #include <string.h>
 #include "config.h"
 #include "device_state.h"
@@ -86,6 +87,7 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/",          "Inventory", active);
     navlink(h, "/spools",    "Spools",    active);
     navlink(h, "/onboard",   "Onboard",   active);
+    navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
     navlink(h, "/config",    "Config",    active);
     navlink(h, "/calibrate", "Calibrate", active);
@@ -576,6 +578,109 @@ static void handleApiConfigSave(AsyncWebServerRequest* req) {
 // ── Backup / restore (host download + upload; SD snapshots are hardware-gated) ─
 static const char* IMPORT_STAGING = "/log/import.staging";
 
+// ── Consumption history ───────────────────────────────────────────────────────
+// Which filament the lab actually goes through, as opposed to what is on the
+// shelf. Sourced from UsageRow, which survives log compaction — see store.h.
+static void handleUsagePage(AsyncWebServerRequest* req) {
+    String p = head("Usage", "/usage");
+    p += "<h3>Filament consumed</h3>";
+
+    const size_t n = storeUsageCount();
+    if (n == 0) {
+        p += "<div class='card muted'>No consumption recorded yet. A spool has to "
+             "be weighed at least twice before there is a delta to attribute.</div>";
+        p += FOOT;
+        req->send(200, "text/html", p);
+        return;
+    }
+
+    // Totals per material across all time — the headline "what is popular"
+    // number. Materials are few, so a linear merge is fine.
+    struct Tot { String key; float g; uint32_t w; };
+    std::vector<Tot> byMat;
+    float grand = 0;
+    UsageRow u;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeUsageAt(i, u)) continue;
+        grand += u.grams;
+        bool found = false;
+        for (auto& t : byMat)
+            if (t.key == u.material) { t.g += u.grams; t.w += u.weighs; found = true; break; }
+        if (!found) byMat.push_back({String(u.material), u.grams, u.weighs});
+    }
+    std::sort(byMat.begin(), byMat.end(), [](const Tot& a, const Tot& b){ return a.g > b.g; });
+
+    p += "<table><tr><th>Material</th><th>Consumed</th><th>Share</th></tr>";
+    for (const auto& t : byMat) {
+        const int pct = grand > 0 ? (int)(100.0f * t.g / grand + 0.5f) : 0;
+        p += "<tr><td>" + esc(t.key.c_str()) + "</td><td>"
+           + String(t.g / 1000.0f, 2) + " kg</td><td>" + String(pct) + "%</td></tr>";
+    }
+    p += "</table>";
+    p += "<p class='muted'>Total " + String(grand / 1000.0f, 2) + " kg across "
+       + String((unsigned)n) + " month/vendor/material buckets.</p>";
+
+    p += "<h3>By month</h3><table>"
+         "<tr><th>Period</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>Weighs</th></tr>";
+    // Newest first: periods are "YYYY-MM", so lexical order is chronological.
+    std::vector<size_t> order;
+    for (size_t i = 0; i < n; i++) order.push_back(i);
+    std::sort(order.begin(), order.end(), [](size_t a, size_t b) {
+        UsageRow x, y;
+        storeUsageAt(a, x); storeUsageAt(b, y);
+        int c = strcmp(y.period, x.period);
+        return c ? (c < 0) : (x.grams > y.grams);
+    });
+    for (size_t i : order) {
+        if (!storeUsageAt(i, u)) continue;
+        p += "<tr><td>" + esc(u.period) + "</td><td>" + esc(u.vendor)
+           + "</td><td>" + esc(u.material) + "</td><td>" + String(u.grams, 0)
+           + " g</td><td>" + String((unsigned)u.weighs) + "</td></tr>";
+    }
+    p += "</table>";
+    p += "<p><a href='/usage.csv'><button type='button'>Download CSV</button></a></p>";
+    p += "<p class='muted'>These totals are kept permanently and are not lost when "
+         "the event log is compacted. Consumption is the drop in a spool's remaining "
+         "weight between two weighings, attributed to the vendor and material "
+         "recorded at that time; a spool's first weighing establishes its baseline "
+         "and counts as zero.</p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleUsageCsv(AsyncWebServerRequest* req) {
+    String c = "period,vendor,material,grams,weighs\n";
+    const size_t n = storeUsageCount();
+    UsageRow u;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeUsageAt(i, u)) continue;
+        // Quote the free-text columns; vendor/material can contain commas.
+        c += String(u.period) + ",\"" + u.vendor + "\",\"" + u.material + "\","
+           + String(u.grams, 1) + "," + String((unsigned)u.weighs) + "\n";
+    }
+    AsyncWebServerResponse* r = req->beginResponse(200, "text/csv", c);
+    r->addHeader("Content-Disposition", "attachment; filename=\"usage.csv\"");
+    req->send(r);
+}
+
+static void handleApiUsage(AsyncWebServerRequest* req) {
+    String j = "[";
+    const size_t n = storeUsageCount();
+    UsageRow u;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeUsageAt(i, u)) continue;
+        if (j.length() > 1) j += ",";
+        j += "{\"period\":\"";  j += esc(u.period);
+        j += "\",\"vendor\":\"";  j += esc(u.vendor);
+        j += "\",\"material\":\""; j += esc(u.material);
+        j += "\",\"grams\":";     j += String(u.grams, 1);
+        j += ",\"weighs\":";      j += String((unsigned)u.weighs);
+        j += "}";
+    }
+    j += "]";
+    req->send(200, "application/json", j);
+}
+
 static void handleBackupPage(AsyncWebServerRequest* req) {
     String p = head("Backup", "/backup");
     p += "<h3>Backup &amp; restore</h3>";
@@ -595,8 +700,13 @@ static void handleBackupPage(AsyncWebServerRequest* req) {
     p += "<p class='muted'>The event log is append-only. Once it passes its "
          "high-water mark the station compacts it while the scale is idle: each "
          "spool's history folds into a single checkpoint and the most recent "
-         "events are kept as-is. Current totals stay exact; only old per-spool "
-         "weigh history is given up.</p>";
+         "events are kept as-is.</p>";
+    p += "<p class='muted'><b>Kept forever:</b> current spool state, and monthly "
+         "consumption per vendor and material (the <a href='/usage' "
+         "style='color:#8f8'>Usage</a> page) &mdash; those ride in this same log "
+         "file, so this download captures them. <b>Given up:</b> individual weigh "
+         "readings older than the retained tail. If you want the raw per-weigh "
+         "history long-term, download the log periodically.</p>";
     p += "<script>"
          "function kb(b){return b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' kB';}"
          "function s(){fetch('/api/storage').then(x=>x.json()).then(d=>{"
@@ -745,6 +855,9 @@ void webAppBegin() {
     sServer.on("/export",      HTTP_GET,  handleExport);
     sServer.on("/import",      HTTP_POST, handleImportDone, handleImportUpload);
     sServer.on("/api/storage",    HTTP_GET,  handleApiStorage);
+    sServer.on("/usage",          HTTP_GET,  handleUsagePage);
+    sServer.on("/usage.csv",      HTTP_GET,  handleUsageCsv);
+    sServer.on("/api/usage",      HTTP_GET,  handleApiUsage);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.
