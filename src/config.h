@@ -33,9 +33,15 @@
 // ── microSD on the display board — dedicated second SPI host ──
 // The Hosyond ILI9488's SD lines are on a *separate* header, NOT bonded to
 // the display SPI bus (see docs/datasheets/display-hosyond-ili9488.md), so
-// the SD gets its own SPI host (FSPI via a separate SPIClass) — no gSpiMutex
-// traffic, isolated from NFC/TFT I/O. Backup/archive only; the device runs
-// fine with no card. Assigned to free header GPIOs on the Thing Plus ESP32-S3.
+// the SD gets its own SPI host — no gSpiMutex traffic, isolated from NFC/TFT
+// I/O. Backup/archive only; the device runs fine with no card. Assigned to
+// free header GPIOs on the Thing Plus ESP32-S3.
+//
+// Host allocation on the S3 (only two general-purpose SPI hosts exist):
+//   bus 0 (Arduino FSPI = SPI2 peripheral) — PN5180 + TFT, GPIO 11/12/13,
+//                                            shared, serialised by gSpiMutex
+//   bus 1 (Arduino HSPI = SPI3 peripheral) — microSD alone, GPIO 10/18/21/42
+// Three consumers, two hosts: this is the only allocation that fits.
 //
 // NOTE for the build: the Thing Plus has its OWN onboard microSD slot on the
 // SDIO bus (GPIO 33/34/38/39/40/47, detect 48) — those are NOT broken out. We
@@ -83,11 +89,17 @@
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
 // ── SD backup (Phase 6) ───────────────────────────────────────
-// Set to 0 to skip SD bring-up entirely. A FAILED SD.begin() (no card, or
-// mis-wired) tears down SPI state on its way out and has been observed to
-// leave the *global* SPI bus handle NULL — which then panics TFT_eSPI with a
-// null-pointer StoreProhibited inside begin_tft_write(). Until the card is
-// wired and verified, leave this off so a missing card can't break the display.
+// Set to 0 to skip SD bring-up entirely.
+//
+// Historically this was dangerous: a FAILED SD.begin() (no card, or mis-wired)
+// tears down SPI state on its way out, and back when TFT_eSPI was built with
+// USE_HSPI_PORT the card and the display shared bus 1 — so a missing card
+// could leave the display's bus handle NULL and panic TFT_eSPI with a
+// StoreProhibited inside begin_tft_write().
+//
+// That collision is gone: the display now shares bus 0 with the PN5180 and the
+// card has bus 1 to itself (see platformio.ini), so an SD teardown can only
+// affect the card. Still 0 until the card is validated on real hardware.
 #define SD_BACKUP_ENABLED 0
 #define SD_SPI_FREQ_HZ        20000000  // SD SPI clock (20 MHz; drop to 10M if flaky)
 #define SD_HISTORY_KEEP             20  // dated snapshots retained under /backup/history

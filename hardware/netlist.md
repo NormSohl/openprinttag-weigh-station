@@ -169,7 +169,11 @@ terminal — both already reliable, nothing to change.
   *(An earlier revision of this file said "3.3 V only — do not connect to 5 V".
   That was wrong: it conflated the logic level with the module's power pins.)*
 - PN5180 + TFT share **MOSI and SCK only** — never MISO. A firmware mutex
-  (`gSpiMutex`) keeps them off the bus simultaneously.
+  (`gSpiMutex`) keeps them off the bus simultaneously. They must also sit on
+  the **same SPI peripheral** — the ESP32-S3 routes each pin's output from
+  exactly one peripheral, so two hosts on one pin means whoever initialises
+  last silently takes it. See the `tft_flags` comment in `platformio.ini`;
+  this is a build-config constraint, not a wiring one.
 - **Leave the display's `SDO` pin unconnected.** The ILI9488's SDO does **not**
   tri-state when its CS is high (documented TFT_eSPI limitation), so wiring it
   to the shared MISO line makes the panel drive MISO permanently — every reply

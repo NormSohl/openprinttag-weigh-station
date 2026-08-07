@@ -90,6 +90,13 @@ void setup() {
     bootMark("i2c (Wire.begin)");
     Wire.begin(I2C_SDA, I2C_SCL);
 
+    // Load-bearing ordering: this must run BEFORE displayBegin(). TFT_eSPI is
+    // built with neither USE_HSPI_PORT nor USE_FSPI_PORT, so its `spi` member
+    // IS this global SPI object (see platformio.ini). Its init() calls
+    // spi.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, -1) as well, but
+    // SPIClass::begin() early-returns once the bus handle exists — so whoever
+    // calls first fixes the pin routing for both, and the handle is guaranteed
+    // non-null by the time begin_tft_write() dereferences it.
     bootMark("spi (shared PN5180 + TFT bus)");
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
 

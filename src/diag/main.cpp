@@ -1,32 +1,45 @@
-// PN5180 isolation test — build with:  pio run -e diag -t upload -t monitor
+// Shared-SPI-bus test — build with:  pio run -e diag -t upload -t monitor
 //
-// The display half of bring-up is done (TFT_eSPI works with USE_HSPI_PORT).
-// This build now isolates the remaining failure: nfcTask hangs inside
-// PN5180::reset(), which spins forever waiting for an IDLE interrupt the chip
-// never raises.
+// WHAT CAME BEFORE
+// Bring-up hit two independent faults on the shared PN5180 + TFT bus, and
+// fixing either alone still left the reader dead:
 //
-// THE HYPOTHESIS
-// A GPIO can only be driven by one SPI peripheral at a time. In the real
-// firmware displayBegin() runs first and TFT_eSPI (USE_HSPI_PORT) routes
-// SCK/MOSI/MISO = 12/11/13 to SPI3. The PN5180 library uses the global `SPI`
-// object, which is SPI2 — so once the display claims those pins, the PN5180
-// never sees a clock edge and cannot answer.
+//   1. The ILI9488's SDO does not tri-state when its CS is high, and the
+//      netlist wired it into the MISO splice. The panel drove MISO
+//      permanently, so every PN5180 reply read back as 0x00.
+//      Fixed in hardware (SDO off the splice) and in config (TFT_MISO=-1).
 //
-// THE TEST
-// This sketch initialises the PN5180 and NOTHING ELSE. No TFT, so nothing
-// steals the pins.
+//   2. TFT_eSPI was built with USE_HSPI_PORT, putting the display on its own
+//      SPIClass(HSPI) = bus 1 = SPI3, while the PN5180 library hardcodes the
+//      global `SPI` = bus 0 = SPI2. Both peripherals claimed GPIO 11/12, and
+//      spiAttachSCK() ends in pinMatrixOutAttach() — a write to the pin's
+//      single-valued func_out_sel register. Last attach wins, silently.
+//      displayBegin() runs after SPI.begin(), so the display took the pins and
+//      the PN5180 never saw a clock edge. Fixed by dropping USE_HSPI_PORT so
+//      TFT_eSPI binds the same global SPI object.
 //
-//   gets past reset() -> the chip is fine; the shared-pin conflict is real and
-//                        the fix is bus topology (or rewiring the PN5180 to
-//                        its own pins), not the PN5180 itself.
-//   hangs at reset()  -> the chip genuinely is not responding even with sole
-//                        ownership of the bus: power (3.3 V logic and the RF
-//                        rail), or the NSS/BUSY/RST wiring.
+// A PN5180-only diag proved (1) — it read a tag UID with the display unlinked.
+// It could not test (2) at all, because it had no display.
 //
-// The hang itself is the signal — the last line printed tells you which.
+// WHAT THIS TESTS
+// Both devices, both drivers, one bus — the exact contention the real firmware
+// creates, with none of the application code. The display is initialised FIRST
+// (as displayBegin() does), then the PN5180, then both run concurrently: tag
+// polling on loop() with a display repaint on every pass.
+//
+//   both work            -> the host allocation is right; the real firmware
+//                           should behave identically.
+//   display blank/frozen -> the TFT lost the pins. Bus config, not app code.
+//   NFC silent           -> the PN5180 lost the pins (or reset() hangs again).
+//   TFT panic in
+//   begin_tft_write()    -> the null bus-handle crash is back; SPI.begin()
+//                           must run before tft.init().
+//
+// Whichever half fails, it fails here without the app in the way.
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <TFT_eSPI.h>
 #include <PN5180.h>
 #include <PN5180ISO15693.h>
 #include "../config.h"
@@ -34,178 +47,120 @@
 #define DIAG_LED 46   // onboard WS2812
 
 static PN5180ISO15693 nfc(PN5180_NSS, PN5180_BUSY, PN5180_RESET);
+static TFT_eSPI       tft;
+
+static uint32_t sTagCount = 0;
+static uint32_t sPollCount = 0;
+static char     sLastUid[24] = "(none yet)";
+
+static void drawScreen(const char* status, uint16_t colour) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(TL_DATUM);
+
+    tft.drawString("SHARED BUS DIAG", 10, 10, 4);
+    tft.drawFastHLine(10, 40, 460, TFT_DARKGREY);
+
+    tft.setTextColor(colour, TFT_BLACK);
+    tft.drawString(status, 10, 55, 4);
+
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString(String("uid:   ") + sLastUid, 10, 100, 2);
+    tft.drawString(String("tags:  ") + sTagCount, 10, 125, 2);
+    tft.drawString(String("polls: ") + sPollCount, 10, 150, 2);
+    tft.drawString(String("up:    ") + (millis() / 1000) + " s", 10, 175, 2);
+
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("This text repainting = TFT still owns the bus.", 10, 285, 2);
+}
 
 void setup() {
     Serial.begin(115200);
     delay(3000);                       // let native USB enumerate before printing
     Serial.println();
-    Serial.println("=== DIAG: PN5180 isolation (no TFT — sole owner of the bus) ===");
-    Serial.printf("pins: NSS=%d BUSY=%d RST=%d   SPI SCK=%d MOSI=%d MISO=%d\n",
+    Serial.println("=== DIAG: PN5180 + TFT sharing one SPI host ===");
+    Serial.printf("pins: NSS=%d BUSY=%d RST=%d | SPI SCK=%d MOSI=%d MISO=%d"
+                  " | TFT CS=%d DC=%d RST=%d\n",
                   PN5180_NSS, PN5180_BUSY, PN5180_RESET,
-                  SPI_SCK, SPI_MOSI, SPI_MISO);
-
-    pinMode(PN5180_BUSY, INPUT);
-    Serial.printf("BUSY before init: %s\n",
-                  digitalRead(PN5180_BUSY) ? "HIGH" : "LOW (normal idle)");
+                  SPI_SCK, SPI_MOSI, SPI_MISO,
+                  TFT_CS, TFT_DC, TFT_RST);
     Serial.flush();
 
-    // ── Is the wire even connected? (software continuity test) ────────────────
-    // Read each pin twice, once with the ESP32's internal pull-up and once with
-    // its pull-down. A pin with nothing on the far end simply follows whichever
-    // resistor is enabled; a pin connected to a powered chip is held at the
-    // chip's level and ignores both. This distinguishes "open wire" from "chip
-    // present but idle low", which a plain digitalRead() cannot.
-    //
-    //   pullup=1 pulldown=0 -> FLOATING: no connection, or the far end is
-    //                         unpowered/high-impedance
-    //   pullup=0 pulldown=0 -> something is actively driving it LOW
-    //   pullup=1 pulldown=1 -> something is actively driving it HIGH
-    auto pinProbe = [](const char* name, int pin) {
-        pinMode(pin, INPUT_PULLUP);   delay(5);
-        const int up = digitalRead(pin);
-        pinMode(pin, INPUT_PULLDOWN); delay(5);
-        const int dn = digitalRead(pin);
-        pinMode(pin, INPUT);
-        // NB: "held LOW" does NOT prove the chip is alive. An UNPOWERED chip
-        // clamps its I/O pins toward ground through its ESD protection diodes
-        // and reads exactly the same way. If several independent pins all read
-        // held-LOW — especially a shared bus line like MISO, which should float
-        // when nothing is selected — the likeliest explanation is no VDD at the
-        // module, not a chip that is present and idle.
-        const char* verdict = (up && !dn) ? "FLOATING (nothing driving it)"
-                            : (!up && !dn) ? "held LOW  (driven, or UNPOWERED chip clamping)"
-                            : (up && dn)   ? "held HIGH (actively driven)"
-                                           : "inconsistent";
-        Serial.printf("  %-4s GPIO %2d: pullup=%d pulldown=%d -> %s\n",
-                      name, pin, up, dn, verdict);
-    };
-
-    Serial.println("pin continuity probe (internal pull-up vs pull-down):");
-    pinProbe("BUSY", PN5180_BUSY);
-    pinProbe("MISO", SPI_MISO);
-    Serial.println("  BUSY floating              => that wire is open.");
-    Serial.println("  BUSY + MISO both held LOW  => almost certainly NO POWER at the");
-    Serial.println("     module: an unpowered chip clamps its pins low through its ESD");
-    Serial.println("     diodes, and MISO in particular should float when idle.");
-    Serial.println("     Measure 3.3 V at the module's own 3.3V pad before anything else.");
-    Serial.flush();
-
-    // ── Hang-proof liveness probe ─────────────────────────────────────────────
-    // Drive RST ourselves and watch BUSY. Per the PN5180 datasheet the chip
-    // raises BUSY while it starts up after reset and drops it when ready, so a
-    // powered, correctly-wired chip MUST move that pin. Pure GPIO — no SPI, no
-    // library, nothing that can block.
-    //
-    //   BUSY changes      -> the chip is alive and RST/BUSY are wired; any
-    //                        remaining failure is on the SPI lines or CS.
-    //   BUSY never moves  -> nothing is driving the pin: unpowered, or RST/BUSY
-    //                        not actually connected. No amount of SPI debugging
-    //                        will help until that is fixed.
-    pinMode(PN5180_RESET, OUTPUT);
-    pinMode(PN5180_BUSY,  INPUT);
-
-    digitalWrite(PN5180_RESET, LOW);          // assert reset (active low)
-    delay(10);
-    const int busyInReset = digitalRead(PN5180_BUSY);
-    digitalWrite(PN5180_RESET, HIGH);         // release
-
-    int  lo = 0, hi = 0;
-    for (int i = 0; i < 200; i++) {           // 200 ms of sampling
-        digitalRead(PN5180_BUSY) ? hi++ : lo++;
-        delay(1);
-    }
-    Serial.printf("BUSY probe: in-reset=%d, after release %d HIGH / %d LOW samples\n",
-                  busyInReset, hi, lo);
-    if (hi == 0 || lo == 0) {
-        Serial.println("BUSY NEVER CHANGED — the chip is not driving it.");
-        Serial.println("  -> check PN5180 power (3.3 V logic, and the separate");
-        Serial.println("     5 V / TVDD transmitter pin if the module has one),");
-        Serial.printf("     and that RST=%d and BUSY=%d are really connected.\n",
-                      PN5180_RESET, PN5180_BUSY);
-    } else {
-        Serial.println("BUSY TOGGLED — chip is powered and responding to reset.");
-        Serial.println("  -> power/RST/BUSY are good; suspect SCK/MOSI/MISO or NSS.");
-    }
-    Serial.flush();
-
+    // Same order as main.cpp: claim the bus explicitly, THEN let TFT_eSPI
+    // init (its own spi.begin() will early-return), THEN the PN5180.
     Serial.println("SPI.begin()…");
     Serial.flush();
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
-    Serial.println("SPI.begin() ok");
+    Serial.printf("SPI.begin() ok — bus handle %s\n", SPI.bus() ? "valid" : "NULL (bad)");
+
+    Serial.println("tft.init()…  <-- a panic here is the null bus-handle crash");
+    Serial.flush();
+    tft.init();
+    tft.setRotation(TFT_ROTATION);
+    drawScreen("display OK, NFC starting", TFT_YELLOW);
+    Serial.println("tft.init() ok — screen should show 'display OK, NFC starting'");
+    Serial.flush();
+
+    // MISO must float now that the panel's SDO is off the splice. If this still
+    // reads held-LOW, the SDO wire is still connected.
+    pinMode(SPI_MISO, INPUT_PULLUP);   delay(5);
+    const int misoUp = digitalRead(SPI_MISO);
+    pinMode(SPI_MISO, INPUT_PULLDOWN); delay(5);
+    const int misoDn = digitalRead(SPI_MISO);
+    pinMode(SPI_MISO, INPUT);
+    Serial.printf("MISO GPIO %d: pullup=%d pulldown=%d -> %s\n",
+                  SPI_MISO, misoUp, misoDn,
+                  (misoUp && !misoDn) ? "FLOATING (correct — SDO is off the splice)"
+                                      : "STILL DRIVEN (is the TFT SDO wire still on MISO?)");
+    Serial.flush();
 
     Serial.println("nfc.begin()…");
     Serial.flush();
     nfc.begin();
-    Serial.println("nfc.begin() ok");
 
-    // ── Talk to the chip WITHOUT resetting it first ───────────────────────────
-    // BUSY probes as "driven LOW" = the chip is powered and idling normally, yet
-    // pulsing RST produces no BUSY movement at all. A live chip must react to
-    // reset, so the reset pulse isn't reaching it — and PN5180::reset() then
-    // waits forever for a reboot that never happens, which is the only reason
-    // everything downstream fails.
-    //
-    // If the chip answers here, it was never broken: RST is simply not
-    // connected (or is on the wrong module pin), and that single wire is the
-    // whole bug. Safe to try because the chip is idle — BUSY is already low, so
-    // the library's BUSY waits should pass straight through.
-    Serial.println("reading version registers WITHOUT a reset…");
-    Serial.flush();
-    {
-        uint8_t p[2] = {0xFF, 0xFF}, f[2] = {0xFF, 0xFF}, e[2] = {0xFF, 0xFF};
-        nfc.readEEprom(PRODUCT_VERSION,  p, 2);
-        nfc.readEEprom(FIRMWARE_VERSION, f, 2);
-        nfc.readEEprom(EEPROM_VERSION,   e, 2);
-        Serial.printf("  product %d.%d  firmware %d.%d  eeprom %d.%d\n",
-                      p[1], p[0], f[1], f[0], e[1], e[0]);
-        const bool dead = (p[0] == 0xFF && p[1] == 0xFF) ||
-                          (p[0] == 0x00 && p[1] == 0x00);
-        if (dead) {
-            Serial.println("  no answer -> SPI itself isn't reaching the chip:");
-            Serial.printf("     check NSS=%d, and SCK=%d / MOSI=%d at the module end\n",
-                          PN5180_NSS, SPI_SCK, SPI_MOSI);
-        } else {
-            Serial.println("  *** CHIP ANSWERS — it works. The fault is the RST wire. ***");
-            Serial.printf("     check GPIO %d -> the module's RST pin\n", PN5180_RESET);
-        }
-    }
-    Serial.flush();
-
-    // Sample BUSY across the reset pulse. A chip that is alive toggles BUSY;
-    // a flat line means nothing is driving the pin.
-    Serial.println("nfc.reset()…  <-- if this is the last line, the chip is silent");
+    Serial.println("nfc.reset()…  <-- if this is the last line, the reader is deaf");
     Serial.flush();
     nfc.reset();
-    Serial.println("nfc.reset() ok  <-- CHIP IS ALIVE: the shared-pin conflict is real");
+    Serial.println("nfc.reset() ok");
 
-    uint8_t prod[2] = {0xFF, 0xFF}, fw[2] = {0xFF, 0xFF}, eep[2] = {0xFF, 0xFF};
+    uint8_t prod[2] = {}, fw[2] = {}, eep[2] = {};
     nfc.readEEprom(PRODUCT_VERSION,  prod, 2);
     nfc.readEEprom(FIRMWARE_VERSION, fw,   2);
     nfc.readEEprom(EEPROM_VERSION,   eep,  2);
     Serial.printf("product %d.%d  firmware %d.%d  eeprom %d.%d\n",
                   prod[1], prod[0], fw[1], fw[0], eep[1], eep[0]);
 
-    Serial.println("setupRF()…");
-    Serial.flush();
     nfc.setupRF();
-    Serial.println("setupRF() ok — now polling for tags, present one");
+    Serial.println("setupRF() ok — polling. Present a tag; watch the SCREEN too.");
     Serial.flush();
+
+    drawScreen("both up - polling", TFT_GREEN);
 }
 
 void loop() {
-    static uint32_t n = 0;
     uint8_t uid[8] = {};
 
+    // No mutex here on purpose: this sketch is single-threaded, so the two
+    // drivers already interleave strictly. The real firmware runs them from
+    // two tasks on two cores and needs gSpiMutex.
     ISO15693ErrorCode rc = nfc.getInventory(uid);
+    sPollCount++;
+
     if (rc == ISO15693_EC_OK) {
-        Serial.printf("[diag] TAG uid %02x%02x%02x%02x%02x%02x%02x%02x\n",
-                      uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]);
-        neopixelWrite(DIAG_LED, 0, 60, 0);          // green: tag seen
+        snprintf(sLastUid, sizeof(sLastUid), "%02x%02x%02x%02x%02x%02x%02x%02x",
+                 uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]);
+        sTagCount++;
+        Serial.printf("[diag] TAG uid %s  (poll %lu)\n", sLastUid, (unsigned long)sPollCount);
+        neopixelWrite(DIAG_LED, 0, 60, 0);              // green: tag seen
+        drawScreen("TAG PRESENT", TFT_GREEN);
     } else {
-        if (n % 10 == 0) Serial.printf("[diag] no tag (rc=%d), %lu s\n",
-                                       (int)rc, millis() / 1000);
-        neopixelWrite(DIAG_LED, 0, 0, (n & 1) ? 30 : 0);  // blue blink: alive, polling
+        if (sPollCount % 10 == 0) {
+            Serial.printf("[diag] no tag (rc=%d), %lu s, %lu polls\n",
+                          (int)rc, millis() / 1000, (unsigned long)sPollCount);
+        }
+        neopixelWrite(DIAG_LED, 0, 0, (sPollCount & 1) ? 30 : 0);  // blue blink
+        drawScreen("polling - no tag", TFT_CYAN);
     }
-    n++;
+
     delay(500);
 }

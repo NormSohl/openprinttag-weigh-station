@@ -12,6 +12,15 @@ Self-contained NFC-based filament inventory system for Seattle Makers' 3D printi
 
 **Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 (ISO15693/NFC-V, ICODE SLIX2-compatible), NAU7802 load cell ADC, 3.5" ILI9488 SPI TFT 480×320 (Hosyond/MSP3520-type, CS GPIO 15, DC GPIO 16, RST GPIO 17), passive piezo buzzer (GPIO 14), onboard WS2812 NeoPixel (GPIO 46). The TFT displays status colours directly; the external porch NeoPixel is removed. The TFT shares the SPI bus with the PN5180 (SparkFun Thing Plus ESP32-S3 default SPI — SCK 12 / MOSI 11 / MISO 13; GPIO 33–37 are not broken out on this board); a FreeRTOS mutex (gSpiMutex) guards the bus between nfcTask and displayTask. Library: TFT_eSPI (bodmer), configured via -D build flags in `platformio.ini` (NOT a User_Setup.h — the flags must reach the library's own TUs). The display board's microSD is on a **dedicated second SPI host** (SD_SCK/MOSI/MISO/CS = GPIO 10/18/21/42), isolated from the shared bus — backup/archive only, and the Thing Plus's own onboard SD slot is left empty. See `hardware/netlist.md`.
 
+**SPI host allocation (load-bearing — see the `tft_flags` comment in `platformio.ini`).** The S3 has only two general-purpose SPI hosts, and there are three consumers:
+
+| Arduino bus | Peripheral | Owner | Pins |
+|---|---|---|---|
+| 0 (`FSPI`) | SPI2 | PN5180 **+** TFT, serialised by `gSpiMutex` | 11/12/13 |
+| 1 (`HSPI`) | SPI3 | microSD alone | 10/18/21/42 |
+
+TFT_eSPI is built with **neither `USE_HSPI_PORT` nor `USE_FSPI_PORT`**, which makes it bind the *global* `SPI` object — the same one ATrappmann's PN5180 library hardcodes. That is what puts them on one host. Defining `USE_HSPI_PORT` gives the display its own `SPIClass(HSPI)`; both peripherals then claim GPIO 11/12, and `spiAttachSCK()` ends in `pinMatrixOutAttach()`, a write to the pin's single-valued `func_out_sel` register — so the last attach silently wins and the other device goes deaf. It also collides with the SD's "dedicated" host. Two further consequences: `main.cpp` must call `SPI.begin()` **before** `displayBegin()` (TFT_eSPI's own `spi.begin()` early-returns once the handle exists), and `TFT_MISO` is **-1** because the ILI9488's SDO never tri-states.
+
 **Firmware stack:** PlatformIO + Arduino framework, FreeRTOS tasks for scale/NFC/sync/display, plus an async web app (ESPAsyncWebServer) started from syncTask. Local storage: `store.*` (event log + rebuildable indices on LittleFS, NVS spool-ID counter), `config_store.*` (onboarding catalog tables), `web_app.*` (the built-in UI). ATrappmann's PN5180-Library (`readSingleBlock` / `writeSingleBlock` / `getSystemInfo` cover both reading and writing ISO15693 tags). **Never call `lockICODESLIX2`** — tags must remain rewritable for the life of the spool.
 
 ## OpenPrintTag Format Basics

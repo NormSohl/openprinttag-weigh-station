@@ -22,7 +22,13 @@ static const char* F_MANIFEST  = "/backup/manifest.json";
 static const char* IMPORT_TMP  = "/log/sd-restore.staging"; // LittleFS scratch for restore
 
 // ── State ─────────────────────────────────────────────────────────────────────
-static SPIClass          sSdSpi(HSPI);       // dedicated 2nd SPI host (not gSpiMutex)
+// Dedicated 2nd SPI host — nothing here touches gSpiMutex. On the ESP32-S3
+// Arduino core HSPI == bus 1 == the SPI3 peripheral (bus 0 == SPI2 carries the
+// shared PN5180 + TFT bus). That separation only holds because TFT_eSPI is
+// built WITHOUT USE_HSPI_PORT; defining it would put the display on SPI3 too
+// and this "dedicated" host would silently collide with the card.
+// See the tft_flags comment in platformio.ini.
+static SPIClass          sSdSpi(HSPI);
 static SemaphoreHandle_t sMtx = nullptr;
 static SdStatus          sStatus;
 static size_t            sLastSnapLogBytes = SIZE_MAX;  // log size at last snapshot
