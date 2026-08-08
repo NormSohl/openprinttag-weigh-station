@@ -148,12 +148,15 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 
 **Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, PN5180 reads concurrent with the display, and — as of the geometry fix — **blank-tag onboarding end to end**: detect, 5 s countdown, format (79 of 80 blocks; the last is refused, see the gotcha above), stub record created, back to idle.
 
+**The compaction fold is validated** (2026-08-08). `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage` on the bench: 661065 → 332471 bytes, 4020 → 2015 lines, and the rollup **unchanged across the fold** — 4 buckets, 4477.5 g and 995 weighs each, 17910.0 g total, before and after. That is the check that matters: it proves `storeCompact()` replays only the region it discards and measures deltas against the right baseline, so the long-term popularity data survives having its raw events folded away.
+
+Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per append — LittleFS, one weigh per append in real use, so irrelevant in service); compacting 4020 lines took ~5.5 s under the store lock, which is why syncTask only ever calls it while the scale is idle. The threshold is `STORE_LOG_COMPACT_BYTES` = 900 kB, so a real device compacts well before the log reaches the size used here.
+
 ## Pending (requires hardware)
 
-Two specific checks, in this order — everything else in the pipeline is either validated above or exercised by them:
+**Onboarding form round-trip** is the one significant mechanism still unexercised. Complete the Onboard form in the web app for a spool sitting on the scale: it is the only exercise of the Main-section write-back and the ~1 Hz reconciliation loop — the mechanism that makes "edit in the web app, the tag updates itself" real. Watch for the `needs_ob` flag clearing on the display and a Main write on the wire.
 
-1. **Onboarding form round-trip.** Complete the Onboard form in the web app for a spool sitting on the scale. This is the only exercise of the Main-section write-back and the ~1 Hz reconciliation loop — the mechanism that makes "edit in the web app, the tag updates itself" real. Watch for the `needs_ob` flag clearing on the display and a Main write on the wire.
-2. **The compaction fold.** `WIPE` first (test stores accumulate seed junk), then `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`. Expect **4 buckets, 4477.5 g each, 17910.0 g total, 3980 weighs — identical across both dumps.** If the totals move, `applyInto_`/`storeCompact()` is measuring deltas against the wrong baseline and the long-term popularity data is being silently corrupted; see *Consumption rollup* above before touching anything.
+To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 
 Also unvalidated: foreign-tag adoption, Auxiliary write-back on weigh, and local persistence across power cycles.
 
