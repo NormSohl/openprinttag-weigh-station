@@ -129,6 +129,11 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 - **Reset (cabinet-installed):** browse to `http://weighstation.local/reset` → device reboots into the captive portal.
 - **SSID change / missed portal window:** on each power cycle, WiFiManager automatically opens the captive portal if stored credentials fail. syncTask drives the portal non-blocking (`runConfigPortal()`) and owns the exit policy: the **idle** timer (`WIFI_PORTAL_TIMEOUT_SEC`, 120 s) restarts while any client is associated, so nobody is cut off mid-password; an **absolute** cap (`WIFI_PORTAL_MAX_SEC`, 10 min) never restarts, so an abandoned session still closes. The BOOT button is unreachable in the cabinet, so the portal must always close on its own; on expiry it falls back to the SoftAP and the web app stays reachable. Power-cycle the device and connect to `WeighStation-Setup` within that window.
 
+### WiFi power save is off, deliberately
+`WiFi.setSleep(false)` after a successful join. The ESP32 defaults to `WIFI_PS_MIN_MODEM`, which sleeps between DTIM beacons; miss enough of them and the stack logs `Reason: 200 - BEACON_TIMEOUT` and drops the link, taking the web app with it until it reassociates. Observed on the bench 10 s after a clean join. The device is mains-powered and cabinet-mounted, and its job is to answer HTTP at unpredictable times — the ~30 mA saved is noise next to the TFT backlight and the PN5180's RF field.
+
+syncTask also watches the link: a station-mode drop is otherwise silent, and DHCP can hand back a *different* address on reassociation, which would leave the displayed address and the QR code pointing somewhere wrong rather than merely stale.
+
 ### Config catalog & storage
 - Onboarding catalog tables (vendors/materials/spool-profiles/colors/stock-items) live on LittleFS under `/config/`, seeded with defaults on first boot and editable via the web app's Config page (`config_store.*`).
 - The event log (`/log/events.ndjson`) is the source of truth; indices are rebuildable. NVS namespace `"store"` holds the spool-ID counter.

@@ -223,6 +223,18 @@ void syncTask(void* param) {
                       gApSsid, gWebAddr);
     } else {
         gApSsid[0] = '\0';
+        // Keep the radio awake. The ESP32 defaults to WIFI_PS_MIN_MODEM, which
+        // sleeps between DTIM beacons and wakes to catch them — and when it
+        // misses enough in a row the stack logs
+        //   [W][WiFiGeneric.cpp] Reason: 200 - BEACON_TIMEOUT
+        // and drops the link, taking the web app with it until it reassociates.
+        //
+        // That trade is wrong for this device. It is mains-powered and cabinet-
+        // mounted, and it exists to answer HTTP requests at unpredictable
+        // times; the ~30 mA saved is noise next to the TFT backlight and the
+        // PN5180's RF field, while an unreachable web app is the whole product.
+        WiFi.setSleep(false);
+        WiFi.setAutoReconnect(true);
         // Show the IP rather than the mDNS name: .local depends on the *client*
         // resolving it (Windows in particular is unreliable), while the IP works
         // from anything on the network. mDNS still runs, so weighstation.local
@@ -240,8 +252,35 @@ void syncTask(void* param) {
     int     sSpoolId  = -1;
     OptMain sSnapshot = {};
 
+    // Link watch. A station-mode drop is otherwise completely silent: the
+    // display keeps showing the address it had at boot, the QR keeps encoding
+    // it, and the only symptom is a web app that stopped answering. Worse, DHCP
+    // can hand back a DIFFERENT address on reassociation, so the shown one goes
+    // from stale to wrong.
+    bool wasUp = (WiFi.status() == WL_CONNECTED);
+
     for (;;) {
         DeviceState state = getState();
+
+        if (!gApSsid[0]) {                       // station mode only
+            const bool up = (WiFi.status() == WL_CONNECTED);
+            if (up != wasUp) {
+                wasUp = up;
+                if (up) {
+                    char ip[48];
+                    WiFi.localIP().toString().toCharArray(ip, sizeof(ip));
+                    if (strcmp(ip, gWebAddr) != 0)
+                        Serial.printf("[wifi] reconnected — address changed %s -> %s\n",
+                                      gWebAddr, ip);
+                    else
+                        Serial.println("[wifi] reconnected");
+                    strlcpy(gWebAddr, ip, sizeof(gWebAddr));
+                } else {
+                    Serial.println("[wifi] link lost — web app unreachable until it "
+                                   "reassociates (auto-reconnect is on)");
+                }
+            }
+        }
 
         // ── Quiescent / boot states ───────────────────────────────────────────
         switch (state) {
