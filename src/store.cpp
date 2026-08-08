@@ -692,7 +692,14 @@ bool storeCompact() {
     }
 
     // 3) Build the replacement.
-    LittleFS.remove(COMPACT_TMP);
+    //
+    // No defensive remove() first: "w" already truncates a stale staging file
+    // left by a crashed run, so the remove bought nothing — and on the normal
+    // path, where there is no staging file, it logged
+    //   [E] vfs_api.cpp:182 remove(): /log/compact.staging does not exists
+    // on every single compaction. LittleFS.remove() opens the path FILE_READ to
+    // check it, so a missing file is an error there for the same reason it is
+    // in exists(); see ensureLogFile_() above.
     File out = LittleFS.open(COMPACT_TMP, "w");
     if (!out) return false;
     bool ok = true;
