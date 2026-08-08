@@ -38,9 +38,6 @@ The 3.5" screen shows one of these, depending on what's happening:
 > underneath as a fallback. Use the numeric one if `.local` doesn't resolve,
 > which happens on some Android browsers and across some networks. (The QR
 > always encodes the numeric address, for exactly that reason.)
->
-> *The screenshots above predate the QR code and show the older single-line
-> address.*
 
 ### Status light (NeoPixel)
 
