@@ -161,13 +161,22 @@ To re-run the compaction check after touching `applyInto_` or `storeCompact()`: 
 
 Also unvalidated: foreign-tag adoption, Auxiliary write-back on weigh, and local persistence across power cycles.
 
-### Open bug: the Auxiliary region is too small to write
+### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 
-**`optBuildBlankTag()` reserves 2 bytes (`EMPTY_MAP_SIZE`) for Aux at the last complete block. A written Aux map is 8 bytes.** On an 80×4 ICODE SLIX2 that means the aux region has 4 bytes of room and needs 8, so `writeSection()` either refuses the write outright or — worse, on the shortened 79-block layout the block-79 workaround produces — spans blocks 78 *and* 79. Block 78 lands, block 79 refuses (see the gotcha above), and the tag is left carrying a CBOR map that opens and never closes.
+`optBuildBlankTag()` originally reserved `EMPTY_MAP_SIZE` (2 bytes) for Aux, at the last complete block. **A written Aux map is 8 bytes** (`BF 00 FA xx xx xx xx FF`), so the region needed 8 and had 4. `writeSection()` either refused the write outright or — on the shortened 79-block layout the block-79 workaround produces — ran it across the final two blocks, where the last one refuses. The tag was then left carrying a CBOR map that opens and never closes, and every later read aborted the firmware inside tinycbor. That is what caused the reboot loop of 2026-08-08.
 
-That is what produced the reboot loop of 2026-08-08: every subsequent read decoded the half-written map and aborted in `cbor_value_advance`. `optDecode()` is now hardened so this reads as "undecodable" rather than crashing, but **Auxiliary write-back still cannot succeed** — the per-weigh remaining/used figures never reach the tag.
+Now `AUX_REGION_SIZE` is **24 bytes** (headroom for the aux fields OPT defines beyond `consumed_weight`), placed at the end of the layout, block-aligned by rounding the start *down*, with the terminator after it — so the whole region and any write into it sit inside the layout and never need the final block:
 
-Fixing it means sizing the aux region to hold a real Aux map (8 bytes, so 2–3 blocks) and placing it so it never needs the final block. That changes the on-tag layout, so every already-formatted tag needs `TAGFORMAT`. `tools/opt/optfuzz` prints the layout arithmetic on every run and reproduces the failure, so the fix is testable without hardware.
+| geometry | aux at | write ends in block | last block |
+|---|---|---|---|
+| 80×4 | 292 | 74 | 79 |
+| 79×4 (after the block-79 workaround) | 288 | 73 | 78 |
+| 64×4 | 228 | 58 | 63 |
+| 32×8 | 224 | 28 | 31 |
+
+`tools/opt/optfuzz` asserts that table on every run.
+
+**Tags formatted before this change carry the old layout** and must be reformatted with `TAGFORMAT`. They still *decode* (Meta on the tag declares its own offsets), but Aux write-back to them stays broken.
 
 Known tradeoffs, accepted:
 - `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering stalls `displayTask` too. Fine while the reader is reliable; the fix, if ever needed, is a bounded wait in a vendored copy of the library.

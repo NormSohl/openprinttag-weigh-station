@@ -433,8 +433,27 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     static const size_t MAIN_REGION_OFFSET = META_SECTION_SIZE;  // = 16
     static const size_t EMPTY_MAP_SIZE     = 2;   // 0xBF 0xFF
 
-    // Aux sits at the last complete block so its absolute address is block-aligned.
-    const size_t auxAbsStart = (size_t)(numBlocks - 1) * blockSize;
+    // Bytes reserved for the Auxiliary region.
+    //
+    // This has to hold a WRITTEN Aux map, not the empty one the format leaves
+    // behind. {0: float32} encodes as BF 00 FA xx xx xx xx FF — 8 bytes — and
+    // the region used to reserve 2, at the very last block. That is why
+    // Auxiliary write-back never worked, and how a tag got bricked: on the
+    // shortened layout the block-79 workaround produces, the 8-byte write
+    // spanned the final two blocks, the last one refused, and the tag was left
+    // carrying a CBOR map that opens and never closes. Every later read then
+    // aborted the firmware inside tinycbor.
+    //
+    // 24 leaves room for the aux fields OPT defines beyond consumed_weight.
+    static const size_t AUX_REGION_SIZE = 24;
+
+    // Aux goes at the end, block-aligned (writeSection() addresses whole
+    // blocks), with the TLV terminator after it — and the whole of it inside
+    // the layout, so no write ever has to reach past the last block. Rounding
+    // the start DOWN to a block boundary is what guarantees that.
+    const size_t auxTail = AUX_REGION_SIZE + 1;          // region + terminator
+    if (tagSize < auxTail + blockSize) return SIZE_MAX;
+    const size_t auxAbsStart = ((tagSize - auxTail) / blockSize) * blockSize;
 
     // ── Choose SR bit and TLV length encoding ────────────────────────────────
     // Start with SR=1 (1-byte payload length, payload ≤ 255 bytes), 1-byte TLV length.
@@ -444,7 +463,7 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     size_t payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
 
     if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
-    size_t cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+    size_t cborPayloadLen = auxAbsStart + AUX_REGION_SIZE - payloadStart;
     size_t ndefMsgLen     = ndefHdrSize + cborPayloadLen;
 
     if (cborPayloadLen > 255) {
@@ -453,7 +472,7 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
         ndefHdrSize  = 1 + 1 + 4 + OPT_MIME_TYPE_LEN;  // 34 bytes (SR=0)
         payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
         if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
-        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        cborPayloadLen = auxAbsStart + AUX_REGION_SIZE - payloadStart;
         ndefMsgLen     = ndefHdrSize + cborPayloadLen;
     }
 
@@ -462,12 +481,12 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
         tlvLenSize   = 3;
         payloadStart = OPT_CC_SIZE + 1 + tlvLenSize + ndefHdrSize;
         if (auxAbsStart < payloadStart + MAIN_REGION_OFFSET + EMPTY_MAP_SIZE) return SIZE_MAX;
-        cborPayloadLen = auxAbsStart + EMPTY_MAP_SIZE - payloadStart;
+        cborPayloadLen = auxAbsStart + AUX_REGION_SIZE - payloadStart;
         ndefMsgLen     = ndefHdrSize + cborPayloadLen;
     }
 
     const size_t auxOffset     = auxAbsStart - payloadStart;
-    const size_t terminatorPos = auxAbsStart + EMPTY_MAP_SIZE;
+    const size_t terminatorPos = auxAbsStart + AUX_REGION_SIZE;
     if (terminatorPos >= tagSize) return SIZE_MAX;
 
     // ── Write tag bytes ───────────────────────────────────────────────────────
@@ -513,7 +532,7 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     cbor_encode_int(&map, META_KEY_MAIN_REGION_OFFSET); cbor_encode_int(&map, (int64_t)MAIN_REGION_OFFSET);
     cbor_encode_int(&map, META_KEY_MAIN_REGION_SIZE);   cbor_encode_int(&map, 0);
     cbor_encode_int(&map, META_KEY_AUX_REGION_OFFSET);  cbor_encode_int(&map, (int64_t)auxOffset);
-    cbor_encode_int(&map, META_KEY_AUX_REGION_SIZE);    cbor_encode_int(&map, 0);
+    cbor_encode_int(&map, META_KEY_AUX_REGION_SIZE);    cbor_encode_int(&map, (int64_t)AUX_REGION_SIZE);
     cbor_encoder_close_container(&enc, &map);
     size_t metaLen = cbor_encoder_get_buffer_size(&enc, metaBuf);
     if (metaLen > META_SECTION_SIZE) return SIZE_MAX;
@@ -534,7 +553,7 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
         outMeta->main_region_offset = (uint16_t)MAIN_REGION_OFFSET;
         outMeta->main_region_size   = 0;
         outMeta->aux_region_offset  = (uint16_t)auxOffset;
-        outMeta->aux_region_size    = 0;
+        outMeta->aux_region_size    = (uint16_t)AUX_REGION_SIZE;
     }
 
     return payloadStart;  // byte offset of OPT CBOR payload within outBuf

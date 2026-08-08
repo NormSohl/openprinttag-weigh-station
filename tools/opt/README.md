@@ -87,6 +87,22 @@ visible without reading any code:
 layout: payload@42 main@58 (95 B used / 258 room)  aux@316 (needs 8 B / 4 room)   <-- Aux does not fit
 ```
 
-Hardening `optDecode()` stops the crash — a bad tag now reads as "undecodable"
-and the station stays up. It does **not** make Auxiliary write-back work; that
-needs the region sized to hold a real Aux map.
+Two separate fixes came out of it. Hardening `optDecode()` stops the crash — a
+bad tag now reads as "undecodable" and the station stays up. Sizing
+`AUX_REGION_SIZE` to 24 bytes and placing the region clear of the final block
+stops the tag being corrupted in the first place, which is what makes Auxiliary
+write-back possible at all.
+
+The harness guards the second one directly: `checkLayout()` runs the geometries
+that matter and fails the build if a written Aux map does not fit its region, or
+if it would end in the last block.
+
+```
+Aux region fit:
+  80x4: tag 320 B, aux@292 region 24 B, write needs 8 B ending in block 74 (last is 79) -> fits, clears the final block
+  79x4: tag 316 B, aux@288 region 24 B, write needs 8 B ending in block 73 (last is 78) -> fits, clears the final block
+```
+
+**Tags formatted before this layout change need `TAGFORMAT`.** They still decode
+— Meta on the tag declares its own offsets — but Aux write-back to them stays
+broken, because their aux region is still 2 bytes at the end.

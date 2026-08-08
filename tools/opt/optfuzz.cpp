@@ -21,6 +21,36 @@
 #include <random>
 #include "opt_tag.h"
 
+// Report the layout for a geometry, and check an Aux write actually fits inside
+// it — including the block it would end in, which is what the block-79 refusal
+// turns into a corrupt tag.
+static bool checkLayout(uint8_t numBlocks, uint8_t blockSize) {
+    std::vector<uint8_t> buf((size_t)numBlocks * blockSize, 0);
+    OptMeta meta{};
+    size_t payloadOff = optBuildBlankTag(numBlocks, blockSize, buf.data(), buf.size(), &meta);
+    if (payloadOff == SIZE_MAX) {
+        std::printf("  %2ux%u: optBuildBlankTag refused\n", numBlocks, blockSize);
+        return false;
+    }
+    OptAuxiliary a{}; a.consumed_weight = 123.5f;
+    uint8_t probe[64];
+    size_t auxLen = optEncodeAux(a, probe, sizeof probe);
+
+    size_t auxAbs   = payloadOff + meta.aux_region_offset;
+    size_t endByte  = auxAbs + auxLen - 1;
+    size_t lastBlk  = endByte / blockSize;
+    bool   fits     = auxLen <= meta.aux_region_size && endByte < buf.size();
+    bool   clearsEnd = lastBlk < (size_t)numBlocks - 1;   // never needs the final block
+
+    std::printf("  %ux%u: tag %zu B, aux@%zu region %u B, write needs %zu B "
+                "ending in block %zu (last is %u) -> %s%s\n",
+                numBlocks, blockSize, buf.size(), auxAbs, meta.aux_region_size,
+                auxLen, lastBlk, numBlocks - 1,
+                fits ? "fits" : "DOES NOT FIT",
+                clearsEnd ? ", clears the final block" : ", TOUCHES THE FINAL BLOCK");
+    return fits && clearsEnd;
+}
+
 // Build a well-formed tag image, then let callers damage it.
 static std::vector<uint8_t> goodTag() {
     OptMain m{};
@@ -85,6 +115,18 @@ static int decodeNoCrash(const uint8_t* p, size_t n) {
 }
 
 int main() {
+    // The Aux region has to hold a written map with room to spare, on both the
+    // nominal geometry and the one-block-shorter layout nfcTask falls back to
+    // when the final block refuses writes.
+    std::printf("Aux region fit:\n");
+    bool layoutOk = true;
+    layoutOk &= checkLayout(80, 4);   // ICODE SLIX2 as reported by getSystemInfo
+    layoutOk &= checkLayout(79, 4);   // after the block-79 workaround
+    layoutOk &= checkLayout(64, 4);
+    layoutOk &= checkLayout(32, 8);
+    if (!layoutOk) { std::printf("\nFAIL: Aux does not fit its region\n"); return 1; }
+    std::printf("\n");
+
     std::vector<uint8_t> good = goodTag();
     std::printf("built a %zu-byte reference tag image\n", good.size());
 
