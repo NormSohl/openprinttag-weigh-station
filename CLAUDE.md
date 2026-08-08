@@ -148,5 +148,18 @@ All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
 **Validated on hardware:** 4 MB partitions + PSRAM, LittleFS, seeded config catalog, all four tasks, TFT (rotation 1), buzzer, NeoPixel, WiFi join + captive portal + web app, scale calibration persisted to NVS, PN5180 reads concurrent with the display, and — as of the geometry fix — **blank-tag onboarding end to end**: detect, 5 s countdown, format (79 of 80 blocks; the last is refused, see the gotcha above), stub record created, back to idle.
 
 ## Pending (requires hardware)
-- End-to-end state machine validation: tag **write**-back (Auxiliary on weigh, Main on reconcile), blank-tag onboarding countdown + stub creation, foreign-tag adoption, local persistence across power cycles, and the ~1 Hz reconciliation loop.
-- Known tradeoff: `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering now stalls `displayTask` too. Acceptable while the reader is reliable; if it ever isn't, the fix is a bounded wait in a vendored copy of the library.
+
+Two specific checks, in this order — everything else in the pipeline is either validated above or exercised by them:
+
+1. **Onboarding form round-trip.** Complete the Onboard form in the web app for a spool sitting on the scale. This is the only exercise of the Main-section write-back and the ~1 Hz reconciliation loop — the mechanism that makes "edit in the web app, the tag updates itself" real. Watch for the `needs_ob` flag clearing on the display and a Main write on the wire.
+2. **The compaction fold.** `WIPE` first (test stores accumulate seed junk), then `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`. Expect **4 buckets, 4477.5 g each, 17910.0 g total, 3980 weighs — identical across both dumps.** If the totals move, `applyInto_`/`storeCompact()` is measuring deltas against the wrong baseline and the long-term popularity data is being silently corrupted; see *Consumption rollup* above before touching anything.
+
+Also unvalidated: foreign-tag adoption, Auxiliary write-back on weigh, and local persistence across power cycles.
+
+Known tradeoffs, accepted:
+- `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering stalls `displayTask` too. Fine while the reader is reliable; the fix, if ever needed, is a bounded wait in a vendored copy of the library.
+- Block 79 of the ICODE SLIX2 tags in use refuses writes with rc=0x0F. Worked around adaptively (see the gotcha above); root cause unconfirmed.
+
+## Build verification
+
+The PlatformIO registry is **blocked from the Claude Code sandbox** (403 on CONNECT to `api.registry.*.platformio.org`, nothing cached), so firmware changes made there are *not* compile-verified — only the user's `pio run` proves them. Prefer changes that can be checked another way, and say plainly when something is unverified. What *can* be verified in the sandbox: anything with no Arduino dependency, compiled natively — see `tools/qr/`, which builds the real QR encoder under ASAN/UBSAN and caught a stack overrun that would otherwise have shipped.
