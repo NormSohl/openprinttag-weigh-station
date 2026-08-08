@@ -21,6 +21,8 @@ STYLE = (
 ".card{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:14px;margin-bottom:14px}"
 ".big{font-size:28px;font-weight:700}"
 ".muted{color:#888}"
+".spec{display:flex;flex-wrap:wrap;gap:5px 16px;font-size:14px;color:#aaa;margin-top:10px}"
+".spec b{color:#ddd;font-weight:600}"
 # preview-only chrome:
 ".plabel{max-width:760px;margin:34px auto 0;padding:6px 12px;font:600 13px/1.4 ui-monospace,Menlo,monospace;"
 "color:#9c9;background:#0c140c;border-left:3px solid #2a5;border-radius:4px}"
@@ -39,6 +41,12 @@ def page(route, active, body):
 
 def sw(hexrgb): return f"<span class='sw' style='background:#{hexrgb}'></span>"
 
+def kv(label,value): return f"<span><b>{label}</b> {value}</span>"
+
+def spec(*items):
+    body="".join(kv(l,v) for l,v in items if v)
+    return f"<div class='spec'>{body}</div>" if body else ""
+
 def sparkline(v):
     W,H,PAD=320,64,6
     lo,hi=min(v),max(v); span=(hi-lo) if (hi-lo)>0.001 else 1.0
@@ -54,8 +62,10 @@ def sparkline(v):
 # ---- Dashboard (/) ----
 dash = ("<div class='card'>"
 "<div class='muted'>On the scale now</div>"
-"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>#42 PLA</a></div>"
-"<p class='muted'>Bambu Labs &middot; 612 g remaining</p></div>"
+"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw('f99963')+"#42 PLA</a></div>"
+"<p class='muted'>Bambu Labs &middot; PLA &middot; 612 g remaining &middot; 388 g used</p>"
++spec(("Tare","201 g"),("Nominal","1000 g"),("&Oslash;","1.75 mm"),
+      ("Nozzle","220&ndash;240 &deg;C"),("Bed","55&ndash;65 &deg;C"))+"</div>"
 "<h3>Inventory by material</h3><table>"
 "<tr><th>Material</th><th>Spools</th><th>Remaining</th></tr>"
 "<tr><td>PLA</td><td>3</td><td>2100 g</td></tr>"
@@ -68,7 +78,7 @@ dash_uncal = ("<div class='card' style='border-color:#a70'>"
 "<b class='ob'>Scale not calibrated.</b> Weights will be wrong until you "
 "<a href='#' style='color:#fd6'>calibrate the scale</a>.</div>"
 "<div class='card'><div class='muted'>On the scale now</div>"
-"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>#47 Unknown</a></div>"
+"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw('000000')+"#47 Unknown</a></div>"
 "<p class='ob'>Needs onboarding &mdash; <a href='#' style='color:#fd6'>add details</a></p></div>"
 "<h3>Inventory by material</h3><table>"
 "<tr><th>Material</th><th>Spools</th><th>Remaining</th></tr>"
@@ -92,7 +102,9 @@ ts=[f"2026-07-{4+i:02d}T18:0{i%6}:11Z" for i in range(len(series))]
 detail=("<div class='card'>"
 f"<div class='big'>{sw('f99963')}#42 PLA</div>"
 "<p class='muted'>Bambu Labs &middot; PLA &middot; 13 weigh session(s)</p>"
-"<p class='big'>212 g <span class='muted' style='font-size:15px'>remaining &middot; 788 g used</span></p></div>"
+"<p class='big'>212 g <span class='muted' style='font-size:15px'>remaining &middot; 788 g used</span></p>"
++spec(("Tare","201 g"),("Nominal","1000 g"),("&Oslash;","1.75 mm"),
+      ("Last weighed","2026-07-16T18:05:11Z"))+"</div>"
 "<div class='card'><label style='margin-top:0'>Remaining over time</label>"
 f"{sparkline(series)}</div>"
 "<h3>Weigh history <a href='#' style='font-size:14px;color:#8f8'>(CSV)</a></h3>"

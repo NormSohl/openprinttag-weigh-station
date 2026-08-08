@@ -101,6 +101,11 @@ static const char* STYLE =
     ".card{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:14px;margin-bottom:14px}"
     ".big{font-size:28px;font-weight:700}"
     ".muted{color:#888}"
+    // Spec strip: the numbers onboarding stored, which are otherwise typed once
+    // into the form and never seen again. Flex-wrap rather than a table so it
+    // reflows to one item per line on a phone instead of scrolling.
+    ".spec{display:flex;flex-wrap:wrap;gap:5px 16px;font-size:14px;color:#aaa;margin-top:10px}"
+    ".spec b{color:#ddd;font-weight:600}"
     // Phone-width tuning. Tighter cells and slightly smaller type let the wider
     // tables (Usage has five columns) fit without scrolling at all on most
     // handsets; the ones that still don't fit scroll inside main.
@@ -157,6 +162,27 @@ static int currentSpool() {
     return (live && gSpoolId > 0) ? gSpoolId : -1;
 }
 
+// One "label value" item for a .spec strip.
+static String kv(const char* label, const String& value) {
+    return "<span><b>" + String(label) + "</b> " + value + "</span>";
+}
+
+// The physical numbers a spool record carries: the tare, nominal weight and
+// diameter chosen during onboarding.
+//
+// These exist only because someone typed them into the Onboard form, and until
+// now nothing displayed them back — so a wrong spool profile (the commonest
+// onboarding mistake, and the one that makes every later remaining-weight
+// wrong) was invisible. Omit anything still zero rather than printing "0 g",
+// which reads like a measurement instead of a blank.
+static String specStrip(const SpoolRecord& r) {
+    String s;
+    if (r.empty_g > 0.0f) s += kv("Tare",    String(r.empty_g, 0) + " g");
+    if (r.nom_g   > 0.0f) s += kv("Nominal", String(r.nom_g,   0) + " g");
+    if (r.dia     > 0.0f) s += kv("&Oslash;",  String(r.dia,   2) + " mm");
+    return s;
+}
+
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
     String p = head("Inventory", "/");
@@ -170,17 +196,42 @@ static void handleRoot(AsyncWebServerRequest* req) {
     if (cur > 0) {
         SpoolRecord r;
         if (storeGetSpool((uint32_t)cur, r)) {
+            char rgb[8];
+            snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
             p += "<div class='card'>";
             p += "<div class='muted'>On the scale now</div>";
             p += "<div class='big'><a href='/spool?id=" + String((unsigned)r.spool)
-               + "' style='color:inherit;text-decoration:none'>#" + String((unsigned)r.spool)
+               + "' style='color:inherit;text-decoration:none'>"
+               + "<span class='sw' style='background:#" + String(rgb) + "'></span>#"
+               + String((unsigned)r.spool)
                + " " + esc(r.material[0] ? r.material : "Unknown") + "</a></div>";
-            if (r.needs_ob)
+            if (r.needs_ob) {
                 p += "<p class='ob'>Needs onboarding &mdash; "
                      "<a href='/onboard' style='color:#fd6'>add details</a></p>";
-            else
-                p += "<p class='muted'>" + esc(r.vendor) + " &middot; "
-                   + String(r.remaining_g, 0) + " g remaining</p>";
+            } else {
+                p += "<p class='muted'>" + esc(r.vendor)
+                   + (r.abbr[0] ? " &middot; " + esc(r.abbr) : String())
+                   + " &middot; " + String(r.remaining_g, 0) + " g remaining &middot; "
+                   + String(r.used_g, 0) + " g used</p>";
+
+                // Spec strip, plus the print temperatures. The temps are not in
+                // the store record at all — they live on the tag, so read them
+                // from the decoded Main section of whatever is on the scale.
+                // This card is the only place they can be shown, and they are
+                // what a member actually wants when setting up a print.
+                String spec = specStrip(r);
+                OptMain t;
+                xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                t = gTagMain;
+                xSemaphoreGive(gTagMutex);
+                if (t.max_print_temperature > 0)
+                    spec += kv("Nozzle", String(t.min_print_temperature) + "&ndash;"
+                                       + String(t.max_print_temperature) + " &deg;C");
+                if (t.max_bed_temperature > 0)
+                    spec += kv("Bed", String(t.min_bed_temperature) + "&ndash;"
+                                    + String(t.max_bed_temperature) + " &deg;C");
+                if (spec.length()) p += "<div class='spec'>" + spec + "</div>";
+            }
             p += "</div>";
         }
     }
@@ -329,6 +380,12 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     p += "<p class='big'>" + String(r.remaining_g, 0) + " g <span class='muted' "
          "style='font-size:15px'>remaining &middot; " + String(r.used_g, 0)
        + " g used</span></p>";
+    // This is where onboarding now lands, so it has to show what was entered —
+    // otherwise submitting the form gives no confirmation that the tare and
+    // nominal weight (the values every later reading depends on) took.
+    String spec = specStrip(r);
+    if (r.last_ts[0]) spec += kv("Last weighed", esc(r.last_ts));
+    if (spec.length()) p += "<div class='spec'>" + spec + "</div>";
     p += "</div>";
 
     p += "<div class='card'><label style='margin-top:0'>Remaining over time</label>";
@@ -501,7 +558,11 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     // Optionally remember a free-typed vendor for reuse.
     if (vendor.length()) cfgVendorAdd(vendor.c_str());
 
-    req->redirect("/");
+    // Land on the spool that was just onboarded, not the dashboard. Submitting
+    // eight fields and being returned to an aggregate roll-up gives no
+    // confirmation that any of them took; the detail page shows the colour,
+    // vendor, tare, nominal and weigh history for this exact record.
+    req->redirect("/spool?id=" + String((unsigned)id));
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
