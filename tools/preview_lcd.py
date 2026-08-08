@@ -8,7 +8,7 @@ W="#ffffff"; GREY="#7b7d7b"; GREEN="#00ff00"; CYAN="#00ffff"
 RED="#ff0000"; YEL="#ffff00"; BLUE="#0064dc"; AMBER="#dc8c00"
 
 # Geometry mirrored from display_task.cpp.
-QR_X, QR_Y, QR_BOX, QUIET = 322, 70, 148, 4
+QR_X, QR_Y, QR_BOX, QUIET = 332, 70, 140, 4
 
 def T(text,color):        return (12,12,26,color,text,True)   # title (size 3, bold)
 def R(r,text,color):      return (12,12+r*28,17,color,text,False)
@@ -126,9 +126,11 @@ states=[
  ("WeighingAndSync", ("#3355ff","blue"),
   [T("Weighing...",BLUE), R(2,"612 g",W)]),
  ("Present  (needs onboarding)", ("#ffe033","yellow"),
-  [T("Registered!",YEL), R(2,"Spool #47",W), R(3,"NEEDS ONBOARDING",AMBER),
-   R(4,"Scan QR to add details",GREY), R(5,"http://192.168.1.42",CYAN),
-   R(6,"612 g",W), QR("onboard")]),
+  [T("Registered!",YEL), R(2,"Spool #47",W), R(3,"612 g",W),
+   R(4,"NEEDS ONBOARDING",AMBER), R(5,"Scan QR to add details,",GREY),
+   R(6,"or visit the Onboard page:",GREY),
+   R(7,"weighstation.local/onboard",CYAN), R(8,"or 192.168.1.42/onboard",GREY),
+   QR("onboard")]),
  ("Present  (normal)", ("#2ecc40","green"),
   [R(0,"Spool #42",W), R(2,"PLA",W), R(3,"612 g remaining",GREEN),
    R(5,"Saved locally",GREY)]),
@@ -142,7 +144,7 @@ states=[
  ("ValidTagFound", ("#33aacc","cyan"),
   [T("Tag read",CYAN), R(2,"PETG",W), R(3,"Prusament",GREY)]),
  ("(any unhandled state)", ("#333","dim white"),
-  [T("...",GREY), R(2,"WeighingAndSync",W), R(3,"(no display for this state)",GREY)]),
+  [T("...",GREY), R(2,"weighing_and_sync",W), R(3,"(no screen for this state)",GREY)]),
 ]
 
 def screen(label, px, spans):

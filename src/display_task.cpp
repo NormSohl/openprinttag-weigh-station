@@ -94,13 +94,22 @@ static const int ROW_H  = 28;
 // The right-hand strip is reserved for the QR panel, so row() must not clear
 // into it — otherwise every text redraw would wipe the code.
 //
-// The longest string any screen prints is 25 characters. At text size 2 the
-// GLCD font is 12 px per character, so that ends at MARGIN + 300 = 312 px,
-// which is why the boundary sits at 316 and the panel starts at 322.
-static const int TEXT_W = 316;
-static const int QR_X   = 322;
+// The longest string any screen prints is 26 characters
+// ("weighstation.local/onboard"). At text size 2 the GLCD font is 12 px per
+// character, so that ends at MARGIN + 312 = 324 px. TEXT_W is 330 to cover it
+// with a little slack; anything longer than 26 characters will be clipped by
+// the panel and leave uncleared pixels behind on redraw.
+//
+// The panel gave up 6 px of left edge and 8 px of width to buy that character.
+// It costs the code nothing: the module scale is an integer divide, and every
+// URL this firmware builds encodes at version 2 (25 modules + 8 quiet = 33),
+// where 148/33 and 140/33 both floor to 4. The drawn code is the same 132 px
+// square either way, just sitting 6 px further right — still 12 px clear of
+// the longest text line and 12 px inside the right edge of the screen.
+static const int TEXT_W = 330;
+static const int QR_X   = 332;
 static const int QR_Y   = 70;
-static const int QR_BOX = 148;   // fits 480-322-10 wide and 320-70-... tall
+static const int QR_BOX = 140;   // fits 480-332-8 wide and 320-70-... tall
 
 static void cls() { tft.fillScreen(TFT_BLACK); }
 
@@ -428,15 +437,30 @@ void displayTask(void* param) {
                 if (needsOnboarding) {
                     title("Registered!", TFT_YELLOW);
                     if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
+                    rowf(3, TFT_WHITE, "%.0f g", remaining);
                     // Name the state outright. "Registered!" alone reads as
                     // finished, when in fact the spool has no vendor, material
                     // or colour yet and is useless for inventory until someone
                     // fills the form in. Say what is missing, not just what
                     // happened.
-                    row(3, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
-                    row(4, "Scan QR to add details", TFT_DARKGREY);
-                    if (gWebAddr[0]) rowf(5, TFT_CYAN, "http://%s", gWebAddr);
-                    rowf(6, TFT_WHITE, "%.0f g", remaining);
+                    row(4, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
+                    // Not everyone scans QR codes, and a phone camera is not
+                    // always to hand, so give the typed route too — named by the
+                    // page it lands on, so it matches the web app's own nav.
+                    // Both addresses carry the /onboard path: the home page does
+                    // not say which spool it would act on, and the whole point
+                    // here is to reach the form for THIS one.
+                    row(5, "Scan QR to add details,", TFT_DARKGREY);
+                    row(6, "or visit the Onboard page:", TFT_DARKGREY);
+                    // mDNS only resolves on a real LAN. In SoftAP fallback the
+                    // numeric address is the only one that works, so don't
+                    // advertise a name that would just fail there.
+                    if (!gApSsid[0]) {
+                        rowf(7, TFT_CYAN, "%s.local/onboard", DEVICE_HOSTNAME);
+                        if (gWebAddr[0]) rowf(8, TFT_DARKGREY, "or %s/onboard", gWebAddr);
+                    } else if (gWebAddr[0]) {
+                        rowf(7, TFT_CYAN, "%s/onboard", gWebAddr);
+                    }
                     // This is the one screen where someone is definitely about to
                     // go to the web app, so the QR deep-links to the form itself
                     // rather than the home page. The Onboard page targets whatever
@@ -472,7 +496,7 @@ void displayTask(void* param) {
             default:
                 title("...", TFT_DARKGREY);
                 row(2, deviceStateName(state), TFT_WHITE);
-                row(3, "(no display for this state)", TFT_DARKGREY);
+                row(3, "(no screen for this state)", TFT_DARKGREY);
                 pixelColor = pixel.Color(30, 30, 30);
                 break;
             }
