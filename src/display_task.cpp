@@ -565,15 +565,20 @@ void displayTask(void* param) {
                     // fact ("which spool is this") instead of three stacked
                     // fragments. OPT asks for brand_name and material_name to be
                     // shown together, and this is that, literally.
-                    char hdr[160];
-                    const char* nm = snap.material_name[0] ? snap.material_name
-                                                           : "Unknown";
-                    if (spoolId > 0) snprintf(hdr, sizeof(hdr), "Spool #%d  %s", spoolId, nm);
-                    else             snprintf(hdr, sizeof(hdr), "%s", nm);
+                    // Brand BEFORE the material name, which is also the order
+                    // OPT shows the two in: "Prusament PLA Galaxy Black". It
+                    // reads as one product description that way, and when the
+                    // line wraps the brand stays on the first row with the
+                    // spool number rather than being orphaned on the second.
+                    char hdr[160] = {};
+                    if (spoolId > 0) snprintf(hdr, sizeof(hdr), "Spool #%d", spoolId);
                     if (snap.brand_name[0]) {
-                        strlcat(hdr, "  ", sizeof(hdr));
+                        if (hdr[0]) strlcat(hdr, "  ", sizeof(hdr));
                         strlcat(hdr, snap.brand_name, sizeof(hdr));
                     }
+                    if (hdr[0]) strlcat(hdr, "  ", sizeof(hdr));
+                    strlcat(hdr, snap.material_name[0] ? snap.material_name : "Unknown",
+                            sizeof(hdr));
                     int r = rowWrapWide(0, hdr, TFT_WHITE);
                     rowf(r + 1, TFT_GREEN, "%.0f g remaining", remaining);
                     // "Saved locally" was left from the Spoolman era, where the

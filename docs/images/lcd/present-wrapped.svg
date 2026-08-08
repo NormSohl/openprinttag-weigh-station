@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" font-family="ui-monospace,Menlo,Consolas,monospace">
 <rect width="480" height="320" rx="6" fill="#000"/>
-<text x="12" y="25" font-size="17" fill="#ffffff">Spool #51  PC Blend Carbon Fiber Black</text>
-<text x="12" y="53" font-size="17" fill="#ffffff">Prusament</text>
+<text x="12" y="25" font-size="17" fill="#ffffff">Spool #51  Prusament  PC Blend Carbon</text>
+<text x="12" y="53" font-size="17" fill="#ffffff">Fiber Black</text>
 <text x="12" y="109" font-size="17" fill="#00ff00">612 g remaining</text>
 <text x="12" y="165" font-size="17" fill="#7b7d7b">Weight recorded</text>
 </svg>
