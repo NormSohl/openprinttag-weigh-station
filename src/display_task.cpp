@@ -196,6 +196,43 @@ static void rowf(int r, uint16_t color, const char* fmt, ...) {
     row(r, buf, color);
 }
 
+// How many size-2 characters fit a body row before the QR panel.
+static const int ROW_CHARS = (TEXT_W - MARGIN) / 12;   // 26
+
+// Draw `text` over up to `maxRows` rows, breaking at spaces. Returns the next
+// free row.
+//
+// OPT material_name is a DISPLAY string up to 63 characters — the spec's own
+// example is "PC Blend Carbon Fiber Black" — and a body row holds 26. Handing
+// the raw string to row() draws straight through TEXT_W into the QR panel, and
+// row() only clears out to TEXT_W, so the overflow also survives the next
+// redraw. That reads as a display fault rather than a long name.
+//
+// Breaking at a space keeps the name legible; a word longer than a row is cut
+// hard, because there is nothing better to do with it.
+static int rowWrap(int r, const char* text, uint16_t color, int maxRows = 2) {
+    char buf[ROW_CHARS + 1];
+    const size_t len = strlen(text);
+    size_t pos = 0;
+    int drawn = 0;
+    while (pos < len && drawn < maxRows) {
+        size_t take = len - pos;
+        if (take > (size_t)ROW_CHARS) {
+            take = (size_t)ROW_CHARS;
+            size_t brk = take;
+            while (brk > 0 && text[pos + brk] != ' ') brk--;
+            if (brk > 0) take = brk;          // else no space: hard break
+        }
+        memcpy(buf, text + pos, take);
+        buf[take] = 0;
+        row(r + drawn, buf, color);
+        drawn++;
+        pos += take;
+        while (pos < len && text[pos] == ' ') pos++;
+    }
+    return r + drawn;
+}
+
 // Size-3 title on row 0: 24px tall.
 static void title(const char* text, uint16_t color) {
     tft.fillRect(0, MARGIN, 480, 32, TFT_BLACK);
@@ -410,17 +447,24 @@ void displayTask(void* param) {
             case DeviceState::ForeignTagFound:
             case DeviceState::RegisteringForeignTag:
                 title("New spool found", TFT_CYAN);
-                row(2, snap.brand_name[0]    ? snap.brand_name    : "Unknown brand",    TFT_WHITE);
-                row(3, snap.material_name[0] ? snap.material_name : "Unknown material", TFT_WHITE);
-                row(4, "Registering spool...", TFT_DARKGREY);
+                row(2, snap.brand_name[0] ? snap.brand_name : "Unknown brand", TFT_WHITE);
+                // A foreign tag carries whatever product name its vendor wrote,
+                // which is exactly the case OPT's 63-char limit exists for.
+                {
+                    int r = rowWrap(3, snap.material_name[0] ? snap.material_name
+                                                             : "Unknown material", TFT_WHITE);
+                    row(r + 1, "Registering spool...", TFT_DARKGREY);
+                }
                 pixelColor = pixel.Color(0, 50, 50);
                 break;
 
             case DeviceState::ValidTagFound:
                 title("Tag read", TFT_CYAN);
-                row(2, snap.material_name[0] ? snap.material_name : "Reading spool...",
-                    TFT_WHITE);
-                if (snap.brand_name[0]) row(3, snap.brand_name, TFT_DARKGREY);
+                {
+                    int r = rowWrap(2, snap.material_name[0] ? snap.material_name
+                                                             : "Reading spool...", TFT_WHITE);
+                    if (snap.brand_name[0]) row(r, snap.brand_name, TFT_DARKGREY);
+                }
                 pixelColor = pixel.Color(0, 40, 60);
                 break;
 
@@ -477,11 +521,15 @@ void displayTask(void* param) {
                 } else {
                     if (spoolId > 0) rowf(0, TFT_WHITE, "Spool #%d", spoolId);
                     else             row(0, "Spool", TFT_WHITE);
-                    char matLine[28] = {};
-                    strlcpy(matLine, snap.material_name[0] ? snap.material_name : "Unknown", sizeof(matLine));
-                    row(2, matLine, TFT_WHITE);
-                    rowf(3, TFT_GREEN, "%.0f g remaining", remaining);
-                    row(5, "Saved locally", TFT_DARKGREY);
+                    // The full product name, wrapped — "PLA Summer Grass", not
+                    // "PLA". OPT says brand_name and material_name should be
+                    // shown together ("Prusament PLA Galaxy Black"), so the
+                    // brand goes underneath rather than being dropped.
+                    int r = rowWrap(2, snap.material_name[0] ? snap.material_name
+                                                             : "Unknown", TFT_WHITE);
+                    if (snap.brand_name[0]) row(r++, snap.brand_name, TFT_DARKGREY);
+                    rowf(r + 1, TFT_GREEN, "%.0f g remaining", remaining);
+                    row(r + 3, "Saved locally", TFT_DARKGREY);
                     pixelColor = pixel.Color(0, 80, 0);
                 }
                 break;

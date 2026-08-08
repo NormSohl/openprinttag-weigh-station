@@ -28,7 +28,8 @@ typo. `weighstation.local/onboard` is exactly 26; so is the longest
 | ForeignTagFound / RegisteringForeignTag | `New spool found` | decoded brand · decoded material · `Registering spool...` | pre-tagged spool (Prusament, another maker's tooling) not yet known — decode its own data and create a local record |
 | WeighingAndSync | `Weighing...` | `<grams> g` | single sample |
 | Present (needs onboarding) | `Registered!` | `Spool #N  <grams> g` · amber `NEEDS ONBOARDING` · `Scan QR to add details,` · `or visit the Onboard page:` · `weighstation.local/onboard` · `or <ip>/onboard`; QR panel deep-links to `/onboard` | names the missing step rather than just reporting success. Both addresses carry the `/onboard` path — the home page doesn't say which spool it would act on. The `.local` line is suppressed in SoftAP fallback, where mDNS won't resolve |
-| Present (normal) | `Spool #N` | material · `<grams> g remaining` · `Saved locally` | steady display while the spool sits on the scale |
+| ValidTagFound | `Tag read` | `<material_name>` (wrapped) · `<brand_name>` | brief screen between detection and weighing |
+| Present (normal) | `Spool #N` | `<material_name>` (wrapped over up to 2 rows) · `<brand_name>` · `<grams> g remaining` · `Saved locally` | steady display while the spool sits on the scale. Shows the OPT **display string** — "PLA Summer Grass", not "PLA" — with the brand beneath it, as the spec asks (`brand_name` + `material_name` together). A 63-char name cannot fit a 26-char row, so `rowWrap()` breaks it at a space; a word longer than a row is cut hard |
 | ReconcilingMainSection | `Updating tag...` | | brief overlay, then resumes Present |
 
 Local storage replaced Spoolman, so there is no "offline/unreachable" state —

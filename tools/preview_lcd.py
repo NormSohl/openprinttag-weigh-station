@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Mock the 3.5" ILI9488 480x320 TFT for each device state, from display_task.cpp.
 # Layout: title size-3 at (12,12); body rows size-2 at (12, 12+r*28); black bg.
-# Text is confined to the left TEXT_W=316 px; the QR panel occupies (322,70,148,148).
+# Text is confined to the left TEXT_W=330 px (26 chars at size 2); the QR panel
+# occupies (332,70,140,140). Long product names wrap — see rowWrap() in the firmware.
 
 # TFT colors -> hex
 W="#ffffff"; GREY="#7b7d7b"; GREEN="#00ff00"; CYAN="#00ffff"
@@ -122,7 +123,7 @@ states=[
   [T("Registering...",BLUE), R(2,"Please wait",W)]),
  ("ForeignTagFound / Registering", ("#33cccc","cyan"),
   [T("New spool found",CYAN), R(2,"Prusament",W), R(3,"PETG Prusa Orange",W),
-   R(4,"Registering spool...",GREY)]),
+   R(5,"Registering spool...",GREY)]),
  ("WeighingAndSync", ("#3355ff","blue"),
   [T("Weighing...",BLUE), R(2,"612 g",W)]),
  ("Present  (needs onboarding)", ("#ffe033","yellow"),
@@ -132,8 +133,12 @@ states=[
    R(6,"weighstation.local/onboard",CYAN), R(7,"or 192.168.1.42/onboard",GREY),
    QR("onboard")]),
  ("Present  (normal)", ("#2ecc40","green"),
-  [R(0,"Spool #42",W), R(2,"PLA",W), R(3,"612 g remaining",GREEN),
-   R(5,"Saved locally",GREY)]),
+  [R(0,"Spool #42",W), R(2,"PLA Summer Grass",W), R(3,"eSun",GREY),
+   R(5,"612 g remaining",GREEN), R(7,"Saved locally",GREY)]),
+ ("Present  (long product name, wrapped)", ("#2ecc40","green"),
+  [R(0,"Spool #51",W), R(2,"PC Blend Carbon Fiber",W), R(3,"Black",W),
+   R(4,"Prusament",GREY), R(6,"612 g remaining",GREEN),
+   R(8,"Saved locally",GREY)]),
  ("ReconcilingMainSection", ("#ffe033","yellow"),
   [T("Updating tag...",YEL)]),
  ("Idle  (storage full)", ("#2ecc40","dim green"),
@@ -142,7 +147,7 @@ states=[
    R(5,"Web app:",GREY), R(6,"weighstation.local",CYAN),
    R(7,"or 192.168.1.42",GREY), QR("idle")]),
  ("ValidTagFound", ("#33aacc","cyan"),
-  [T("Tag read",CYAN), R(2,"PETG",W), R(3,"Prusament",GREY)]),
+  [T("Tag read",CYAN), R(2,"PETG Galaxy Black",W), R(3,"Prusament",GREY)]),
  ("(any unhandled state)", ("#333","dim white"),
   [T("...",GREY), R(2,"weighing_and_sync",W), R(3,"(no screen for this state)",GREY)]),
 ]
@@ -195,7 +200,8 @@ import os
 # Positionally paired with `states` — keep the two lists in step when adding one.
 slugs=["boot","wifi-setup","idle","idle-uncalibrated","idle-softap","read-error",
        "new-tag-countdown","registering","foreign-spool","weighing","registered",
-       "present","updating-tag","idle-storage-full","tag-read","unknown-state"]
+       "present","present-wrapped","updating-tag","idle-storage-full","tag-read",
+       "unknown-state"]
 assert len(slugs)==len(states), f"{len(slugs)} slugs vs {len(states)} states"
 
 def svg_screen(spans):
