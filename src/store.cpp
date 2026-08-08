@@ -14,6 +14,25 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 static const char*        LOG_PATH    = "/log/events.ndjson";
 static const char*        COMPACT_TMP = "/log/compact.staging";
+
+// Make sure the log file exists, so nothing ever opens it for reading while it
+// is missing.
+//
+// The ESP32 VFS logs an ESP_LOGE for every read-open of a missing file, and
+// LittleFS.exists() is itself implemented as open(path, FILE_READ) — so an
+// exists() guard emits the very error it was meant to suppress. There is no
+// way to ask "is this file there?" quietly. The only fix is to keep the file
+// there.
+//
+// Opened "a": append creates it when missing, writes nothing when it is not,
+// and never takes the read path. An empty log replays to an empty index, which
+// is correct. Call this anywhere the log can go away — boot and WIPE — or the
+// once-a-minute compaction check turns into a steady drip of errors that look
+// like a fault and are not.
+static void ensureLogFile_() {
+    File f = LittleFS.open(LOG_PATH, "a");
+    if (f) f.close();
+}
 static SemaphoreHandle_t  sMutex   = nullptr;
 static std::vector<SpoolRecord>  sSpools;
 static std::unordered_map<std::string, size_t> sByUuid;   // uuid → sSpools index (O(1) lookup)
@@ -516,17 +535,7 @@ bool storeBegin() {
     if (!sMutex) sMutex = xSemaphoreCreateMutex();
     if (!LittleFS.begin(true)) return false;   // format on first-boot mount fail
     if (!LittleFS.exists("/log")) LittleFS.mkdir("/log");
-    // Create the log up front. LittleFS logs an ESP_LOGE for every open() of a
-    // missing file, and the idle loop's compaction check opens it about once a
-    // second — on a fresh device that produced a steady stream of
-    // "does not exist, no permits for creation" errors that look like a fault
-    // and aren't. An empty log replays to an empty index, which is correct.
-    //
-    // Opened "a" rather than guarded by exists(): append creates the file when
-    // it is missing and writes nothing when it is not, and it never takes the
-    // read path. exists() falls back to open(...,"r") internally, so guarding
-    // with it logged the very error it was meant to prevent.
-    { File f = LittleFS.open(LOG_PATH, "a"); if (f) f.close(); }
+    ensureLogFile_();
 
     // Read-WRITE, deliberately. Opening a namespace read-only before it exists
     // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
@@ -893,6 +902,10 @@ bool storeSerialCommand(const String& lineIn) {
     }
     if (cmd == "WIPE") {
         LittleFS.remove(LOG_PATH);
+        // Put the empty file straight back. Without this, WIPE leaves the log
+        // missing and every later read-open logs an ESP_LOGE — including the
+        // rebuild on the next line and the compaction check a minute later.
+        ensureLogFile_();
         sLogEndsNL = true;
         storeRebuildIndices();
         Serial.println("[store] log wiped");
