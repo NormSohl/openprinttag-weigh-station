@@ -134,11 +134,14 @@ states=[
    QR("onboard")]),
  ("Present  (normal)", ("#2ecc40","green"),
   [R(0,"Spool #42",W), R(2,"PLA Summer Grass",W), R(3,"eSun",GREY),
-   R(5,"612 g remaining",GREEN), R(7,"Saved locally",GREY)]),
+   R(5,"612 g remaining",GREEN), R(7,"Weight recorded",GREY)]),
  ("Present  (long product name, wrapped)", ("#2ecc40","green"),
   [R(0,"Spool #51",W), R(2,"PC Blend Carbon Fiber",W), R(3,"Black",W),
    R(4,"Prusament",GREY), R(6,"612 g remaining",GREEN),
-   R(8,"Saved locally",GREY)]),
+   R(8,"Weight recorded",GREY)]),
+ ("Present  (storage full — weigh NOT recorded)", ("#2ecc40","green"),
+  [R(0,"Spool #42",W), R(2,"PLA Summer Grass",W), R(3,"eSun",GREY),
+   R(5,"612 g remaining",GREEN), R(7,"NOT SAVED - storage full",RED)]),
  ("ReconcilingMainSection", ("#ffe033","yellow"),
   [T("Updating tag...",YEL)]),
  ("Idle  (storage full)", ("#2ecc40","dim green"),
@@ -200,7 +203,7 @@ import os
 # Positionally paired with `states` — keep the two lists in step when adding one.
 slugs=["boot","wifi-setup","idle","idle-uncalibrated","idle-softap","read-error",
        "new-tag-countdown","registering","foreign-spool","weighing","registered",
-       "present","present-wrapped","updating-tag","idle-storage-full","tag-read",
+       "present","present-wrapped","present-nosave","updating-tag","idle-storage-full","tag-read",
        "unknown-state"]
 assert len(slugs)==len(states), f"{len(slugs)} slugs vs {len(states)} states"
 

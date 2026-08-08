@@ -529,7 +529,15 @@ void displayTask(void* param) {
                                                              : "Unknown", TFT_WHITE);
                     if (snap.brand_name[0]) row(r++, snap.brand_name, TFT_DARKGREY);
                     rowf(r + 1, TFT_GREEN, "%.0f g remaining", remaining);
-                    row(r + 3, "Saved locally", TFT_DARKGREY);
+                    // "Saved locally" was left from the Spoolman era, where the
+                    // alternative was "pushed to the server". There is no
+                    // server now, so it distinguished nothing — and being
+                    // unconditional it was worse than useless: a full log makes
+                    // storeAppendEvent() drop the event, and the screen still
+                    // claimed the weight had been recorded. Say what actually
+                    // happened, and say it loudly when it didn't.
+                    if (storeWriteFailed()) row(r + 3, "NOT SAVED - storage full", TFT_RED);
+                    else                    row(r + 3, "Weight recorded", TFT_DARKGREY);
                     pixelColor = pixel.Color(0, 80, 0);
                 }
                 break;

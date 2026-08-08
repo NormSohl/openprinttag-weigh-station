@@ -4,5 +4,5 @@
 <text x="12" y="81" font-size="17" fill="#ffffff">PLA Summer Grass</text>
 <text x="12" y="109" font-size="17" fill="#7b7d7b">eSun</text>
 <text x="12" y="165" font-size="17" fill="#00ff00">612 g remaining</text>
-<text x="12" y="221" font-size="17" fill="#7b7d7b">Weight recorded</text>
+<text x="12" y="221" font-size="17" fill="#ff0000">NOT SAVED - storage full</text>
 </svg>
