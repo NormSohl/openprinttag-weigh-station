@@ -116,6 +116,38 @@ static void identityFromMain(const OptMain& m, StoreEvent& e) {
 //
 // On expiry the caller falls back to the SoftAP, so the web app stays reachable
 // either way — a timeout costs configurability, never availability.
+// ── WiFi diagnostics ──────────────────────────────────────────────────────────
+// BEACON_TIMEOUT fired ~9.4 s after EVERY association on the bench — with and
+// without a spool, at uptimes 45 ms apart across separate boots, and again 9.5 s
+// after each reconnect. That regularity rules out marginal signal, and
+// setSleep(false) did not stop it, which rules out power save. What is left
+// needs measuring rather than guessing: is the link weak, or is the station
+// associating and then never hearing the AP at all?
+//
+// getSleep()'s return type changed between core 2.x (bool) and 3.x
+// (wifi_ps_type_t), same split the buzzer's LEDC calls straddle.
+static bool wifiIsSleeping() {
+#if defined(ESP_ARDUINO_VERSION) && ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+    return WiFi.getSleep() != WIFI_PS_NONE;
+#else
+    return WiFi.getSleep();
+#endif
+}
+
+static void logWifiState(const char* what) {
+    Serial.printf("[wifi] %s: rssi=%d dBm  ch=%d  bssid=%s  powersave=%s\n",
+                  what, (int)WiFi.RSSI(), (int)WiFi.channel(),
+                  WiFi.BSSIDstr().c_str(), wifiIsSleeping() ? "ON" : "off");
+}
+
+// The raw 802.11 reason code. 200 is BEACON_TIMEOUT; 3/4/15/205 point at the AP
+// or the key exchange instead, and telling them apart decides whether this is
+// ours to fix in firmware or a setting on the access point.
+static void onWifiDisconnected(WiFiEvent_t, WiFiEventInfo_t info) {
+    Serial.printf("[wifi] disconnect reason=%u  rssi=%d dBm\n",
+                  (unsigned)info.wifi_sta_disconnected.reason, (int)WiFi.RSSI());
+}
+
 static bool runConfigPortal(WiFiManager& wm) {
     const uint32_t idleMs = (uint32_t)WIFI_PORTAL_TIMEOUT_SEC * 1000UL;
     const uint32_t maxMs  = (uint32_t)WIFI_PORTAL_MAX_SEC     * 1000UL;
@@ -248,6 +280,11 @@ void syncTask(void* param) {
     webAppBegin();
     Serial.println("[web] server started on :80");
 
+    // Station mode only — in SoftAP fallback there is no AP to measure, and
+    // RSSI/BSSID would just print noise.
+    if (!gApSsid[0]) logWifiState("link");
+    WiFi.onEvent(onWifiDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
     // Per-tag state, valid while a spool is on the scale.
     int     sSpoolId  = -1;
     OptMain sSnapshot = {};
@@ -267,6 +304,9 @@ void syncTask(void* param) {
             if (up != wasUp) {
                 wasUp = up;
                 if (up) {
+                    // Re-apply: a reassociation can restore the driver default,
+                    // and the whole point is that this radio never sleeps.
+                    WiFi.setSleep(false);
                     char ip[48];
                     WiFi.localIP().toString().toCharArray(ip, sizeof(ip));
                     if (strcmp(ip, gWebAddr) != 0)
@@ -275,6 +315,7 @@ void syncTask(void* param) {
                     else
                         Serial.println("[wifi] reconnected");
                     strlcpy(gWebAddr, ip, sizeof(gWebAddr));
+                    logWifiState("link");
                 } else {
                     Serial.println("[wifi] link lost — web app unreachable until it "
                                    "reassociates (auto-reconnect is on)");
