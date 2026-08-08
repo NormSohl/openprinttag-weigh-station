@@ -407,9 +407,24 @@ void displayTask(void* param) {
                 if (needsOnboarding) {
                     title("Registered!", TFT_YELLOW);
                     if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
-                    row(3, "Add details in web app:", TFT_DARKGREY);
-                    if (gWebAddr[0]) rowf(4, TFT_CYAN, "http://%s", gWebAddr);
-                    rowf(5, TFT_WHITE, "%.0f g", remaining);
+                    // Name the state outright. "Registered!" alone reads as
+                    // finished, when in fact the spool has no vendor, material
+                    // or colour yet and is useless for inventory until someone
+                    // fills the form in. Say what is missing, not just what
+                    // happened.
+                    row(3, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
+                    row(4, "Scan QR to add details", TFT_DARKGREY);
+                    if (gWebAddr[0]) rowf(5, TFT_CYAN, "http://%s", gWebAddr);
+                    rowf(6, TFT_WHITE, "%.0f g", remaining);
+                    // This is the one screen where someone is definitely about to
+                    // go to the web app, so the QR deep-links to the form itself
+                    // rather than the home page. The Onboard page targets whatever
+                    // is on the scale, which is this spool.
+                    if (gWebAddr[0]) {
+                        char url[72];
+                        snprintf(url, sizeof(url), "http://%s/onboard", gWebAddr);
+                        drawQr(url, QR_X, QR_Y, QR_BOX);
+                    }
                     pixelColor = pixel.Color(50, 50, 0);
                 } else {
                     if (spoolId > 0) rowf(0, TFT_WHITE, "Spool #%d", spoolId);

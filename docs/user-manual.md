@@ -67,7 +67,10 @@ When you place a spool with a **blank NFC tag** on the scale:
 2. **Remove the spool within 5 seconds** to cancel, or **leave it in place** to
    proceed.
 3. The station formats the tag and creates a placeholder record on the device.
-   The display shows `Registered! / Spool #N / Add details in web app`.
+   The display shows `Registered!`, the spool number, and **NEEDS ONBOARDING**
+   — the spool has no vendor, material or colour yet, so it is not usable for
+   inventory until step 4. **Scan the QR code on that screen** to jump straight
+   to the form for this spool.
 
    <img src="images/lcd/registered.svg" width="300" alt="Registered screen prompting to add details in the web app">
 
