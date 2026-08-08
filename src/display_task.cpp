@@ -436,30 +436,33 @@ void displayTask(void* param) {
             case DeviceState::Present:
                 if (needsOnboarding) {
                     title("Registered!", TFT_YELLOW);
-                    if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d", spoolId);
-                    rowf(3, TFT_WHITE, "%.0f g", remaining);
+                    // Identity and weight on one line: they are read together
+                    // ("which spool, and how much is on it"), and pairing them
+                    // buys back a row for the two addresses below.
+                    if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d  %.0f g", spoolId, remaining);
+                    else             rowf(2, TFT_WHITE, "%.0f g", remaining);
                     // Name the state outright. "Registered!" alone reads as
                     // finished, when in fact the spool has no vendor, material
                     // or colour yet and is useless for inventory until someone
                     // fills the form in. Say what is missing, not just what
                     // happened.
-                    row(4, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
+                    row(3, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
                     // Not everyone scans QR codes, and a phone camera is not
                     // always to hand, so give the typed route too — named by the
                     // page it lands on, so it matches the web app's own nav.
                     // Both addresses carry the /onboard path: the home page does
                     // not say which spool it would act on, and the whole point
                     // here is to reach the form for THIS one.
-                    row(5, "Scan QR to add details,", TFT_DARKGREY);
-                    row(6, "or visit the Onboard page:", TFT_DARKGREY);
+                    row(4, "Scan QR to add details,", TFT_DARKGREY);
+                    row(5, "or visit the Onboard page:", TFT_DARKGREY);
                     // mDNS only resolves on a real LAN. In SoftAP fallback the
                     // numeric address is the only one that works, so don't
                     // advertise a name that would just fail there.
                     if (!gApSsid[0]) {
-                        rowf(7, TFT_CYAN, "%s.local/onboard", DEVICE_HOSTNAME);
-                        if (gWebAddr[0]) rowf(8, TFT_DARKGREY, "or %s/onboard", gWebAddr);
+                        rowf(6, TFT_CYAN, "%s.local/onboard", DEVICE_HOSTNAME);
+                        if (gWebAddr[0]) rowf(7, TFT_DARKGREY, "or %s/onboard", gWebAddr);
                     } else if (gWebAddr[0]) {
-                        rowf(7, TFT_CYAN, "%s/onboard", gWebAddr);
+                        rowf(6, TFT_CYAN, "%s/onboard", gWebAddr);
                     }
                     // This is the one screen where someone is definitely about to
                     // go to the web app, so the QR deep-links to the form itself

@@ -27,7 +27,7 @@ typo. `weighstation.local/onboard` is exactly 26; so is the longest
 | FormattingAndRegistering | `Registering...` | `Please wait` | tag format + write |
 | ForeignTagFound / RegisteringForeignTag | `New spool found` | decoded brand · decoded material · `Registering spool...` | pre-tagged spool (Prusament, another maker's tooling) not yet known — decode its own data and create a local record |
 | WeighingAndSync | `Weighing...` | `<grams> g` | single sample |
-| Present (needs onboarding) | `Registered!` | `Spool #N` · `<grams> g` · amber `NEEDS ONBOARDING` · `Scan QR to add details,` · `or visit the Onboard page:` · `weighstation.local/onboard` · `or <ip>/onboard`; QR panel deep-links to `/onboard` | names the missing step rather than just reporting success. Both addresses carry the `/onboard` path — the home page doesn't say which spool it would act on. The `.local` line is suppressed in SoftAP fallback, where mDNS won't resolve |
+| Present (needs onboarding) | `Registered!` | `Spool #N  <grams> g` · amber `NEEDS ONBOARDING` · `Scan QR to add details,` · `or visit the Onboard page:` · `weighstation.local/onboard` · `or <ip>/onboard`; QR panel deep-links to `/onboard` | names the missing step rather than just reporting success. Both addresses carry the `/onboard` path — the home page doesn't say which spool it would act on. The `.local` line is suppressed in SoftAP fallback, where mDNS won't resolve |
 | Present (normal) | `Spool #N` | material · `<grams> g remaining` · `Saved locally` | steady display while the spool sits on the scale |
 | ReconcilingMainSection | `Updating tag...` | | brief overlay, then resumes Present |
 

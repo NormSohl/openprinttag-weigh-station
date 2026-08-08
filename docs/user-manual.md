@@ -28,7 +28,7 @@ The 3.5" screen shows one of these, depending on what's happening:
 | <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Idle, ready** — place a spool to begin |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing** — reading the load cell |
 | <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Saved locally"> | **Done** — spool number, material, and remaining weight recorded locally |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number, weight, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered** — scan the QR or visit the **Onboard** page to fill in the material details (see *New Spools* below) |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered** — scan the QR or visit the **Onboard** page to fill in the material details (see *New Spools* below) |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
 
@@ -74,7 +74,7 @@ When you place a spool with a **blank NFC tag** on the scale:
    `weighstation.local/onboard` or the numeric one below it. Both go to the
    **Onboard** page, which acts on whichever spool is currently on the scale.
 
-   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number, weight, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code">
+   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code">
 
 4. **Open the web app and fill in the material details** for that spool — see
    *Onboarding a spool* below.
