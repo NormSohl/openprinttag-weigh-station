@@ -25,6 +25,13 @@ work with no configuration.
 | `GET /api/storage` | JSON | Log size, free space, compaction due, write-failure flag |
 | `GET /export` | NDJSON | The complete raw event log — the full backup artifact |
 
+> **`color` is `null` when no colour has been assigned**, on both `/api/spools` and
+> `/api/status` — it is not `"000000"`. A spool onboarded before its colour was
+> known, and any foreign tag that omits OpenPrintTag's `primary_color` key, has no
+> colour rather than a black one, and a consumer must be able to tell those apart.
+> `material` carries the OPT display string (`"PLA Summer Grass"`); the bare type
+> code is on the record as the abbreviation and is what `/api/usage` groups by.
+
 ### `GET /api/status`
 
 ```json
@@ -35,7 +42,7 @@ work with no configuration.
   "heap_free": 142360,
   "scale":   { "weight_g": 1243.5, "calibrated": true },
   "spool":   { "id": 42, "uuid": "e0040108660759df", "vendor": "eSun",
-               "material": "PLA+", "color": "1b1b1b",
+               "material": "PLA+ Summer Grass", "color": "1b1b1b",
                "remaining_g": 812.0, "needs_onboarding": false },
   "wifi":    { "mode": "station", "ssid": "Neverhood2",
                "ip": "192.168.50.127", "rssi": -54 },

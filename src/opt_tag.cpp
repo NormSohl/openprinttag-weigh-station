@@ -63,10 +63,15 @@ static bool cborTakeText(CborValue* v, char* buf, size_t cap) {
     return cbor_value_copy_text_string(v, buf, &n, v) == CborNoError;
 }
 
-static bool cborTakeBytes(CborValue* v, uint8_t* buf, size_t cap) {
+// `outLen` receives how many bytes actually arrived, which matters for
+// primary_color: OPT lets the alpha channel be left out, so a 3-byte colour is
+// legal and means fully opaque.
+static bool cborTakeBytes(CborValue* v, uint8_t* buf, size_t cap, size_t* outLen = nullptr) {
     if (!cbor_value_is_byte_string(v)) return false;
     size_t n = cap;
-    return cbor_value_copy_byte_string(v, buf, &n, v) == CborNoError;
+    if (cbor_value_copy_byte_string(v, buf, &n, v) != CborNoError) return false;
+    if (outLen) *outLen = n;
+    return true;
 }
 
 // Step over whatever the iterator points at. cbor_value_advance() handles fixed
@@ -308,8 +313,17 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                         consumed = cborTakeText(&mm, main->material_name, sizeof(main->material_name)); break;
                     case MAIN_KEY_MATERIAL_ABBREVIATION:
                         consumed = cborTakeText(&mm, main->material_abbreviation, sizeof(main->material_abbreviation)); break;
-                    case MAIN_KEY_PRIMARY_COLOR_RGBA:
-                        consumed = cborTakeBytes(&mm, main->primary_color_rgba, 4); break;
+                    case MAIN_KEY_PRIMARY_COLOR_RGBA: {
+                        size_t got = 0;
+                        consumed = cborTakeBytes(&mm, main->primary_color_rgba, 4, &got);
+                        // "The alpha channel can be left out, in which case the
+                        // data should have 3 bytes instead of 4 and the color
+                        // will be considered fully opaque." Without this a
+                        // 3-byte colour from another vendor's tag lands with
+                        // alpha 0 and reads as "no colour assigned".
+                        if (consumed && got == 3) main->primary_color_rgba[3] = 0xFF;
+                        break;
+                    }
                     case MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT: cborGetFloat(&mm, &main->nominal_netto_full_weight); break;
                     case MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT:  cborGetFloat(&mm, &main->actual_netto_full_weight);  break;
                     case MAIN_KEY_EMPTY_CONTAINER_WEIGHT:    cborGetFloat(&mm, &main->empty_container_weight);    break;
@@ -364,8 +378,14 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     cbor_encode_int(&map, MAIN_KEY_MATERIAL_ABBREVIATION);
     cbor_encode_text_stringz(&map, m.material_abbreviation);
 
-    cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_RGBA);
-    cbor_encode_byte_string(&map, m.primary_color_rgba, 4);
+    // Only when a colour is actually assigned. OPT says primary_color "can be
+    // null" when a material has no single colour, and an absent key is the
+    // honest way to say "unknown" — writing 00 00 00 00 would tell every other
+    // reader this spool is transparent black.
+    if (m.primary_color_rgba[3] != 0) {
+        cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_RGBA);
+        cbor_encode_byte_string(&map, m.primary_color_rgba, 4);
+    }
 
     // Encode floats as float32; reference uses CompactFloat (may use int for whole numbers)
     // TODO: mirror CompactFloat logic to minimise tag bytes if space becomes an issue

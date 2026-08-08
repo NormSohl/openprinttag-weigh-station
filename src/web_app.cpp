@@ -93,6 +93,11 @@ static const char* STYLE =
     "th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #333}"
     "th{color:#9c9}"
     ".sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid #000}"
+    // "No colour assigned" — a crossed-out square, so it cannot be misread as a
+    // black filament. The stroke is a gradient rather than a glyph or an SVG so
+    // it stays crisp at 14px and needs no extra request.
+    ".sw0{background:#1c1c1c;border-color:#666;background-image:"
+    "linear-gradient(to top right,transparent 45%,#8a8a8a 45%,#8a8a8a 55%,transparent 55%)}"
     ".ob{color:#fd6}"
     "form label{display:block;margin:12px 0 4px;color:#9c9}"
     "select,input{font-size:16px;padding:8px;width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #444;border-radius:5px}"
@@ -162,6 +167,33 @@ static int currentSpool() {
     return (live && gSpoolId > 0) ? gSpoolId : -1;
 }
 
+// Colour swatch, with a distinct "not assigned" rendering.
+//
+// alpha == 0 means no colour has been entered (see StoreEvent::rgba). Drawing
+// that as #000000 would claim the spool is black, which is both wrong and
+// unfalsifiable — nobody looking at the page could tell the difference. A
+// crossed-out square says "unknown", and stays sayable if the colour is
+// measured and filled in later.
+static String swatch(const uint8_t rgba[4]) {
+    if (rgba[3] == 0)
+        return "<span class='sw sw0' title='No colour assigned'></span>";
+    char b[80];
+    snprintf(b, sizeof(b),
+             "<span class='sw' style='background:#%02x%02x%02x'></span>",
+             rgba[0], rgba[1], rgba[2]);
+    return String(b);
+}
+
+// JSON value for a colour: the hex string, or null when none is assigned.
+// Emitting "000000" would make an unassigned colour indistinguishable from
+// black to every consumer, which is the same mistake the swatch avoids.
+static String colorJson(const uint8_t rgba[4]) {
+    if (rgba[3] == 0) return "null";
+    char b[10];
+    snprintf(b, sizeof(b), "\"%02x%02x%02x\"", rgba[0], rgba[1], rgba[2]);
+    return String(b);
+}
+
 // One "label value" item for a .spec strip.
 static String kv(const char* label, const String& value) {
     return "<span><b>" + String(label) + "</b> " + value + "</span>";
@@ -196,14 +228,11 @@ static void handleRoot(AsyncWebServerRequest* req) {
     if (cur > 0) {
         SpoolRecord r;
         if (storeGetSpool((uint32_t)cur, r)) {
-            char rgb[8];
-            snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
             p += "<div class='card'>";
             p += "<div class='muted'>On the scale now</div>";
             p += "<div class='big'><a href='/spool?id=" + String((unsigned)r.spool)
                + "' style='color:inherit;text-decoration:none'>"
-               + "<span class='sw' style='background:#" + String(rgb) + "'></span>#"
-               + String((unsigned)r.spool)
+               + swatch(r.rgba) + "#" + String((unsigned)r.spool)
                + " " + esc(r.material[0] ? r.material : "Unknown") + "</a></div>";
             if (r.needs_ob) {
                 p += "<p class='ob'>Needs onboarding &mdash; "
@@ -245,7 +274,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
     if (n == 0) p += "<tr><td colspan='3' class='muted'>No spools yet</td></tr>";
     for (size_t i = 0; i < n; i++) {
         if (!storeInventoryAt(i, m)) continue;
-        p += "<tr><td>" + esc(m.material) + "</td><td>" + String(m.count)
+        p += "<tr><td>" + swatch(m.rgba) + esc(m.material) + "</td><td>" + String(m.count)
            + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
     }
     p += "</table>";
@@ -266,11 +295,8 @@ static void handleSpools(AsyncWebServerRequest* req) {
     if (n == 0) p += "<tr><td colspan='5' class='muted'>No spools yet</td></tr>";
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
-        char sw[40];
-        snprintf(sw, sizeof(sw), "<span class='sw' style='background:#%02x%02x%02x'></span>",
-                 r.rgba[0], r.rgba[1], r.rgba[2]);
         p += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
-           + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>" + sw
+           + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>" + swatch(r.rgba)
            + esc(r.material[0] ? r.material : "Unknown") + "</td><td>" + esc(r.vendor)
            + "</td><td>" + String(r.remaining_g, 0) + " g</td><td>"
            + (r.needs_ob ? "<span class='ob'>needs onboarding</span>" : "")
@@ -289,13 +315,11 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
         if (j.length() > 1) j += ",";
-        char rgb[8];
-        snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
         j += "{\"spool\":" + String((unsigned)r.spool)
            + ",\"uuid\":\"" + r.uuid + "\""
            + ",\"vendor\":\"" + esc(r.vendor) + "\""
            + ",\"material\":\"" + esc(r.material) + "\""
-           + ",\"color\":\"" + rgb + "\""
+           + ",\"color\":" + colorJson(r.rgba)
            + ",\"remaining_g\":" + String(r.remaining_g, 1)
            + ",\"used_g\":" + String(r.used_g, 1)
            + ",\"needs_onboarding\":" + (r.needs_ob ? "true" : "false") + "}";
@@ -371,11 +395,9 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     }
 
     String p = head("Spool", "/spools");
-    char rgb[8];
-    snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
     p += "<div class='card'>";
-    p += "<div class='big'><span class='sw' style='background:#" + String(rgb)
-       + "'></span>#" + String((unsigned)r.spool) + " "
+    p += "<div class='big'>" + swatch(r.rgba)
+       + "#" + String((unsigned)r.spool) + " "
        + esc(r.material[0] ? r.material : "Unknown") + "</div>";
     p += "<p class='muted'>" + esc(r.vendor) + (r.abbr[0] ? " &middot; " + esc(r.abbr) : String())
        + " &middot; " + String((unsigned)s.rem.size()) + " weigh session(s)</p>";
@@ -775,14 +797,14 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
     if (cur > 0) {
         SpoolRecord r;
         if (storeGetSpool((uint32_t)cur, r)) {
-            char rgb[8];
-            snprintf(rgb, sizeof(rgb), "%02x%02x%02x", r.rgba[0], r.rgba[1], r.rgba[2]);
             j += "{\"id\":";             j += String((unsigned)r.spool);
             j += ",\"uuid\":\"";          j += r.uuid;
             j += "\",\"vendor\":\"";      j += esc(r.vendor);
             j += "\",\"material\":\"";    j += esc(r.material);
-            j += "\",\"color\":\"";       j += rgb;
-            j += "\",\"remaining_g\":";  j += String(r.remaining_g, 1);
+            // colorJson() supplies its own quotes (or bare null), so unlike the
+            // lines above this one must NOT open or close a string of its own.
+            j += "\",\"color\":";        j += colorJson(r.rgba);
+            j += ",\"remaining_g\":";    j += String(r.remaining_g, 1);
             j += ",\"needs_onboarding\":"; j += r.needs_ob ? "true" : "false";
             j += "}";
         } else j += "null";

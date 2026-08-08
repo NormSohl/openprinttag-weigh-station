@@ -13,6 +13,8 @@ STYLE = (
 "th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #333}"
 "th{color:#9c9}"
 ".sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid #000}"
+".sw0{background:#1c1c1c;border-color:#666;background-image:"
+"linear-gradient(to top right,transparent 45%,#8a8a8a 45%,#8a8a8a 55%,transparent 55%)}"
 ".ob{color:#fd6}"
 "form label{display:block;margin:12px 0 4px;color:#9c9}"
 "select,input{font-size:16px;padding:8px;width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #444;border-radius:5px}"
@@ -39,7 +41,11 @@ def nav(active):
 def page(route, active, body):
     return f"<div class='plabel'>GET {route}</div>{nav(active)}<main>{body}</main>"
 
-def sw(hexrgb): return f"<span class='sw' style='background:#{hexrgb}'></span>"
+def sw(hexrgb):
+    # None / "" mirrors alpha==0 in the firmware: no colour assigned, drawn as a
+    # crossed-out square rather than as black.
+    if not hexrgb: return "<span class='sw sw0' title='No colour assigned'></span>"
+    return f"<span class='sw' style='background:#{hexrgb}'></span>"
 
 def kv(label,value): return f"<span><b>{label}</b> {value}</span>"
 
@@ -68,10 +74,10 @@ dash = ("<div class='card'>"
       ("Nozzle","220&ndash;240 &deg;C"),("Bed","55&ndash;65 &deg;C"))+"</div>"
 "<h3>Inventory</h3><table>"
 "<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>"
-"<tr><td>PLA Summer Grass</td><td>2</td><td>1250 g</td></tr>"
-"<tr><td>PLA Galaxy Black</td><td>1</td><td>850 g</td></tr>"
-"<tr><td>PETG Summer Grass</td><td>2</td><td>1380 g</td></tr>"
-"<tr><td>ASA Traffic Red</td><td>1</td><td>620 g</td></tr></table>"
+f"<tr><td>{sw('8fd8a0')}PLA Summer Grass</td><td>2</td><td>1250 g</td></tr>"
+f"<tr><td>{sw('1b1b1b')}PLA Galaxy Black</td><td>1</td><td>850 g</td></tr>"
+f"<tr><td>{sw('8fd8a0')}PETG Summer Grass</td><td>2</td><td>1380 g</td></tr>"
+f"<tr><td>{sw(None)}ASA (colour not set)</td><td>1</td><td>620 g</td></tr></table>"
 "<p class='muted'>6 spools tracked &middot; 148 log entries</p>")
 
 # ---- Dashboard, uncalibrated variant (banner) ----
@@ -90,7 +96,7 @@ dash_uncal = ("<div class='card' style='border-color:#a70'>"
 rows=[("42","f99963","PLA Summer Grass","Bambu Labs","612",False),
       ("43","1a1a1a","PETG Galaxy Black","Prusament","740",False),
       ("44","2e9e4f","PLA Summer Grass","Hatchbox","300",False),
-      ("47","000000","Unknown","Unknown","0",True)]
+      ("47",None,"Unknown","Unknown","0",True)]
 spools="<h3>Spools</h3><table><tr><th>#</th><th>Filament</th><th>Vendor</th><th>Remaining</th><th></th></tr>"
 for n,rgb,mat,ven,rem,ob in rows:
     flag="<span class='ob'>needs onboarding</span>" if ob else ""

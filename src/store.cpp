@@ -369,6 +369,12 @@ static void rebuildInventory_() {
             sInv.push_back(m);
             mi = (int)sInv.size() - 1;
         }
+        // Take the first ASSIGNED colour in the group (alpha != 0). Spools of
+        // the same product should agree, but one of them may have been onboarded
+        // before its colour was known — so don't let an unassigned record win
+        // the swatch just by being first.
+        if (sInv[mi].rgba[3] == 0 && r.rgba[3] != 0)
+            memcpy(sInv[mi].rgba, r.rgba, 4);
         sInv[mi].remaining_g += r.remaining_g;
         if (r.remaining_g > 1.0f) sInv[mi].count++;
     }

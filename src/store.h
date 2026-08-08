@@ -44,6 +44,17 @@ struct StoreEvent {
     char     vendor[64] = {};
     char     material[64] = {};
     char     abbr[16] = {};
+    // Colour, with alpha doubling as "is a colour assigned at all".
+    //
+    // OPT makes the alpha channel optional on the wire — 3 bytes means fully
+    // opaque — so a[3] is free to carry that flag, and 0 (fully transparent)
+    // is not a filament colour anyone can mean. a[3]==0 therefore reads as
+    // UNASSIGNED, which the UI draws as a crossed-out swatch rather than as
+    // black. Without it, "no colour entered" and "black filament" are the same
+    // four zero bytes.
+    //
+    // OPT agrees at the tag level: primary_color "can be null", and
+    // optEncodeMain() omits the key entirely rather than writing zeroes.
     uint8_t  rgba[4] = {};
     float    dia = 0, empty_g = 0, nom_g = 0;
     bool     needs_ob = false;
@@ -92,6 +103,7 @@ struct UsageRow {
 // ── Inventory rollup (derived) ────────────────────────────────────────────────
 struct MatInventory {
     char     material[64] = {};
+    uint8_t  rgba[4] = {};   // first assigned colour in the group; a[3]==0 = none
     float    remaining_g = 0;
     uint16_t count = 0;      // spools with meaningful remaining
 };
