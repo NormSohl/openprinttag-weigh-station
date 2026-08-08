@@ -607,13 +607,21 @@ struct OnHand { uint16_t count; float grams; };
 // Sum active spools that match a stock item's identity. Matching is by vendor +
 // material (exact) — the reliable subset of the design's optional color/diameter
 // keys; a one-off spool not in the catalog never generates reorder noise.
+//
+// Match on the record's ABBREVIATION, not r.material. CfgStock.material is a
+// bare type ("PLA") while r.material carries the OPT display string ("PLA
+// Summer Grass"), so comparing them directly never matches — on-hand would read
+// zero for every stock item and the whole page would claim everything needs
+// reordering. Records with no abbreviation (seeded rows, foreign tags) fall back
+// to r.material, which for those IS the bare type.
 static OnHand rollUp(const CfgStock& s) {
     OnHand oh{0, 0.0f};
     size_t n = storeSpoolCount();
     SpoolRecord r;
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
-        if (strcmp(r.vendor, s.vendor) == 0 && strcmp(r.material, s.material) == 0
+        const char* mat = r.abbr[0] ? r.abbr : r.material;
+        if (strcmp(r.vendor, s.vendor) == 0 && strcmp(mat, s.material) == 0
                 && r.remaining_g > 1.0f) {
             oh.count++;
             oh.grams += r.remaining_g;

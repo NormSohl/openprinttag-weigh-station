@@ -85,10 +85,10 @@ dash_uncal = ("<div class='card' style='border-color:#a70'>"
 "<b class='ob'>Scale not calibrated.</b> Weights will be wrong until you "
 "<a href='#' style='color:#fd6'>calibrate the scale</a>.</div>"
 "<div class='card'><div class='muted'>On the scale now</div>"
-"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw('000000')+"#47 Unknown</a></div>"
+"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw(None)+"#47 Unknown</a></div>"
 "<p class='ob'>Needs onboarding &mdash; <a href='#' style='color:#fd6'>add details</a></p></div>"
-"<h3>Inventory by material</h3><table>"
-"<tr><th>Material</th><th>Spools</th><th>Remaining</th></tr>"
+"<h3>Inventory</h3><table>"
+"<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>"
 "<tr><td colspan='3' class='muted'>No spools yet</td></tr></table>"
 "<p class='muted'>1 spools tracked &middot; 2 log entries</p>")
 
