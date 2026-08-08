@@ -236,8 +236,10 @@ static void handleRoot(AsyncWebServerRequest* req) {
         }
     }
 
-    p += "<h3>Inventory by material</h3><table>"
-         "<tr><th>Material</th><th>Spools</th><th>Remaining</th></tr>";
+    // Rows are OPT display strings now ("PLA Summer Grass"), not bare material
+    // types, so several spools of the same product roll up into one line.
+    p += "<h3>Inventory</h3><table>"
+         "<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
     MatInventory m;
     if (n == 0) p += "<tr><td colspan='3' class='muted'>No spools yet</td></tr>";
@@ -258,7 +260,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
 static void handleSpools(AsyncWebServerRequest* req) {
     String p = head("Spools", "/spools");
     p += "<h3>Spools</h3><table>"
-         "<tr><th>#</th><th>Material</th><th>Vendor</th><th>Remaining</th><th></th></tr>";
+         "<tr><th>#</th><th>Filament</th><th>Vendor</th><th>Remaining</th><th></th></tr>";
     size_t n = storeSpoolCount();
     SpoolRecord r;
     if (n == 0) p += "<tr><td colspan='5' class='muted'>No spools yet</td></tr>";
@@ -517,12 +519,24 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     float empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);
     float dia     = haveMat ? m.dia : 1.75f;
 
+    // OPT key 10 material_name is a DISPLAY string, not a type code. The spec's
+    // own example is "PC Blend Carbon Fiber Black", and it says brand_name and
+    // material_name should be shown together as "Prusament PLA Galaxy Black";
+    // the short code belongs in key 52 material_abbreviation (max 7 chars).
+    //
+    // So the colour name goes here. That is what makes "Summer Grass" a
+    // first-class part of the record: it round-trips on the tag, it is what
+    // every OPT-aware reader will display, and it needs no field the spec does
+    // not already define.
+    String display = matName;
+    if (colName.length()) display += " " + colName;
+
     // 1) Append the identity to the log so indices + inventory reflect it.
     StoreEvent e; e.ev = StoreEv::Reconcile;
     strlcpy(e.uuid, rec.uuid, sizeof(e.uuid));
     e.spool = id;
     strlcpy(e.vendor,   vendor.c_str(),  sizeof(e.vendor));
-    strlcpy(e.material, matName.c_str(), sizeof(e.material));
+    strlcpy(e.material, display.c_str(), sizeof(e.material));
     strlcpy(e.abbr,     haveMat ? m.abbr : "", sizeof(e.abbr));
     memcpy(e.rgba, col.rgba, 4);
     e.dia = dia; e.empty_g = empty; e.nom_g = nominal;
@@ -535,7 +549,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     if (currentSpool() == (int)id) {
         xSemaphoreTake(gTagMutex, portMAX_DELAY);
         strlcpy(gTagMain.brand_name,            vendor.c_str(),  sizeof(gTagMain.brand_name));
-        strlcpy(gTagMain.material_name,         matName.c_str(), sizeof(gTagMain.material_name));
+        strlcpy(gTagMain.material_name,         display.c_str(), sizeof(gTagMain.material_name));
         strlcpy(gTagMain.material_abbreviation, haveMat ? m.abbr : "", sizeof(gTagMain.material_abbreviation));
         memcpy(gTagMain.primary_color_rgba, col.rgba, 4);
         gTagMain.filament_diameter         = dia;

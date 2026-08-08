@@ -62,15 +62,16 @@ def sparkline(v):
 # ---- Dashboard (/) ----
 dash = ("<div class='card'>"
 "<div class='muted'>On the scale now</div>"
-"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw('f99963')+"#42 PLA</a></div>"
+"<div class='big'><a href='#' style='color:inherit;text-decoration:none'>"+sw('f99963')+"#42 PLA Summer Grass</a></div>"
 "<p class='muted'>Bambu Labs &middot; PLA &middot; 612 g remaining &middot; 388 g used</p>"
 +spec(("Tare","201 g"),("Nominal","1000 g"),("&Oslash;","1.75 mm"),
       ("Nozzle","220&ndash;240 &deg;C"),("Bed","55&ndash;65 &deg;C"))+"</div>"
-"<h3>Inventory by material</h3><table>"
-"<tr><th>Material</th><th>Spools</th><th>Remaining</th></tr>"
-"<tr><td>PLA</td><td>3</td><td>2100 g</td></tr>"
-"<tr><td>PETG</td><td>2</td><td>1380 g</td></tr>"
-"<tr><td>ASA</td><td>1</td><td>620 g</td></tr></table>"
+"<h3>Inventory</h3><table>"
+"<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>"
+"<tr><td>PLA Summer Grass</td><td>2</td><td>1250 g</td></tr>"
+"<tr><td>PLA Galaxy Black</td><td>1</td><td>850 g</td></tr>"
+"<tr><td>PETG Summer Grass</td><td>2</td><td>1380 g</td></tr>"
+"<tr><td>ASA Traffic Red</td><td>1</td><td>620 g</td></tr></table>"
 "<p class='muted'>6 spools tracked &middot; 148 log entries</p>")
 
 # ---- Dashboard, uncalibrated variant (banner) ----
@@ -86,11 +87,11 @@ dash_uncal = ("<div class='card' style='border-color:#a70'>"
 "<p class='muted'>1 spools tracked &middot; 2 log entries</p>")
 
 # ---- Spools (/spools) ----
-rows=[("42","f99963","PLA","Bambu Labs","612",False),
-      ("43","1a1a1a","PETG","Prusament","740",False),
-      ("44","2e9e4f","PLA","Hatchbox","300",False),
+rows=[("42","f99963","PLA Summer Grass","Bambu Labs","612",False),
+      ("43","1a1a1a","PETG Galaxy Black","Prusament","740",False),
+      ("44","2e9e4f","PLA Summer Grass","Hatchbox","300",False),
       ("47","000000","Unknown","Unknown","0",True)]
-spools="<h3>Spools</h3><table><tr><th>#</th><th>Material</th><th>Vendor</th><th>Remaining</th><th></th></tr>"
+spools="<h3>Spools</h3><table><tr><th>#</th><th>Filament</th><th>Vendor</th><th>Remaining</th><th></th></tr>"
 for n,rgb,mat,ven,rem,ob in rows:
     flag="<span class='ob'>needs onboarding</span>" if ob else ""
     spools+=f"<tr><td><a href='#' style='color:#8f8'>#{n}</a></td><td>{sw(rgb)}{mat}</td><td>{ven}</td><td>{rem} g</td><td>{flag}</td></tr>"
@@ -100,7 +101,7 @@ spools+="</table>"
 series=[812,760,690,631,588,540,505,441,388,331,300,255,212]
 ts=[f"2026-07-{4+i:02d}T18:0{i%6}:11Z" for i in range(len(series))]
 detail=("<div class='card'>"
-f"<div class='big'>{sw('f99963')}#42 PLA</div>"
+f"<div class='big'>{sw('f99963')}#42 PLA Summer Grass</div>"
 "<p class='muted'>Bambu Labs &middot; PLA &middot; 13 weigh session(s)</p>"
 "<p class='big'>212 g <span class='muted' style='font-size:15px'>remaining &middot; 788 g used</span></p>"
 +spec(("Tare","201 g"),("Nominal","1000 g"),("&Oslash;","1.75 mm"),

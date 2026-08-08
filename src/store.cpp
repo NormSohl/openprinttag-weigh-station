@@ -312,7 +312,14 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         const float delta = r.remaining_g - e.remaining_g;
         if (delta > 0.05f) {
             char p[8]; periodOf_(e.ts, p, sizeof(p));
-            usageAdd_(usage, p, r.vendor, r.material, delta, 1);
+            // Popularity is per vendor + material TYPE, so key on the
+            // abbreviation ("PLA"). r.material carries the OPT display string
+            // ("PLA Summer Grass"), which would fragment the rollup into one
+            // bucket per colour and destroy the very thing it exists to measure.
+            // Records with no abbreviation — seeded rows, foreign tags — fall
+            // back to r.material, which for those IS the bare type, so old and
+            // new rows still merge on the same key.
+            usageAdd_(usage, p, r.vendor, r.abbr[0] ? r.abbr : r.material, delta, 1);
         }
     }
 

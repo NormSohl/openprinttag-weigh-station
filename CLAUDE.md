@@ -30,6 +30,8 @@ Both therefore drive GPIO 11 and 12. The S3 routes a pin's *output* from exactly
 ## OpenPrintTag Format Basics
 
 - Reference implementation: `prusa3d/OpenPrintTag` repo, `utils/` directory (`nfc_initialize.py`, `rec_update.py`, `rec_info.py`, `record.py`). Treat as ground truth for the CBOR/NDEF byte layout, not just the published docs.
+- **`material_name` (key 10) is a display string, not a type code.** The spec's example is `PC Blend Carbon Fiber Black`, max_length 63, and it states that `brand_name` + `material_name` should be shown together as *"Prusament PLA Galaxy Black"*. The short code belongs in `material_abbreviation` (key 52, max **7** chars, example `PCCF`). So the descriptive colour name — "Summer Grass" — lives **in `material_name`**: `onboard` composes it as `<material> <colour>`. There is no colour-name field in OPT (61 Main keys; colour is `primary_color` rgba / `_lab` / `_ral` only), and this is why one isn't needed. Getting this backwards wastes a 63-char display field on "PLA" and leaves the product name with nowhere to live.
+  - Consequence: `SpoolRecord.material` holds the display string, so the dashboard roll-up groups by product ("PLA Summer Grass"), which is what it should show. But the **consumption rollup must key on `abbr`**, not `material`, or popularity fragments one bucket per colour — see *Consumption rollup*.
 - Tags carry an NDEF record (MIME type `application/vnd.openprinttag`) with three CBOR-encoded sections:
   - **Meta** — region offsets/sizes pointing to Main and Auxiliary.
   - **Main** — static identity (brand, material, color, GTIN, etc.). Written at onboarding; rewritten only when the stored record's data changes.
@@ -85,6 +87,7 @@ Two mechanisms keep append-only growth from becoming silent data loss:
 
 Material *popularity* (grams consumed per month per vendor+material) is a first-class requirement, and it is exactly what naive compaction would destroy. `UsageRow` records carry it:
 
+- The bucket key is vendor + **`abbr`** ("PLA"), falling back to `material` when a record has no abbreviation (seeded rows, foreign tags — for which `material` *is* the bare type, so old and new rows still merge). It is deliberately **not** `material`, which carries the OPT display string "PLA Summer Grass" and would split the rollup one bucket per colour — destroying the exact signal it exists to measure.
 - Consumption is the **drop in a spool's remaining weight between two weighings**, attributed to the vendor/material in effect at that time. `applyInto_` takes the delta *before* the switch overwrites `r.remaining_g` — the record still holds the previous reading at that point. Non-positive deltas are ignored, which covers sensor noise, refills, and a spool's first weighing (baseline).
 - Usage records **ride in the same log file** and are never discarded, so `/export` still captures everything in one artifact and `/import` restores it. Growth is bounded by months × categories (~100 rows/year), not by event count.
 - They are **primary data, not derived** — once the raw events are folded away, these records are the only remaining evidence. Do not "rebuild" them from scratch.
