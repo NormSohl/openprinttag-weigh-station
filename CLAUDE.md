@@ -59,7 +59,12 @@ This mechanism is not onboarding-specific — it transparently reconciles *any* 
 ### Valid tags not yet in the store ("foreign" tags)
 A tag can be well-formed (not blank) but have an `nfc_id` the local store doesn't recognize — e.g. a genuine Prusament spool, or a spool tagged by another maker's tooling. Treat this as legitimate, not an error: decode the tag's own Main-section data (vendor, material, color, weight) and create a local record from it, rather than an empty stub. Converges into the normal weigh path afterward.
 
-### Spool numbering for human lookup
+### Spool numbering for human lookup — the counter follows the log
+The counter lives in NVS; the records live on LittleFS. Different partitions, so they can get out of step — erase NVS with the log intact and the counter restarts at 1 and reissues numbers that are already in use. Observed for real: a store holding 20 seeded spools handed a freshly onboarded spool **#1**. A duplicate is much worse than a gap, because the number *is* the lookup key ("grab spool 42"), and nothing complains — two records simply answer to the same name.
+
+`storeBegin()` therefore calls `reconcileIdCounter_()` after the index rebuild: whatever the log says wins, and the counter never moves backwards (if NVS is *ahead*, because IDs were issued to records since deleted, it stays ahead). `storeImport()` has always done the same for a restored backup — that asymmetry is what exposed the bug.
+
+
 Display the local store's **auto-incrementing spool ID** (`storeNextSpoolId()`, backed by an NVS counter) on the display — no custom counter or extra field. It is unique and atomic (no race from concurrent onboarding events) and short enough for the display. IDs will have gaps if records are ever deleted; cosmetic only.
 
 ### Tag reuse — decided against, for disposable spools
@@ -155,11 +160,13 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 ## Pending (requires hardware)
 
-**Onboarding form round-trip** is the one significant mechanism still unexercised. Complete the Onboard form in the web app for a spool sitting on the scale: it is the only exercise of the Main-section write-back and the ~1 Hz reconciliation loop — the mechanism that makes "edit in the web app, the tag updates itself" real. Watch for the `needs_ob` flag clearing on the display and a Main write on the wire.
+**The onboarding form round-trip is validated** (2026-08-08, on the first tag formatted with the 24-byte aux layout). Onboard form → local record → Main write-back → tag → re-read → display, showing `Spool #N / PLA / 629 g remaining / Saved locally`. Both of those last two values come off the **tag**, not the store: `display_task.cpp` snapshots `gTagMain`, which `nfcTask` fills by decoding the physical tag, and `remaining` is `weight - empty_container_weight` — so the spool profile's tare made the round trip too, not just the name. That is the mechanism behind "edit in the web app, the tag updates itself".
+
+Still to confirm: **Auxiliary write-back on weigh.** The display path never reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map landed. The only witness is serial — the *absence* of `section write FAILED at block 79` on the weigh after onboarding.
 
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 
-Also unvalidated: foreign-tag adoption, Auxiliary write-back on weigh, and local persistence across power cycles.
+Also unvalidated: foreign-tag adoption and local persistence across power cycles.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 

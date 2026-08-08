@@ -530,6 +530,47 @@ bool storeInventoryAt(size_t idx, MatInventory& out) {
     return true;
 }
 
+// Make the spool-ID counter consistent with what the log actually contains.
+//
+// The counter lives in NVS and the records live on LittleFS — different
+// partitions, which can and do get out of step. Lose or erase NVS while the log
+// survives and the counter restarts at 1, handing out spool numbers that are
+// already in use. That is worse than it sounds: the number is the human lookup
+// key ("grab spool 42"), so a duplicate is far more damaging than a gap, and it
+// is silent — nothing complains, two records just answer to the same name.
+//
+// storeImport() has always done this for an imported log. Boot needs it for
+// exactly the same reason: whatever the log says wins, because the log is the
+// source of truth and the counter is only a cursor into it.
+//
+// Must run AFTER storeRebuildIndices() — it reads the rebuilt index.
+static void reconcileIdCounter_() {
+    Lock lk;
+    uint32_t maxId = 0;
+    for (const auto& s : sSpools)
+        if (s.spool > maxId) maxId = s.spool;
+
+    // Read-WRITE, deliberately. Opening a namespace read-only before it exists
+    // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
+    // creates it silently and costs one write, once.
+    Preferences p;
+    p.begin("store", false);
+    // Never go backwards: if NVS is ahead of the log (IDs issued to records
+    // since deleted) it stays ahead, so those numbers are not handed out twice.
+    const uint32_t cur  = p.getUInt("counter", 1);
+    const uint32_t want = maxId + 1;
+    if (want > cur) {
+        p.putUInt("counter", want);
+        sNextId = want;
+        Serial.printf("[store] id counter was #%u but the log goes to #%u — "
+                      "advanced to #%u (NVS and the log had diverged)\n",
+                      (unsigned)cur, (unsigned)maxId, (unsigned)want);
+    } else {
+        sNextId = cur;
+    }
+    p.end();
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 bool storeBegin() {
     if (!sMutex) sMutex = xSemaphoreCreateMutex();
@@ -537,14 +578,8 @@ bool storeBegin() {
     if (!LittleFS.exists("/log")) LittleFS.mkdir("/log");
     ensureLogFile_();
 
-    // Read-WRITE, deliberately. Opening a namespace read-only before it exists
-    // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
-    // creates it silently and costs one write, once.
-    Preferences p;
-    p.begin("store", false);
-    sNextId = p.getUInt("counter", 1);
-    p.end();
     storeRebuildIndices();
+    reconcileIdCounter_();
     { Lock lk; primeLogEndsNL_(); }   // does the existing log end cleanly?
     return true;
 }
