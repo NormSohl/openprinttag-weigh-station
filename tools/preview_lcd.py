@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # Mock the 3.5" ILI9488 480x320 TFT for each device state, from display_task.cpp.
 # Layout: title size-3 at (12,12); body rows size-2 at (12, 12+r*28); black bg.
-# Text is confined to the left TEXT_W=330 px (26 chars at size 2); the QR panel
-# occupies (332,70,140,140). Long product names wrap — see rowWrap() in the firmware.
+# Rows 0-1 are FULL WIDTH (38 chars): they clear to y 68 and the QR panel starts
+# at y 82, so the header band can use the whole screen. Row 2 down is confined to
+# TEXT_W=330 px (26 chars). The QR panel occupies (332,78,140,140).
 
 # TFT colors -> hex
 W="#ffffff"; GREY="#7b7d7b"; GREEN="#00ff00"; CYAN="#00ffff"
 RED="#ff0000"; YEL="#ffff00"; BLUE="#0064dc"; AMBER="#dc8c00"
 
 # Geometry mirrored from display_task.cpp.
-QR_X, QR_Y, QR_BOX, QUIET = 332, 70, 140, 4
+QR_X, QR_Y, QR_BOX, QUIET = 332, 78, 140, 4
 
 def T(text,color):        return (12,12,26,color,text,True)   # title (size 3, bold)
 def R(r,text,color):      return (12,12+r*28,17,color,text,False)
@@ -133,15 +134,14 @@ states=[
    R(6,"weighstation.local/onboard",CYAN), R(7,"or 192.168.1.42/onboard",GREY),
    QR("onboard")]),
  ("Present  (normal)", ("#2ecc40","green"),
-  [R(0,"Spool #42",W), R(2,"PLA Summer Grass",W), R(3,"eSun",GREY),
-   R(5,"612 g remaining",GREEN), R(7,"Weight recorded",GREY)]),
- ("Present  (long product name, wrapped)", ("#2ecc40","green"),
-  [R(0,"Spool #51",W), R(2,"PC Blend Carbon Fiber",W), R(3,"Black",W),
-   R(4,"Prusament",GREY), R(6,"612 g remaining",GREEN),
-   R(8,"Weight recorded",GREY)]),
+  [R(0,"Spool #42  PLA Summer Grass  eSun",W),
+   R(2,"612 g remaining",GREEN), R(4,"Weight recorded",GREY)]),
+ ("Present  (long product name, wraps to row 1)", ("#2ecc40","green"),
+  [R(0,"Spool #51  PC Blend Carbon Fiber Black",W), R(1,"Prusament",W),
+   R(3,"612 g remaining",GREEN), R(5,"Weight recorded",GREY)]),
  ("Present  (storage full — weigh NOT recorded)", ("#2ecc40","green"),
-  [R(0,"Spool #42",W), R(2,"PLA Summer Grass",W), R(3,"eSun",GREY),
-   R(5,"612 g remaining",GREEN), R(7,"NOT SAVED - storage full",RED)]),
+  [R(0,"Spool #42  PLA Summer Grass  eSun",W),
+   R(2,"612 g remaining",GREEN), R(4,"NOT SAVED - storage full",RED)]),
  ("ReconcilingMainSection", ("#ffe033","yellow"),
   [T("Updating tag...",YEL)]),
  ("Idle  (storage full)", ("#2ecc40","dim green"),

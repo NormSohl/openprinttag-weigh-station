@@ -108,8 +108,11 @@ static const int ROW_H  = 28;
 // the longest text line and 12 px inside the right edge of the screen.
 static const int TEXT_W = 330;
 static const int QR_X   = 332;
-static const int QR_Y   = 70;
-static const int QR_BOX = 140;   // fits 480-332-8 wide and 320-70-... tall
+// 78, not 70: rows 0-1 clear down to y 68, and the panel is drawn 4 px inside
+// QR_BOX, so this leaves a 14 px gap below the full-width header band. At 70 it
+// was 6 px — enough, but not enough to be obviously enough.
+static const int QR_Y   = 78;
+static const int QR_BOX = 140;   // fits 480-332-8 wide, panel ends y 214
 
 static void cls() { tft.fillScreen(TFT_BLACK); }
 
@@ -178,13 +181,33 @@ static void drawQr(const char* text, int x, int y, int box) {
     }
 }
 
-static void row(int r, const char* text, uint16_t color = TFT_WHITE) {
+// Rows 0 and 1 clear y 12..68, and the QR panel starts at y 82 — so those two
+// rows are ABOVE the panel and may use the whole screen width. That is 38
+// characters instead of 26, which is the difference between "PLA" and
+// "Spool #42  PLA Summer Grass  eSun" on one line.
+//
+// Row 2 onwards overlaps the panel vertically and must stay inside TEXT_W.
+static const int TEXT_W_WIDE = 468;   // 480 less a 12 px right margin
+static const int WIDE_ROWS   = 2;     // rows 0..1 only
+
+static void rowAt(int r, const char* text, uint16_t color, int clearW) {
     int y = MARGIN + r * ROW_H;
-    tft.fillRect(0, y, TEXT_W, ROW_H, TFT_BLACK);
+    tft.fillRect(0, y, clearW, ROW_H, TFT_BLACK);
     tft.setTextSize(2);
     tft.setTextColor(color, TFT_BLACK);
     tft.setCursor(MARGIN, y);
     tft.print(text);
+}
+
+static void row(int r, const char* text, uint16_t color = TFT_WHITE) {
+    rowAt(r, text, color, TEXT_W);
+}
+
+// Full-width row. Silently narrows below the header band rather than trusting
+// the caller — clearing 468 px at row 2 would erase the left edge of the QR
+// code on every redraw.
+static void rowWide(int r, const char* text, uint16_t color = TFT_WHITE) {
+    rowAt(r, text, color, r < WIDE_ROWS ? TEXT_W_WIDE : TEXT_W);
 }
 
 static void rowf(int r, uint16_t color, const char* fmt, ...) {
@@ -196,8 +219,10 @@ static void rowf(int r, uint16_t color, const char* fmt, ...) {
     row(r, buf, color);
 }
 
-// How many size-2 characters fit a body row before the QR panel.
-static const int ROW_CHARS = (TEXT_W - MARGIN) / 12;   // 26
+// How many size-2 characters fit a body row before the QR panel, and in the
+// full-width header band above it.
+static const int ROW_CHARS      = (TEXT_W      - MARGIN) / 12;   // 26
+static const int ROW_CHARS_WIDE = (TEXT_W_WIDE - MARGIN) / 12;   // 38
 
 // Draw `text` over up to `maxRows` rows, breaking at spaces. Returns the next
 // free row.
@@ -210,27 +235,41 @@ static const int ROW_CHARS = (TEXT_W - MARGIN) / 12;   // 26
 //
 // Breaking at a space keeps the name legible; a word longer than a row is cut
 // hard, because there is nothing better to do with it.
-static int rowWrap(int r, const char* text, uint16_t color, int maxRows = 2) {
-    char buf[ROW_CHARS + 1];
+static int rowWrapCore(int r, const char* text, uint16_t color, int maxRows,
+                       int cols, bool wide) {
+    char buf[ROW_CHARS_WIDE + 1];
     const size_t len = strlen(text);
     size_t pos = 0;
     int drawn = 0;
     while (pos < len && drawn < maxRows) {
         size_t take = len - pos;
-        if (take > (size_t)ROW_CHARS) {
-            take = (size_t)ROW_CHARS;
+        if (take > (size_t)cols) {
+            take = (size_t)cols;
             size_t brk = take;
             while (brk > 0 && text[pos + brk] != ' ') brk--;
             if (brk > 0) take = brk;          // else no space: hard break
         }
         memcpy(buf, text + pos, take);
         buf[take] = 0;
-        row(r + drawn, buf, color);
+        if (wide) rowWide(r + drawn, buf, color);
+        else      row(r + drawn, buf, color);
         drawn++;
         pos += take;
         while (pos < len && text[pos] == ' ') pos++;
     }
     return r + drawn;
+}
+
+static int rowWrap(int r, const char* text, uint16_t color, int maxRows = 2) {
+    return rowWrapCore(r, text, color, maxRows, ROW_CHARS, false);
+}
+
+// Wrap inside the full-width header band. Never spills past row 1: below that
+// the QR panel is in the way, and a 38-column line would run straight into it.
+static int rowWrapWide(int r, const char* text, uint16_t color) {
+    int room = WIDE_ROWS - r;
+    if (room < 1) room = 1;
+    return rowWrapCore(r, text, color, room, ROW_CHARS_WIDE, true);
 }
 
 // Size-3 title on row 0: 24px tall.
@@ -519,15 +558,23 @@ void displayTask(void* param) {
                     }
                     pixelColor = pixel.Color(50, 50, 0);
                 } else {
-                    if (spoolId > 0) rowf(0, TFT_WHITE, "Spool #%d", spoolId);
-                    else             row(0, "Spool", TFT_WHITE);
-                    // The full product name, wrapped — "PLA Summer Grass", not
-                    // "PLA". OPT says brand_name and material_name should be
-                    // shown together ("Prusament PLA Galaxy Black"), so the
-                    // brand goes underneath rather than being dropped.
-                    int r = rowWrap(2, snap.material_name[0] ? snap.material_name
-                                                             : "Unknown", TFT_WHITE);
-                    if (snap.brand_name[0]) row(r++, snap.brand_name, TFT_DARKGREY);
+                    // Identity on the full-width header band: spool number,
+                    // product name and brand on one line, wrapping to a second
+                    // if it needs to. 38 columns up here against 26 below, which
+                    // is what makes all three fit at once — and it reads as one
+                    // fact ("which spool is this") instead of three stacked
+                    // fragments. OPT asks for brand_name and material_name to be
+                    // shown together, and this is that, literally.
+                    char hdr[160];
+                    const char* nm = snap.material_name[0] ? snap.material_name
+                                                           : "Unknown";
+                    if (spoolId > 0) snprintf(hdr, sizeof(hdr), "Spool #%d  %s", spoolId, nm);
+                    else             snprintf(hdr, sizeof(hdr), "%s", nm);
+                    if (snap.brand_name[0]) {
+                        strlcat(hdr, "  ", sizeof(hdr));
+                        strlcat(hdr, snap.brand_name, sizeof(hdr));
+                    }
+                    int r = rowWrapWide(0, hdr, TFT_WHITE);
                     rowf(r + 1, TFT_GREEN, "%.0f g remaining", remaining);
                     // "Saved locally" was left from the Spoolman era, where the
                     // alternative was "pushed to the server". There is no
