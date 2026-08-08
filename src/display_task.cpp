@@ -113,15 +113,36 @@ static void cls() { tft.fillScreen(TFT_BLACK); }
 // Drawn light-on-dark with a white quiet zone: scanners need ~4 modules of
 // light margin, and the screen background is black.
 static void drawQr(const char* text, int x, int y, int box) {
-    // Buffer for the largest version we will attempt (v4 = 33 modules):
-    // ((33*33)+7)/8 = 137 bytes. qrcode_getBufferSize() is a runtime call, so
-    // this is sized by hand.
+    // Byte-mode payload capacity at ECC_LOW for versions 1..QR_VERSION_MAX,
+    // derived from the encoder's own tables: dataCapacity is
+    // NUM_RAW_DATA_MODULES/8 - NUM_ERROR_CORRECTION_CODEWORDS[Low], less the
+    // 12-bit (mode + 8-bit count) byte-mode header, floored to whole bytes.
+    //
+    // We must range-check the string ourselves, because the encoder will not.
+    // qrcode_initText() returns 0 for ANY input: its only failure path is
+    // `mode < 0`, and encodeDataCodewords() returns a mode constant
+    // unconditionally in byte mode. Worse, bb_appendBits() has no bounds check
+    // at all — it writes straight to data[offset >> 3]. So an over-long string
+    // does not fail, it silently overruns codewordBytes[], which is a VLA on
+    // THIS TASK'S STACK. Trusting the return code (as this function first did)
+    // pinned every code at version 2 and turned a 33-character URL into an
+    // unscannable one, and a 44-character URL into a stack smash.
+    static const uint8_t QR_VERSION_MAX = 4;
+    static const uint8_t QR_CAPACITY[QR_VERSION_MAX] = { 17, 32, 53, 78 };
+
+    const size_t len = strlen(text);
+    uint8_t version = 0;
+    for (uint8_t v = 1; v <= QR_VERSION_MAX; v++) {
+        if (len <= QR_CAPACITY[v - 1]) { version = v; break; }
+    }
+    if (version == 0) return;              // too long to encode — draw nothing
+
+    // Sized for QR_VERSION_MAX (v4 = 33 modules): ((33*33)+7)/8 = 137 bytes.
+    // qrcode_getBufferSize() is a runtime call, so this is sized by hand —
+    // raising QR_VERSION_MAX means resizing this too.
     static uint8_t qrData[160];
     QRCode qr;
-    bool ok = false;
-    for (uint8_t version = 2; version <= 4 && !ok; version++)
-        ok = (qrcode_initText(&qr, qrData, version, ECC_LOW, text) == 0);
-    if (!ok) return;                       // too long to encode — draw nothing
+    if (qrcode_initText(&qr, qrData, version, ECC_LOW, text) != 0) return;
 
     const int quiet = 4;                   // modules of light margin, per spec
     const int total = qr.size + quiet * 2;

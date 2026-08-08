@@ -156,7 +156,14 @@ void setup() {
 
     // Core 0: I/O — co-located with the WiFi stack
     bootMark("starting displayTask (TFT)");
-    xTaskCreatePinnedToCore(displayTask, "display", 4096, nullptr, 1, nullptr, 0);
+    // 6144, not 4096: drawQr() calls into ricmoo's encoder, which builds its
+    // working buffers as C99 variable-length arrays on the CALLER'S stack —
+    // codewordBytes[101] + isFunctionGridBytes[137] in qrcode_initBytes(), and
+    // another result[101] + coeff[20] nested inside performErrorCorrection().
+    // That is ~600 bytes of transient on top of the TFT call frames, on a task
+    // that used to do nothing deeper than fillRect. scaleTask already cost us
+    // one canary panic for exactly this kind of hidden depth.
+    xTaskCreatePinnedToCore(displayTask, "display", 6144, nullptr, 1, nullptr, 0);
     bootMark("starting syncTask (WiFi + web)");
     xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, nullptr, 0);
 

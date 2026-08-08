@@ -1,4 +1,11 @@
-# tools/ — UI preview generators
+# tools/ — bench aids that need no board
+
+Two kinds of thing here: UI previews (Python, below) and `qr/` — C harnesses
+that build and run the real QR encoder natively under AddressSanitizer, to
+check the capacity table `drawQr()` depends on. Unlike the previews, those
+are actual tests with a pass/fail exit code. See `qr/README.md`.
+
+## UI preview generators
 
 Standalone Python scripts that render the device's UI **without flashing the
 board**, for reviewing look/layout/wording on a PC. Pure `python3` stdlib, no
