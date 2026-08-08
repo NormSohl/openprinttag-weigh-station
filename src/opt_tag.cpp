@@ -31,6 +31,63 @@ static constexpr int AUX_KEY_CONSUMED_WEIGHT = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// ── Guarded tinycbor accessors ────────────────────────────────────────────────
+//
+// tinycbor reports precondition violations with cbor_assert(), which on ESP-IDF
+// aborts the firmware. There is no build flag that makes this safe: under NDEBUG
+// cbor_assert() degrades to unreachable(), i.e. undefined behaviour, which is
+// worse than the abort. The only defence is to test the type before every call.
+//
+// This is not theoretical. A tag left one block short by the block-79 write
+// refusal decoded far enough to reach the Auxiliary map, then ran off the end of
+// it, and cbor_value_advance() aborted at cborparser.c:508. nfcTask reads
+// whatever is on the scale, so the reboot came straight back on the next boot:
+// a loop that only stopped when the spool was lifted off.
+//
+// A tag whose CBOR is truncated or garbled must decode to "no". Never to a
+// reboot.
+
+// cbor_value_get_int64() asserts cbor_value_is_integer(), so checking its return
+// value is not a guard — it aborts before it can return anything.
+static bool cborTakeInt(const CborValue* v, int64_t* out) {
+    if (!cbor_value_is_integer(v)) return false;
+    return cbor_value_get_int64(v, out) == CborNoError;
+}
+
+// The copy_*_string calls assert the matching string type, and advance the
+// iterator themselves when handed `v` as their `next`. True means "value
+// consumed, do not step again".
+static bool cborTakeText(CborValue* v, char* buf, size_t cap) {
+    if (!cbor_value_is_text_string(v)) return false;
+    size_t n = cap;
+    return cbor_value_copy_text_string(v, buf, &n, v) == CborNoError;
+}
+
+static bool cborTakeBytes(CborValue* v, uint8_t* buf, size_t cap) {
+    if (!cbor_value_is_byte_string(v)) return false;
+    size_t n = cap;
+    return cbor_value_copy_byte_string(v, buf, &n, v) == CborNoError;
+}
+
+// Step over whatever the iterator points at. cbor_value_advance() handles fixed
+// and container types alike (advance_recursive short-circuits to advance_internal
+// for fixed ones), so we never need cbor_value_advance_fixed() and never have to
+// prove "is this fixed?" — only that the position is valid at all, which is
+// exactly the assert that fired.
+static bool cborStep(CborValue* v) {
+    if (cbor_value_get_type(v) == CborInvalidType) return false;
+    return cbor_value_advance(v) == CborNoError;
+}
+
+// cbor_value_leave_container() asserts that the inner iterator is exhausted
+// (recursed->type == CborInvalidType), so bailing out of a decode loop early and
+// then "tidying up" is itself an abort. Only leave a container we actually
+// finished; the outer iterator is unused afterwards either way.
+static void cborLeave(CborValue* outer, CborValue* inner) {
+    if (cbor_value_is_container(outer) && cbor_value_get_type(inner) == CborInvalidType)
+        cbor_value_leave_container(outer, inner);
+}
+
 // The reference implementation (fields.py CompactFloat) may encode floats as
 // int (whole numbers), CBOR float16, float32, or float64.  Read whichever type
 // is present and return it as float.
@@ -199,92 +256,91 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
     if (cbor_value_enter_container(&it, &map) == CborNoError) {
         while (!cbor_value_at_end(&map)) {
             int64_t key;
-            if (cbor_value_get_int64(&map, &key) != CborNoError) break;
-            cbor_value_advance_fixed(&map);
+            if (!cborTakeInt(&map, &key)) break;   // key must be an integer
+            if (!cborStep(&map)) break;            // now on the value
+            int64_t v;
             switch (key) {
-                case META_KEY_MAIN_REGION_OFFSET: {
-                    int64_t v; cbor_value_get_int64(&map, &v); mainOffset = (uint16_t)v;
-                    if (meta) meta->main_region_offset = mainOffset;
+                case META_KEY_MAIN_REGION_OFFSET:
+                    if (cborTakeInt(&map, &v)) {
+                        mainOffset = (uint16_t)v;
+                        if (meta) meta->main_region_offset = mainOffset;
+                    }
                     break;
-                }
                 case META_KEY_MAIN_REGION_SIZE:
-                    if (meta) { int64_t v; cbor_value_get_int64(&map, &v); meta->main_region_size = (uint16_t)v; }
+                    if (cborTakeInt(&map, &v) && meta) meta->main_region_size = (uint16_t)v;
                     break;
-                case META_KEY_AUX_REGION_OFFSET: {
-                    int64_t v; cbor_value_get_int64(&map, &v); auxOffset = (uint16_t)v;
-                    if (meta) meta->aux_region_offset = auxOffset;
+                case META_KEY_AUX_REGION_OFFSET:
+                    if (cborTakeInt(&map, &v)) {
+                        auxOffset = (uint16_t)v;
+                        if (meta) meta->aux_region_offset = auxOffset;
+                    }
                     break;
-                }
                 case META_KEY_AUX_REGION_SIZE:
-                    if (meta) { int64_t v; cbor_value_get_int64(&map, &v); meta->aux_region_size = (uint16_t)v; }
+                    if (cborTakeInt(&map, &v) && meta) meta->aux_region_size = (uint16_t)v;
                     break;
             }
-            cbor_value_advance(&map);
+            if (!cborStep(&map)) break;
         }
-        cbor_value_leave_container(&it, &map);
+        cborLeave(&it, &map);
     }
 
     // ── Decode Main region ────────────────────────────────────────────────────
     if (main && mainOffset < payloadLen) {
         CborParser mp; CborValue mi, mm;
-        cbor_parser_init(payload + mainOffset, payloadLen - mainOffset, 0, &mp, &mi);
-        if (cbor_value_is_map(&mi) && cbor_value_enter_container(&mi, &mm) == CborNoError) {
+        if (cbor_parser_init(payload + mainOffset, payloadLen - mainOffset, 0, &mp, &mi) == CborNoError &&
+            cbor_value_is_map(&mi) && cbor_value_enter_container(&mi, &mm) == CborNoError) {
             while (!cbor_value_at_end(&mm)) {
                 int64_t key;
-                if (cbor_value_get_int64(&mm, &key) != CborNoError) break;
-                cbor_value_advance_fixed(&mm);
-                size_t slen;
+                if (!cborTakeInt(&mm, &key)) break;
+                if (!cborStep(&mm)) break;
+                // The string cases advance the iterator themselves; the scalar
+                // cases leave it on the value for the step at the bottom. A
+                // failed take (wrong type on the tag) falls through to that step
+                // too, so an unexpected value is skipped rather than fatal.
+                bool consumed = false;
+                int64_t v;
                 switch (key) {
                     case MAIN_KEY_INSTANCE_UUID:
-                        slen = 16;
-                        cbor_value_copy_byte_string(&mm, main->instance_uuid, &slen, &mm);
-                        continue;
+                        consumed = cborTakeBytes(&mm, main->instance_uuid, 16); break;
                     case MAIN_KEY_BRAND_NAME:
-                        slen = sizeof(main->brand_name);
-                        cbor_value_copy_text_string(&mm, main->brand_name, &slen, &mm);
-                        continue;
+                        consumed = cborTakeText(&mm, main->brand_name, sizeof(main->brand_name)); break;
                     case MAIN_KEY_MATERIAL_NAME:
-                        slen = sizeof(main->material_name);
-                        cbor_value_copy_text_string(&mm, main->material_name, &slen, &mm);
-                        continue;
+                        consumed = cborTakeText(&mm, main->material_name, sizeof(main->material_name)); break;
                     case MAIN_KEY_MATERIAL_ABBREVIATION:
-                        slen = sizeof(main->material_abbreviation);
-                        cbor_value_copy_text_string(&mm, main->material_abbreviation, &slen, &mm);
-                        continue;
+                        consumed = cborTakeText(&mm, main->material_abbreviation, sizeof(main->material_abbreviation)); break;
                     case MAIN_KEY_PRIMARY_COLOR_RGBA:
-                        slen = 4;
-                        cbor_value_copy_byte_string(&mm, main->primary_color_rgba, &slen, &mm);
-                        continue;
+                        consumed = cborTakeBytes(&mm, main->primary_color_rgba, 4); break;
                     case MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT: cborGetFloat(&mm, &main->nominal_netto_full_weight); break;
                     case MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT:  cborGetFloat(&mm, &main->actual_netto_full_weight);  break;
                     case MAIN_KEY_EMPTY_CONTAINER_WEIGHT:    cborGetFloat(&mm, &main->empty_container_weight);    break;
                     case MAIN_KEY_FILAMENT_DIAMETER:         cborGetFloat(&mm, &main->filament_diameter);         break;
-                    case MAIN_KEY_MIN_PRINT_TEMPERATURE: { int64_t v; cbor_value_get_int64(&mm, &v); main->min_print_temperature = (int16_t)v; break; }
-                    case MAIN_KEY_MAX_PRINT_TEMPERATURE: { int64_t v; cbor_value_get_int64(&mm, &v); main->max_print_temperature = (int16_t)v; break; }
-                    case MAIN_KEY_MIN_BED_TEMPERATURE:   { int64_t v; cbor_value_get_int64(&mm, &v); main->min_bed_temperature   = (int16_t)v; break; }
-                    case MAIN_KEY_MAX_BED_TEMPERATURE:   { int64_t v; cbor_value_get_int64(&mm, &v); main->max_bed_temperature   = (int16_t)v; break; }
-                    case MAIN_KEY_MATERIAL_CLASS: { int64_t v; cbor_value_get_int64(&mm, &v); main->material_class = (int8_t)v; break; }
-                    case MAIN_KEY_MATERIAL_TYPE:  { int64_t v; cbor_value_get_int64(&mm, &v); main->material_type  = (int8_t)v; break; }
+                    case MAIN_KEY_MIN_PRINT_TEMPERATURE: if (cborTakeInt(&mm, &v)) main->min_print_temperature = (int16_t)v; break;
+                    case MAIN_KEY_MAX_PRINT_TEMPERATURE: if (cborTakeInt(&mm, &v)) main->max_print_temperature = (int16_t)v; break;
+                    case MAIN_KEY_MIN_BED_TEMPERATURE:   if (cborTakeInt(&mm, &v)) main->min_bed_temperature   = (int16_t)v; break;
+                    case MAIN_KEY_MAX_BED_TEMPERATURE:   if (cborTakeInt(&mm, &v)) main->max_bed_temperature   = (int16_t)v; break;
+                    case MAIN_KEY_MATERIAL_CLASS: if (cborTakeInt(&mm, &v)) main->material_class = (int8_t)v; break;
+                    case MAIN_KEY_MATERIAL_TYPE:  if (cborTakeInt(&mm, &v)) main->material_type  = (int8_t)v; break;
                 }
-                cbor_value_advance(&mm);
+                if (consumed) continue;
+                if (!cborStep(&mm)) break;
             }
-            cbor_value_leave_container(&mi, &mm);
+            cborLeave(&mi, &mm);
         }
     }
 
     // ── Decode Auxiliary region ───────────────────────────────────────────────
     if (aux && auxOffset > 0 && auxOffset < payloadLen) {
         CborParser ap; CborValue ai, am;
-        cbor_parser_init(payload + auxOffset, payloadLen - auxOffset, 0, &ap, &ai);
-        if (cbor_value_is_map(&ai) && cbor_value_enter_container(&ai, &am) == CborNoError) {
+        if (cbor_parser_init(payload + auxOffset, payloadLen - auxOffset, 0, &ap, &ai) == CborNoError &&
+            cbor_value_is_map(&ai) && cbor_value_enter_container(&ai, &am) == CborNoError) {
             while (!cbor_value_at_end(&am)) {
                 int64_t key;
-                if (cbor_value_get_int64(&am, &key) != CborNoError) break;
-                cbor_value_advance_fixed(&am);
+                if (!cborTakeInt(&am, &key)) break;
+                if (!cborStep(&am)) break;
                 if (key == AUX_KEY_CONSUMED_WEIGHT) cborGetFloat(&am, &aux->consumed_weight);
-                cbor_value_advance(&am);
+                if (!cborStep(&am)) break;   // <- this call aborted the firmware
             }
-            cbor_value_leave_container(&ai, &am);
+            cborLeave(&ai, &am);
         }
     }
 
