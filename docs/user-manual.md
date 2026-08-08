@@ -25,12 +25,12 @@ The 3.5" screen shows one of these, depending on what's happening:
 
 | Display | Meaning |
 |---|---|
-| <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, Web app URL"> | **Idle, ready** — place a spool to begin |
+| <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Idle, ready** — place a spool to begin |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing** — reading the load cell |
 | <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Saved locally"> | **Done** — spool number, material, and remaining weight recorded locally |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen prompting to add details in the web app"> | **New spool registered** — fill in the material details in the web app (see *New Spools* below) |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number, NEEDS ONBOARDING, Scan QR to add details, and a QR code"> | **New spool registered** — fill in the material details in the web app (see *New Spools* below) |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
-| <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
+| <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
 
 > **Opening the web app from your phone.** The idle screen shows a **QR code** on
 > the right — scan it with the camera and it opens the app directly. The address
@@ -72,7 +72,7 @@ When you place a spool with a **blank NFC tag** on the scale:
    inventory until step 4. **Scan the QR code on that screen** to jump straight
    to the form for this spool.
 
-   <img src="images/lcd/registered.svg" width="300" alt="Registered screen prompting to add details in the web app">
+   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number, NEEDS ONBOARDING, Scan QR to add details, and a QR code">
 
 4. **Open the web app and fill in the material details** for that spool — see
    *Onboarding a spool* below.
@@ -146,7 +146,7 @@ screen shows the SSID and address to use.
 The scale reads raw counts until calibrated; the idle screen shows **"Scale not
 calibrated"** until you do this:
 
-<img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning">
+<img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code">
 
 1. With the spool on/off as directed, browse to `http://weighstation.local/` and
    open **Calibrate**.
