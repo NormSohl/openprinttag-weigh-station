@@ -114,6 +114,12 @@ Full reference: `docs/api.md`. Shape of it:
 - No TLS. The key is a guard rail against misaimed scripts and stray clicks, not transport security; the LAN is the real boundary.
 - `deviceStateName()` in `device_state.h` is part of the API surface — external dashboards match on those strings.
 
+## Proposed: products and instances
+
+`docs/design/product-instance.md` — **proposed, not built.** Spool records are currently flat: ten spools of the same filament are ten copies of the same vendor, material, colour, diameter and tare. The design splits Brand → Product → Profile → Instance, matching the four-level identity OPT already defines (`brand_uuid` / `material_uuid` / `package_uuid` / `instance_uuid`), and gives onboarding two paths — "another spool of X" versus "a new product".
+
+Two things in it are load-bearing if it gets built: `SpoolRecord` keeps its fields as a **resolved cache** with a product reference added, so the reconcile loop and inventory roll-up need no changes and foreign tags still work; and a foreign tag may **create** a product but must never **update** one, because product edits propagate to tags and one bad tag would otherwise rewrite a whole shelf.
+
 ## Device State Machine
 
 See `docs/design/device-states.mermaid` for the full state diagram: boot/WiFi setup, idle, tag detection branching into blank/foreign/known/error paths, the onboarding confirm flow, and the steady "present" state with background reconciliation.
