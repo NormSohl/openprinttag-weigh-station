@@ -11,14 +11,89 @@ extern volatile bool gTagForceFormat;
 // there just wastes time — refuse with a reason instead.
 static bool sNauPresent = false;
 #include "device_state.h"
+#include "opt_tag.h"        // DUMP TAG prints the decoded Main/Aux/Meta
 #include "store.h"          // route store test commands (EV / DUMP / …) here too
 #include "config_store.h"   // …and CFG commands
 
+extern volatile DeviceState gState;
+extern SemaphoreHandle_t    gStateMutex;
+extern OptMain              gTagMain;
+extern OptAuxiliary         gTagAux;
+extern OptMeta              gTagMeta;
+extern SemaphoreHandle_t    gTagMutex;
+extern volatile int         gSpoolId;
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
 extern volatile bool        gScaleCalibrated;
 extern volatile bool        gCalZeroReq;
 extern volatile float       gCalSetGrams;
+
+// ── DUMP TAG ──────────────────────────────────────────────────────────────────
+// Decode-and-print whatever nfcTask last read off a tag.
+//
+// This exists because nothing else can see the Auxiliary section. The display
+// derives remaining weight from the Main section's tare, and the web app never
+// reads consumed_weight at all — so a perfectly correct Present screen says
+// nothing about whether the 8-byte Aux map ever landed on the tag. The only
+// other evidence was the ABSENCE of "section write FAILED" on the wire, and an
+// error that didn't happen is weak proof of a write that did.
+//
+// Prints the globals rather than re-reading the tag: nfcTask owns the reader,
+// and a second reader here would need the SPI bus and the RF field. That means
+// the values survive the spool being lifted, so the state is printed alongside
+// — stale data is fine to inspect, as long as it says it is stale.
+static void dumpTag() {
+    xSemaphoreTake(gStateMutex, portMAX_DELAY);
+    DeviceState st = gState;
+    xSemaphoreGive(gStateMutex);
+
+    xSemaphoreTake(gTagMutex, portMAX_DELAY);
+    OptMain      m = gTagMain;
+    OptAuxiliary a = gTagAux;
+    OptMeta      t = gTagMeta;
+    xSemaphoreGive(gTagMutex);
+
+    const bool live = (st == DeviceState::Present ||
+                       st == DeviceState::WeighingAndSync ||
+                       st == DeviceState::ReconcilingMainSection ||
+                       st == DeviceState::ValidTagFound);
+
+    char uuid[33];
+    for (int i = 0; i < 16; i++) snprintf(uuid + i * 2, 3, "%02x", m.instance_uuid[i]);
+
+    Serial.printf("[tag] state=%s  spool=#%d  %s\n", deviceStateName(st), (int)gSpoolId,
+                  live ? "(live)" : "(LAST READ — nothing on the scale now)");
+    Serial.printf("[tag] Meta  main@%u (size %u)  aux@%u (size %u)\n",
+                  (unsigned)t.main_region_offset, (unsigned)t.main_region_size,
+                  (unsigned)t.aux_region_offset,  (unsigned)t.aux_region_size);
+    Serial.printf("[tag] Main  uuid %s\n", uuid);
+    Serial.printf("[tag]       brand \"%s\"  name \"%s\"  abbr \"%s\"\n",
+                  m.brand_name, m.material_name, m.material_abbreviation);
+    if (m.primary_color_rgba[3])
+        Serial.printf("[tag]       colour %02x%02x%02x (alpha %u)\n",
+                      m.primary_color_rgba[0], m.primary_color_rgba[1],
+                      m.primary_color_rgba[2], (unsigned)m.primary_color_rgba[3]);
+    else
+        Serial.println("[tag]       colour NOT ASSIGNED (alpha 0)");
+    Serial.printf("[tag]       dia %.2f mm  nominal %.1f g  actual %.1f g  empty %.1f g\n",
+                  m.filament_diameter, m.nominal_netto_full_weight,
+                  m.actual_netto_full_weight, m.empty_container_weight);
+    Serial.printf("[tag]       nozzle %d-%d C  bed %d-%d C  class %d  type %d\n",
+                  m.min_print_temperature, m.max_print_temperature,
+                  m.min_bed_temperature, m.max_bed_temperature,
+                  m.material_class, m.material_type);
+    Serial.printf("[tag]       write_protection %d (Main %s)\n",
+                  m.write_protection, optMainWritable(m) ? "writable" : "PROTECTED");
+
+    // The line this command exists for.
+    Serial.printf("[tag] Aux   consumed %.1f g%s\n", a.consumed_weight,
+                  a.consumed_weight > 0.0f ? ""
+                    : "   <- zero: either an unused spool, or Aux never wrote");
+
+    if (m.actual_netto_full_weight > 0.0f)
+        Serial.printf("[tag] calc  remaining = actual - consumed = %.1f g\n",
+                      m.actual_netto_full_weight - a.consumed_weight);
+}
 
 // ── Serial calibration helpers ────────────────────────────────────────────────
 // Commands accepted over Serial at 115200 baud:
@@ -70,6 +145,10 @@ static void dispatchCommand(const String& cmd, NAU7802& nau) {
         doZero(nau);
     } else if (cmd.startsWith("CAL ") || cmd.startsWith("cal ")) {
         doCalibrate(nau, cmd.substring(4).toFloat());
+    } else if (cmd.equalsIgnoreCase("DUMP TAG")) {
+        // Ahead of the storeSerialCommand fallback, which owns DUMP / DUMP usage
+        // but cannot see the tag globals.
+        dumpTag();
     } else if (cmd.equalsIgnoreCase("TAGFORMAT")) {
         gTagForceFormat = true;
         Serial.println("[nfc] TAGFORMAT armed — place the tag (or leave it in "

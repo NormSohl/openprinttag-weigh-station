@@ -181,7 +181,7 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 One gap remains, and it is a gap in **observation**, not in function:
 
-- **Auxiliary write-back on weigh has never been directly witnessed.** Nothing on the display or in the web app reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map actually landed. The only evidence either way is serial: the *absence* of `section write FAILED at block …` on a weigh. Closing this properly wants a `DUMP tag` serial command that decodes and prints Main + Aux of whatever is on the scale — useful well beyond this one question.
+- **Auxiliary write-back on weigh has never been directly witnessed.** Nothing on the display or in the web app reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map actually landed. **`DUMP TAG`** over serial now prints the decoded Meta/Main/Aux of whatever nfcTask last read — the `Aux consumed` line is the witness. Weigh a spool that has used filament and check it is non-zero and tracking; zero on a part-used spool means Aux never wrote.
 
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 
