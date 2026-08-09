@@ -127,7 +127,9 @@ Full reference: `docs/api.md`. Shape of it:
 - **Foreign-tag adoption** (`syncTask`, `RegisteringForeignTag`) probes the ladder from the tag's own Main section and creates a **provisional** product if nothing matches. Four genuine Prusament spools therefore roll up as one product, not four identical rows.
 - **The web onboard/edit form** resolves or creates a product from what was typed — not provisional, since a person entered it.
 
-Still to build: product-aware onboarding UI ("another spool of X" vs "a new product"), propagation of a product edit to its spools, reorder against products, and the product pages. `product == 0` stays valid throughout, so each is independently shippable.
+- **The Products page** (`/products`, `/api/products`) is the read surface, and specifically **the page that answers "is adoption converging?"** — if the same filament appears twice, the matching ladder missed, and nothing else in the app would show it, because two products with the same name roll up into one inventory row and look correct. The spool detail page names its product for the same reason.
+
+Still to build: product-aware onboarding UI ("another spool of X" vs "a new product"), propagation of a product edit to its spools, reorder against products, and product editing. `product == 0` stays valid throughout, so each is independently shippable.
 
 **Neither write path updates an existing product**, even the human one. Propagation (one `Reconcile` per spool of the product, which rewrites their tags on next placement) is not built, so an update today would change the definition while leaving every other spool's cached copy and tag stale. Editing a product belongs on a product page, not on one spool's form.
 

@@ -18,7 +18,8 @@ work with no configuration.
 | Endpoint | Content-Type | Purpose |
 |---|---|---|
 | `GET /api/status` | JSON | Everything a dashboard polls: state, spool on the scale, weight, WiFi, storage health |
-| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, onboarding flag |
+| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag |
+| `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
 | `GET /api/usage` | JSON | Consumption per month per vendor+material |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
@@ -31,6 +32,38 @@ work with no configuration.
 > colour rather than a black one, and a consumer must be able to tell those apart.
 > `material` carries the OPT display string (`"PLA Summer Grass"`); the bare type
 > code is on the record as the abbreviation and is what `/api/usage` groups by.
+
+### `GET /api/products`
+
+A **product** is a filament SKU; a spool is one instance of it. A spool's
+vendor, material, colour, diameter, tare and nominal weight are a resolved
+*cache* of its product's, so both endpoints report them and they agree.
+
+```json
+[
+  { "id": 3, "vendor": "Prusament", "material": "PLA Galaxy Black",
+    "abbr": "PLA", "color": "112233", "diameter_mm": 1.75,
+    "empty_g": 201.0, "nominal_g": 1000.0, "provisional": false,
+    "package_uuid": "…", "gtin": "8595581746018" }
+]
+```
+
+- **`product` on `/api/spools` is `null`, not `0`**, for a spool that predates
+  products or whose tag could not be resolved. It keeps working; it simply
+  belongs to no product.
+- **The four OpenPrintTag identity keys are omitted when the tag carried none**
+  (`package_uuid`, `material_uuid`, `brand_uuid`, `gtin`) rather than sent as
+  `""`. Absent is not the same as known-empty.
+- **`gtin` is a string.** It is an identifier, and JSON numbers go through a
+  double in most consumers.
+- **`provisional: true`** means the product was inferred by adopting a tag and
+  no human has confirmed it. Provisional products are excluded from tag
+  write-back, so adopting a spool can never make the station rewrite a vendor's
+  tag from data it guessed.
+
+Products are created, never auto-updated, by either write path — a product edit
+propagates to every tag of that product, so one odd tag must not be able to
+rewrite a shelf. See `docs/design/product-instance.md`.
 
 ### `GET /api/status`
 

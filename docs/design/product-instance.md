@@ -9,10 +9,11 @@ Status: **store layer built** (2026-08-09), nothing wired to it yet.
 | Product entity, index, event type, compaction survival, matching | **done** — `ProductRecord`, `StoreEv::Product`, `storeFindProduct()` / `storeAdoptProduct()` |
 | Foreign-tag adoption resolves a product | **done** — `syncTask`, provisional |
 | Web onboard/edit form resolves a product | **done** — not provisional |
+| Products page + `/api/products` | **done** — read-only |
 | Onboarding UI ("another spool of X" vs "a new product") | not started |
 | A product edit propagating to its spools | not started |
 | Reorder against products | not started |
-| Product web pages | not started |
+| Product editing | not started |
 
 Both write paths **create** products and never **update** them — see *Authority*
 below. Until propagation is built, an update would change the definition while

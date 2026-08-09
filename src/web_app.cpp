@@ -144,6 +144,7 @@ static String head(const char* title, const char* active = "") {
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
     navlink(h, "/spools",    "Spools",    active);
+    navlink(h, "/products",  "Products",  active);
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
@@ -322,7 +323,118 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
            + ",\"color\":" + colorJson(r.rgba)
            + ",\"remaining_g\":" + String(r.remaining_g, 1)
            + ",\"used_g\":" + String(r.used_g, 1)
+           // null, not 0: a spool predating products has no product, which is
+           // not the same as belonging to product zero.
+           + ",\"product\":" + (r.product ? String((unsigned)r.product) : String("null"))
            + ",\"needs_onboarding\":" + (r.needs_ob ? "true" : "false") + "}";
+    }
+    j += "]";
+    req->send(200, "application/json", j);
+}
+
+// ── Products ──────────────────────────────────────────────────────────────────
+// The page that answers "is adoption converging?". If the same filament appears
+// twice here, the matching ladder missed — and nothing else in the app would
+// show that, because two products with the same name roll up into one
+// inventory row and look correct.
+static void handleProducts(AsyncWebServerRequest* req) {
+    String p = head("Products", "/products");
+    p += "<h3>Products</h3>"
+         "<p class='muted'>What we stock, as opposed to the individual spools on "
+         "the shelf. A spool inherits its vendor, filament, colour, tare and "
+         "nominal weight from its product.</p>";
+
+    // Snapshot the products once. Matching each spool to its product is
+    // inherently O(spools x products); doing it against a local copy keeps the
+    // store lock out of the inner loop rather than taking it thousands of times.
+    std::vector<uint32_t> ids;
+    {
+        ProductRecord q;
+        for (size_t i = 0; i < storeProductCount(); i++)
+            if (storeProductAt(i, q)) ids.push_back(q.id);
+    }
+    const size_t np = ids.size();
+    std::vector<uint16_t> spoolsPer(np, 0);
+    std::vector<float>    remPer(np, 0.0f);
+    uint16_t unassigned = 0;
+    {
+        SpoolRecord r;
+        for (size_t i = 0; i < storeSpoolCount(); i++) {
+            if (!storeSpoolAt(i, r)) continue;
+            if (!r.product) { unassigned++; continue; }
+            for (size_t k = 0; k < np; k++)
+                if (ids[k] == r.product) {
+                    spoolsPer[k]++; remPer[k] += r.remaining_g; break;
+                }
+        }
+    }
+
+    p += "<table><tr><th>#</th><th>Filament</th><th>Vendor</th><th>Spools</th>"
+         "<th>Remaining</th><th>Tare</th><th>Nominal</th><th></th></tr>";
+    if (np == 0)
+        p += "<tr><td colspan='8' class='muted'>No products yet — onboard a spool "
+             "or place a tagged one on the scale</td></tr>";
+    // By id, not by index: a spool placed on the scale mid-request can append a
+    // product, and re-indexing would then attribute the counts to the wrong row.
+    ProductRecord q;
+    for (size_t i = 0; i < np; i++) {
+        if (!storeGetProduct(ids[i], q)) continue;
+        p += "<tr><td>#" + String((unsigned)q.id) + "</td><td>" + swatch(q.rgba)
+           + esc(q.material[0] ? q.material : "Unknown")
+           + (q.abbr[0] ? " <span class='muted'>" + esc(q.abbr) + "</span>" : String())
+           + "</td><td>" + esc(q.vendor)
+           + "</td><td>" + String((unsigned)spoolsPer[i])
+           + "</td><td>" + String(remPer[i], 0) + " g"
+           + "</td><td>" + (q.empty_g > 0 ? String(q.empty_g, 0) + " g" : String("&mdash;"))
+           + "</td><td>" + (q.nom_g   > 0 ? String(q.nom_g,   0) + " g" : String("&mdash;"))
+           + "</td><td>"
+           // Provisional means this was inferred from a tag and no human has
+           // confirmed it, which is why it is excluded from tag write-back.
+           + (q.provisional ? "<span class='ob'>provisional</span>" : "")
+           + "</td></tr>";
+    }
+    p += "</table>";
+    if (unassigned)
+        p += "<p class='muted'>" + String((unsigned)unassigned)
+           + " spool(s) predate products and have none assigned. They keep working; "
+             "re-onboarding one assigns it.</p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleApiProducts(AsyncWebServerRequest* req) {
+    String j = "[";
+    size_t n = storeProductCount();
+    ProductRecord q;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeProductAt(i, q)) continue;
+        if (j.length() > 1) j += ",";
+        j += "{\"id\":" + String((unsigned)q.id)
+           + ",\"vendor\":\"" + esc(q.vendor) + "\""
+           + ",\"material\":\"" + esc(q.material) + "\""
+           + ",\"abbr\":\"" + esc(q.abbr) + "\""
+           + ",\"color\":" + colorJson(q.rgba)
+           + ",\"diameter_mm\":" + String(q.dia, 2)
+           + ",\"empty_g\":" + String(q.empty_g, 1)
+           + ",\"nominal_g\":" + String(q.nom_g, 1)
+           + ",\"provisional\":" + (q.provisional ? "true" : "false");
+        // Identity keys are emitted only when the tag actually carried them —
+        // "" would read as "we know it is empty" rather than "absent".
+        if (q.pkg_uuid[0])   j += ",\"package_uuid\":\""  + String(q.pkg_uuid)   + "\"";
+        if (q.mat_uuid[0])   j += ",\"material_uuid\":\"" + String(q.mat_uuid)   + "\"";
+        if (q.brand_uuid[0]) j += ",\"brand_uuid\":\""    + String(q.brand_uuid) + "\"";
+        // A string, not a number: a GTIN is an identifier, and JSON numbers go
+        // through a double in most consumers. snprintf rather than String(),
+        // whose unsigned-long-long overload is not on every core.
+        if (q.gtin) {
+            char g[24];
+            snprintf(g, sizeof(g), "%llu", (unsigned long long)q.gtin);
+            j += ",\"gtin\":\""; j += g; j += "\"";
+        }
+        if (q.has_lab)
+            j += ",\"lab\":[" + String(q.lab[0], 2) + "," + String(q.lab[1], 2)
+               + "," + String(q.lab[2], 2) + "]";
+        j += "}";
     }
     j += "]";
     req->send(200, "application/json", j);
@@ -409,6 +521,16 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     // nominal weight (the values every later reading depends on) took.
     String spec = specStrip(r);
     if (r.last_ts[0]) spec += kv("Last weighed", esc(r.last_ts));
+    // Which product this spool is an instance of. Worth showing even though the
+    // fields above are its resolved values: if two spools of the same filament
+    // report different products, the matching ladder missed, and this line is
+    // the only place that is visible.
+    ProductRecord q;
+    if (r.product && storeGetProduct(r.product, q))
+        spec += kv("Product", "<a href='/products' style='color:#8f8'>#"
+                              + String((unsigned)q.id) + "</a>"
+                              + (q.provisional ? " <span class='ob'>provisional</span>"
+                                               : String()));
     if (spec.length()) p += "<div class='spec'>" + spec + "</div>";
     p += "</div>";
 
@@ -1158,6 +1280,8 @@ void webAppBegin() {
     sServer.on("/spools",      HTTP_GET,  handleSpools);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
+    sServer.on("/products",     HTTP_GET, handleProducts);
+    sServer.on("/api/products", HTTP_GET, handleApiProducts);
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
