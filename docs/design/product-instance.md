@@ -52,9 +52,7 @@ cooperation:
 So a product identity can be computed from data we already hold. No new tag
 field, no dependency on vendors writing UUIDs.
 
-## Prerequisite: stop destroying fields we do not model
-
-**This blocks the work above, and it is a bug today.**
+## Prerequisite: stop destroying fields we do not model — **DONE** (2026-08-08)
 
 `optEncodeMain()` writes **16 of the spec's 61 Main keys**. Rewriting Main on a
 compliant vendor tag therefore *destroys* up to 44 fields the vendor wrote —
@@ -80,19 +78,18 @@ Three options:
 3. Model all 61 keys. Not realistic, and it would only move the problem to key
    62.
 
-**(2).** It is the only one that keeps both the feature and the data, and the
-whole point of strict OPT compliance is that another reader can trust what is on
-the tag.
+**(2), implemented.** `OptMain.extra[192]` plus `extra_len`; `optDecode()` copies
+each unrecognised pair in, `optEncodeMain()` splices them back before closing the
+map. 192 is above the largest Main region the layout produces (234 B) less our
+own output, so overflow should be unreachable.
 
-Shape of it: a fixed `extra[]` buffer plus length on `OptMain`, sized against
-the largest Main region the layout can produce so it cannot realistically
-overflow. `tools/opt/optfuzz` can prove the round-trip — build a tag carrying
-keys we do not model, decode, re-encode, and assert they survive byte for byte.
+The overflow case is answered rather than assumed away: `extra_overflow` is set,
+`optMainPreservesAll()` reports it, and `nfcTask` **refuses the rewrite**. Losing
+an edit beats losing a vendor's data, and `DUMP TAG` says which happened.
 
-Open: what to do if the extras genuinely do not fit. Dropping them is the data
-loss this exists to prevent; refusing the write blocks a legitimate edit. Sizing
-the buffer from the region makes the case unreachable, which is the better
-answer than choosing between two bad ones.
+`tools/opt/optfuzz` proves it — a Main map carrying `gtin`, `country_of_origin`
+and `density` (uint, text and float, none of which we model) survives decode →
+re-encode → decode byte for byte.
 
 ## The four entities
 

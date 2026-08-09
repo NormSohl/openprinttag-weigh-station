@@ -606,7 +606,12 @@ void nfcTask(void* param) {
 
         if (gWriteMainPending) {
             gWriteMainPending = false;
-            uint8_t cborBuf[256];
+            // 320, not 256: a re-encode now carries up to 192 bytes of
+            // passed-through vendor fields on top of our own ~113. The real
+            // limit is still the Main region (234 B at most), which
+            // writeSection() enforces — this only has to be big enough that
+            // encoding never fails for content a tag could actually hold.
+            uint8_t cborBuf[320];
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain  main      = gTagMain;
             uint16_t mainOffset = gTagMeta.main_region_offset;
@@ -626,6 +631,12 @@ void nfcTask(void* param) {
                 Serial.printf("[nfc] Main is write-protected (key 13 = %d) — "
                               "leaving it alone; weighing and Aux still work\n",
                               (int)main.write_protection);
+            } else if (!optMainPreservesAll(main)) {
+                // Rather than write a Main that quietly drops fields the vendor
+                // put there. Refusing costs an edit; writing costs their data.
+                Serial.println("[nfc] Main NOT rewritten: this tag carries more "
+                               "unmodelled fields than we can hold, and the "
+                               "rewrite would discard them");
             } else {
                 size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
                 if (n > 0) {

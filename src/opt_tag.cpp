@@ -99,6 +99,29 @@ static bool cborLeave(CborValue* outer, CborValue* inner) {
     return false;
 }
 
+// Splice already-valid CBOR into an open container.
+//
+// tinycbor has no "append raw bytes" call, and re-encoding these pairs would
+// mean decoding them first — which is precisely the knowledge we do not have,
+// since they are the keys we do not model. So write at the encoder's cursor.
+//
+// Safe for the map optEncodeMain builds because it is INDEFINITE length:
+// cbor_encoder_close_container() takes the UnknownLength branch and appends the
+// break byte without ever checking `remaining`, so a spliced pair cannot
+// desynchronise its bookkeeping. It would NOT be safe for a definite-length
+// container.
+//
+// `end` goes NULL once tinycbor has overflowed and switched to counting mode,
+// so it has to be tested before any pointer arithmetic.
+static bool cborAppendRaw(CborEncoder* enc, const uint8_t* data, size_t len) {
+    if (len == 0) return true;
+    if (!enc->end) return false;
+    if ((size_t)(enc->end - enc->data.ptr) < len) return false;
+    memcpy(enc->data.ptr, data, len);
+    enc->data.ptr += len;
+    return true;
+}
+
 // The reference implementation (fields.py CompactFloat) may encode floats as
 // int (whole numbers), CBOR float16, float32, or float64.  Read whichever type
 // is present and return it as float.
@@ -301,6 +324,10 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
         if (cbor_parser_init(payload + mainOffset, payloadLen - mainOffset, 0, &mp, &mi) == CborNoError &&
             cbor_value_is_map(&mi) && cbor_value_enter_container(&mi, &mm) == CborNoError) {
             while (!cbor_value_at_end(&mm)) {
+                // Remember where this key/value pair starts, so an unrecognised
+                // one can be copied out verbatim once we know its extent.
+                const uint8_t* pairStart = cbor_value_get_next_byte(&mm);
+                bool known = true;
                 int64_t key;
                 if (!cborTakeInt(&mm, &key)) break;
                 if (!cborStep(&mm)) break;
@@ -366,13 +393,28 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                     case MAIN_KEY_MAX_BED_TEMPERATURE:   if (cborTakeInt(&mm, &v)) main->max_bed_temperature   = (int16_t)v; break;
                     case MAIN_KEY_MATERIAL_CLASS: if (cborTakeInt(&mm, &v)) main->material_class = (int8_t)v; break;
                     case MAIN_KEY_MATERIAL_TYPE:  if (cborTakeInt(&mm, &v)) main->material_type  = (int8_t)v; break;
+                    default: known = false; break;
                     // Whether this tag's Main section may be rewritten at
                     // all. Decoded but never encoded: we do not protect our
                     // own tags, and an absent key means "not protected".
                     case MAIN_KEY_WRITE_PROTECTION: if (cborTakeInt(&mm, &v)) main->write_protection = (int8_t)v; break;
                 }
-                if (consumed) continue;
-                if (!cborStep(&mm)) break;
+                if (!consumed && !cborStep(&mm)) break;
+
+                // Now that the value has been stepped over, the pair's extent is
+                // known. Keep the bytes of anything we did not understand.
+                if (!known) {
+                    const uint8_t* pairEnd = cbor_value_get_next_byte(&mm);
+                    if (pairEnd > pairStart) {
+                        const size_t n = (size_t)(pairEnd - pairStart);
+                        if (main->extra_len + n <= sizeof(main->extra)) {
+                            memcpy(main->extra + main->extra_len, pairStart, n);
+                            main->extra_len += (uint16_t)n;
+                        } else {
+                            main->extra_overflow = true;
+                        }
+                    }
+                }
             }
             cborLeave(&mi, &mm);
         }
@@ -465,6 +507,11 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
 
     cbor_encode_int(&map, MAIN_KEY_MAX_BED_TEMPERATURE);
     cbor_encode_int(&map, m.max_bed_temperature);
+
+    // Everything the tag carried that this firmware does not model, back
+    // untouched. Last, so our own keys keep their order and a reader diffing two
+    // of our writes sees a stable prefix.
+    if (!cborAppendRaw(&map, m.extra, m.extra_len)) return 0;
 
     cbor_encoder_close_container(&enc, &map);
     return cbor_encoder_get_buffer_size(&enc, buf);

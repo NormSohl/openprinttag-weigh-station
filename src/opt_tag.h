@@ -46,6 +46,27 @@ struct OptMain {
     // key 13 — 0 none, 1 irreversible, 2 PROTECT PAGE (SLIX2, password-unlockable).
     // Non-zero means the Main section is NOT ours to rewrite: see optMainWritable().
     int8_t   write_protection;
+
+    // ── Verbatim passthrough of Main keys this firmware does not model ────────
+    //
+    // We encode 16 of the spec's 61 Main keys. Without this, rewriting Main on a
+    // compliant vendor tag would DESTROY every other field it carried — GTIN,
+    // the four UUIDs, manufactured and expiry dates, density, drying and chamber
+    // temperatures, certifications, RAL reference, secondary colours — silently
+    // and irreversibly.
+    //
+    // optDecode() copies each unrecognised key/value pair here byte for byte;
+    // optEncodeMain() splices them back in before closing the map. They are
+    // already valid CBOR at map level, so no interpretation is needed — which is
+    // the point, since not interpreting them is exactly the situation.
+    //
+    // Sized above the largest Main region the layout can produce (234 B on an
+    // 80x4) less our own ~113 B of output, so overflow should be unreachable.
+    // If it happens anyway `extra_overflow` says so, and nfcTask refuses the
+    // write rather than dropping a vendor's data on the floor.
+    uint8_t  extra[192];
+    uint16_t extra_len;
+    bool     extra_overflow;
 };
 
 // True if the Main section of a tag carrying this record may be written.
@@ -60,6 +81,11 @@ struct OptMain {
 // writable"), so consumed_weight still records on a protected spool and
 // weighing keeps working.
 inline bool optMainWritable(const OptMain& m) { return m.write_protection == 0; }
+
+// True if rewriting Main would preserve everything the tag already carried.
+// False when unmodelled fields were seen but could not all be held — writing
+// then would silently discard a vendor's data, which is worse than not writing.
+inline bool optMainPreservesAll(const OptMain& m) { return !m.extra_overflow; }
 
 // ── Auxiliary section (data/aux_fields.yaml) ──────────────────────────────────
 // remaining_weight is NOT stored on the tag.

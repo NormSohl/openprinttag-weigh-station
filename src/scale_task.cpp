@@ -88,6 +88,10 @@ static void dumpTag() {
                       m.primary_color_lab[2]);
     else
         Serial.println("[tag]       lab NOT MEASURED");
+    if (m.extra_len || m.extra_overflow)
+        Serial.printf("[tag]       %u B of unmodelled vendor fields preserved%s\n",
+                      (unsigned)m.extra_len,
+                      m.extra_overflow ? "  <- OVERFLOW: Main will not be rewritten" : "");
     Serial.printf("[tag]       write_protection %d (Main %s)\n",
                   m.write_protection, optMainWritable(m) ? "writable" : "PROTECTED");
 

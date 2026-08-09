@@ -20,6 +20,7 @@
 #include <vector>
 #include <random>
 #include <cmath>
+#include <cbor.h>
 #include "opt_tag.h"
 
 // Report the layout for a geometry, and check an Aux write actually fits inside
@@ -142,6 +143,51 @@ int main() {
         return 1;
     }
     std::printf("reference image decodes: ok\n");
+
+    // Verbatim passthrough. We encode 16 of the spec's 61 Main keys; rewriting a
+    // compliant vendor tag must not destroy the other 45. Build a Main map that
+    // carries keys we do not model, decode it, re-encode, and check they came
+    // back byte for byte.
+    {
+        // key 4 gtin (uint), key 55 country_of_origin (text), key 29 density
+        // (float) — three shapes we have no case for.
+        uint8_t hand[64];
+        CborEncoder e, m2;
+        cbor_encoder_init(&e, hand, sizeof hand, 0);
+        cbor_encoder_create_map(&e, &m2, CborIndefiniteLength);
+        cbor_encode_int(&m2, 11); cbor_encode_text_stringz(&m2, "Prusament");
+        cbor_encode_int(&m2,  4); cbor_encode_uint(&m2, 8594179870000ULL);
+        cbor_encode_int(&m2, 55); cbor_encode_text_stringz(&m2, "CZ");
+        cbor_encode_int(&m2, 29); cbor_encode_float(&m2, 1.27f);
+        cbor_encoder_close_container(&e, &m2);
+        size_t handLen = cbor_encoder_get_buffer_size(&e, hand);
+
+        std::vector<uint8_t> t = good;
+        OptMeta meta{};
+        size_t payloadOff = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+        std::memcpy(t.data() + payloadOff + meta.main_region_offset, hand, handLen);
+
+        OptMain in{};
+        optDecode(t.data(), t.size(), nullptr, &in, nullptr);
+
+        uint8_t out[320];
+        size_t outLen = optEncodeMain(in, out, sizeof out);
+
+        OptMeta m3{}; OptMain back{};
+        std::vector<uint8_t> t2 = good;
+        optBuildBlankTag(80, 4, t2.data(), t2.size(), &m3);
+        std::memcpy(t2.data() + payloadOff + m3.main_region_offset, out, outLen);
+        optDecode(t2.data(), t2.size(), nullptr, &back, nullptr);
+
+        const bool ok = in.extra_len > 0 && !in.extra_overflow
+                     && back.extra_len == in.extra_len
+                     && std::memcmp(back.extra, in.extra, in.extra_len) == 0
+                     && std::strcmp(back.brand_name, "Prusament") == 0;
+        std::printf("passthrough: %u B of unmodelled keys survived a re-encode "
+                    "(%zu B Main) -> %s\n",
+                    (unsigned)in.extra_len, outLen, ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+    }
 
     // L*a*b* round-trip. Absent must read as unmeasured, not as a measured
     // black — L*=0 is a legal measurement, so the flag carries that, not the
