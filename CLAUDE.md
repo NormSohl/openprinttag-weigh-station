@@ -179,9 +179,9 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 **Bring-up is complete.** Every mechanism in the pipeline has now run on hardware — see *Bring-up status* above for what each one proved.
 
-One gap remains, and it is a gap in **observation**, not in function:
+**Auxiliary write-back is validated** (2026-08-08) — `DUMP TAG` on a part-used spool reported `Aux consumed 186.8 g`, with `remaining = actual - consumed = 813.2 g` matching the display. That was the last thing in the pipeline nothing could observe.
 
-- **Auxiliary write-back on weigh has never been directly witnessed.** Nothing on the display or in the web app reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map actually landed. **`DUMP TAG`** over serial now prints the decoded Meta/Main/Aux of whatever nfcTask last read — the `Aux consumed` line is the witness. Weigh a spool that has used filament and check it is non-zero and tracking; zero on a part-used spool means Aux never wrote.
+`DUMP TAG` prints the decoded Meta/Main/Aux of whatever nfcTask last read, plus `write_protection` and whether the colour is assigned — none of which appears anywhere else. Note Meta offsets are **payload-relative**: `aux@246` with the payload starting at 42 is absolute 288, i.e. the 24-byte layout.
 
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 

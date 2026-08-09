@@ -94,6 +94,18 @@ static void parseColors(JsonArrayConst arr) {
         CfgColor c{};
         strlcpy(c.name, o["name"] | "", sizeof(c.name));
         for (int i = 0; i < 4; i++) c.rgba[i] = o["rgba"][i] | 0;
+        // A catalog colour is opaque by definition — it exists to name a colour,
+        // so alpha 0 there is never intentional. It is what a three-element
+        // "rgba": [143,216,160] yields, and the Config page edits this table as
+        // raw JSON, so that is an easy thing to type.
+        //
+        // Left alone it would be poison downstream: alpha 0 is the record-level
+        // sentinel for "no colour assigned", so the swatch would render
+        // crossed-out, /api/spools would report null, and optEncodeMain() would
+        // omit primary_color from the tag entirely — a colour that vanishes
+        // without ever erroring. OPT itself says a three-byte colour means fully
+        // opaque, so this matches the spec's own reading.
+        if (c.rgba[3] == 0) c.rgba[3] = 255;
         sColors.push_back(c);
     }
 }
