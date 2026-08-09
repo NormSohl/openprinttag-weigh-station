@@ -217,9 +217,20 @@ product-level property, which is what it always was.
    "Capture tare" cover it? Real reels vary a few grams.
 3. **Should a tag-derived product be marked provisional** until a human confirms
    it, and should provisional products be excluded from tag write-back?
-4. **Measured colour** (`primary_color_lab`, key 59) — add now as three floats
-   on the product, or leave the field until there is a spectrometer? The spec
-   forbids deriving it from RGB, so it cannot be back-filled by guessing.
+4. ~~**Measured colour** (`primary_color_lab`, key 59)~~ — **deferred** (2026-08-08).
+   A Nix colorimeter is available, but the rgba swatch already answers the
+   question that comes up ("which one is the green spool"); LAB answers the
+   rarer one ("will anyone notice if I substitute"). Cheap to add later: three
+   floats on the product, ~18 bytes of CBOR against 139 free in the Main
+   region, absent means unmeasured, no migration.
+
+   Two things to settle *before* the first measurement, since neither is
+   recoverable afterwards and neither would ever surface as an error:
+   - **Illuminant must be D65 / 2°**, which the spec requires. Nix apps offer a
+     choice and several default to D50 — valid numbers, wrong field.
+   - **Pick one surface.** Wound filament and a printed swatch of the same
+     filament are different colours (finish, layer lines, translucency). Either
+     is defensible; mixing them makes the values meaningless.
 
 ## Sequencing
 
