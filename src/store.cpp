@@ -956,6 +956,7 @@ bool storeSerialCommand(const String& lineIn) {
         return true;
     }
     if (cmd == "WIPE") {
+        String sub = tok(line, pos); sub.toUpperCase();
         LittleFS.remove(LOG_PATH);
         // Put the empty file straight back. Without this, WIPE leaves the log
         // missing and every later read-open logs an ESP_LOGE — including the
@@ -963,7 +964,30 @@ bool storeSerialCommand(const String& lineIn) {
         ensureLogFile_();
         sLogEndsNL = true;
         storeRebuildIndices();
-        Serial.println("[store] log wiped");
+
+        // WIPE alone leaves the NVS spool-ID counter where it was, on purpose:
+        // reconcileIdCounter_() never moves it backwards, because an ID that has
+        // been issued must not be handed out twice while a restored backup might
+        // still contain it.
+        //
+        // WIPE ALL also resets it, which is safe precisely because the log is
+        // now empty — there is nothing left to collide with, and storeImport()
+        // reconciles the counter forward again if a backup is ever restored.
+        // Without this, a store cleared of test data keeps counting from
+        // wherever the seeding left off, and the first real spool comes back as
+        // #70 — cosmetic, except the number IS the lookup key someone shouts
+        // across the lab.
+        if (sub == "ALL") {
+            Preferences p;
+            p.begin("store", false);
+            p.putUInt("counter", 1);
+            p.end();
+            sNextId = 1;
+            Serial.println("[store] log wiped and spool numbering reset to #1");
+        } else {
+            Serial.printf("[store] log wiped (spool numbering continues at #%u; "
+                          "use WIPE ALL to restart at #1)\n", (unsigned)sNextId);
+        }
         return true;
     }
     if (cmd == "SEED") {

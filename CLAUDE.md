@@ -67,6 +67,8 @@ The counter lives in NVS; the records live on LittleFS. Different partitions, so
 
 `storeBegin()` therefore calls `reconcileIdCounter_()` after the index rebuild: whatever the log says wins, and the counter never moves backwards (if NVS is *ahead*, because IDs were issued to records since deleted, it stays ahead). `storeImport()` has always done the same for a restored backup — that asymmetry is what exposed the bug.
 
+`WIPE` clears the log but deliberately leaves the counter alone, for the same never-reuse reason. **`WIPE ALL` also resets it to 1**, which is safe precisely because the log is empty at that moment — nothing is left to collide with, and `storeImport()` reconciles forward again if a backup is later restored. Without it a store cleared of seed data keeps counting from wherever seeding left off, so the first real spool comes back as (say) #70: cosmetic, except the number *is* what someone shouts across the lab.
+
 
 Display the local store's **auto-incrementing spool ID** (`storeNextSpoolId()`, backed by an NVS counter) on the display — no custom counter or extra field. It is unique and atomic (no race from concurrent onboarding events) and short enough for the display. IDs will have gaps if records are ever deleted; cosmetic only.
 
