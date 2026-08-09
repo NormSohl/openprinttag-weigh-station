@@ -82,6 +82,12 @@ static void dumpTag() {
                   m.min_print_temperature, m.max_print_temperature,
                   m.min_bed_temperature, m.max_bed_temperature,
                   m.material_class, m.material_type);
+    if (m.has_lab)
+        Serial.printf("[tag]       lab L*=%.2f a*=%.2f b*=%.2f (measured, D65/2)\n",
+                      m.primary_color_lab[0], m.primary_color_lab[1],
+                      m.primary_color_lab[2]);
+    else
+        Serial.println("[tag]       lab NOT MEASURED");
     Serial.printf("[tag]       write_protection %d (Main %s)\n",
                   m.write_protection, optMainWritable(m) ? "writable" : "PROTECTED");
 

@@ -26,6 +26,7 @@ static constexpr int MAIN_KEY_MAX_PRINT_TEMPERATURE      = 35;
 static constexpr int MAIN_KEY_MIN_BED_TEMPERATURE        = 37;
 static constexpr int MAIN_KEY_MAX_BED_TEMPERATURE        = 38;
 static constexpr int MAIN_KEY_MATERIAL_ABBREVIATION      = 52;
+static constexpr int MAIN_KEY_PRIMARY_COLOR_LAB          = 59;
 
 // Auxiliary keys (data/aux_fields.yaml)
 static constexpr int AUX_KEY_CONSUMED_WEIGHT = 0;
@@ -89,9 +90,13 @@ static bool cborStep(CborValue* v) {
 // (recursed->type == CborInvalidType), so bailing out of a decode loop early and
 // then "tidying up" is itself an abort. Only leave a container we actually
 // finished; the outer iterator is unused afterwards either way.
-static void cborLeave(CborValue* outer, CborValue* inner) {
+// Returns true if the outer iterator actually advanced past the container. When
+// it returns false the caller still has to step over it, which is safe:
+// enter_container takes its argument by const pointer, so `outer` never moved.
+static bool cborLeave(CborValue* outer, CborValue* inner) {
     if (cbor_value_is_container(outer) && cbor_value_get_type(inner) == CborInvalidType)
-        cbor_value_leave_container(outer, inner);
+        return cbor_value_leave_container(outer, inner) == CborNoError;
+    return false;
 }
 
 // The reference implementation (fields.py CompactFloat) may encode floats as
@@ -314,6 +319,32 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                         consumed = cborTakeText(&mm, main->material_name, sizeof(main->material_name)); break;
                     case MAIN_KEY_MATERIAL_ABBREVIATION:
                         consumed = cborTakeText(&mm, main->material_abbreviation, sizeof(main->material_abbreviation)); break;
+                    // [L*, a*, b*]. Each element may arrive as int, float16,
+                    // float32 or float64 (OPT's CompactFloat), so cborGetFloat
+                    // handles the element and we only manage the array walk.
+                    // Anything short of three good numbers leaves has_lab false
+                    // — a partial measurement is not a measurement.
+                    case MAIN_KEY_PRIMARY_COLOR_LAB: {
+                        if (!cbor_value_is_array(&mm)) break;
+                        CborValue el;
+                        if (cbor_value_enter_container(&mm, &el) != CborNoError) break;
+                        float lab[3] = {0, 0, 0};
+                        int got = 0;
+                        while (got < 3 && !cbor_value_at_end(&el)) {
+                            if (!cborGetFloat(&el, &lab[got])) break;
+                            got++;
+                            if (!cborStep(&el)) break;
+                        }
+                        if (got == 3) {
+                            memcpy(main->primary_color_lab, lab, sizeof(lab));
+                            main->has_lab = true;
+                        }
+                        // If we could not leave cleanly the iterator never moved
+                        // (enter_container takes `outer` by const pointer), so
+                        // the step at the bottom skips the whole array instead.
+                        consumed = cborLeave(&mm, &el);
+                        break;
+                    }
                     case MAIN_KEY_PRIMARY_COLOR_RGBA: {
                         size_t got = 0;
                         consumed = cborTakeBytes(&mm, main->primary_color_rgba, 4, &got);
@@ -390,6 +421,17 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     if (m.primary_color_rgba[3] != 0) {
         cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_RGBA);
         cbor_encode_byte_string(&map, m.primary_color_rgba, 4);
+    }
+
+    // Measured colour, only if something actually measured it. Absent means
+    // unmeasured; the spec forbids approximating this from RGB, so there is no
+    // fallback to invent here.
+    if (m.has_lab) {
+        cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_LAB);
+        CborEncoder lab;
+        cbor_encoder_create_array(&map, &lab, 3);
+        for (int i = 0; i < 3; i++) cbor_encode_float(&lab, m.primary_color_lab[i]);
+        cbor_encoder_close_container(&map, &lab);
     }
 
     // Encode floats as float32; reference uses CompactFloat (may use int for whole numbers)

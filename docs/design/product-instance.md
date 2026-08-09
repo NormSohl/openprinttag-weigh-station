@@ -40,7 +40,7 @@ four-level identity:
 |---|---|---|---|
 | 3 | `brand_uuid` | brand | ✗ (name only) |
 | 2 | `material_uuid` | **the product** | ✗ |
-| 1 | `package_uuid` | the SKU | ✗ |
+| 1 | `package_uuid` | the SKU | ✗ — *not modelled; a different size is a different product* |
 | 0 | `instance_uuid` | **this spool** | ✓ as `SpoolRecord.uuid` |
 
 And the spec gives a derivation rule that makes this adoptable without vendor
@@ -62,7 +62,7 @@ child of Product but a shared table both point into.
 | **Brand** | name | Already just a string; a table only if it grows attributes |
 | **Product** | material name, abbreviation, colour (rgba + measured L\*a\*b\*), diameter, print/bed temps, GTIN, default profile | Everything true of *every* spool of this filament |
 | **Profile** | tare (`empty_g`), nominal full weight | The physical reel. Shared across products, and independent of them |
-| **Instance** | `instance_uuid`, spool number, remaining/used, `needs_ob`, optional tare override | The only things that differ spool to spool |
+| **Instance** | `instance_uuid`, spool number, remaining/used, `needs_ob` | The only things that differ spool to spool |
 
 **Profile is separate rather than a product field** because the two vary
 independently. Most of the lab is one cardboard reel, so that is one number
@@ -208,29 +208,48 @@ No data loss and no flag day:
 and matching is an exact lookup. The "keep N spools of X" threshold becomes a
 product-level property, which is what it always was.
 
-## Open questions
+## Decisions (2026-08-08)
 
-1. **Is `package_uuid` (SKU level) worth modelling?** It distinguishes 1 kg from
-   5 kg of the same material. Product + Instance may be enough; adding a level
-   that is never used costs clarity.
-2. **Instance tare override** — worth having, or does per-profile tare plus
-   "Capture tare" cover it? Real reels vary a few grams.
-3. **Should a tag-derived product be marked provisional** until a human confirms
-   it, and should provisional products be excluded from tag write-back?
-4. ~~**Measured colour** (`primary_color_lab`, key 59)~~ — **deferred** (2026-08-08).
-   A Nix colorimeter is available, but the rgba swatch already answers the
-   question that comes up ("which one is the green spool"); LAB answers the
-   rarer one ("will anyone notice if I substitute"). Cheap to add later: three
-   floats on the product, ~18 bytes of CBOR against 139 free in the Main
-   region, absent means unmeasured, no migration.
+**1. No package/SKU level.** A different size is a different product. Three
+levels: Brand → Product → Profile → Instance.
 
-   Two things to settle *before* the first measurement, since neither is
-   recoverable afterwards and neither would ever surface as an error:
-   - **Illuminant must be D65 / 2°**, which the spec requires. Nix apps offer a
-     choice and several default to D50 — valid numbers, wrong field.
-   - **Pick one surface.** Wound filament and a printed swatch of the same
-     filament are different colours (finish, layer lines, translucency). Either
-     is defensible; mixing them makes the values meaningless.
+> **Consequence for identity.** If size distinguishes products, the match key
+> cannot be (`brand_name`, `material_name`) alone — a 1 kg and a 5 kg of the
+> same filament often carry the identical `material_name`, and would merge into
+> one product. Add **nominal full weight** to the key: match on (`brand_name`,
+> `material_name`, `nominal_netto_full_weight`). It comes off the tag (key 16),
+> so foreign-tag adoption still resolves without guessing.
+
+**2. No per-instance tare override.** Tare lives on the Profile, reached through
+the Product. An Instance is just `instance_uuid`, spool number, remaining/used
+and `needs_ob`.
+
+> **Consequence for "Capture tare".** With no instance-level place to put it,
+> the button stops meaning "this spool weighs X empty" and becomes "measure this
+> reel" — i.e. it creates or corrects a **Profile**. That is arguably what it
+> always should have been, and it is the honest workflow: you weigh one empty
+> reel and every product on that reel benefits.
+
+**3. Tag-derived products are marked provisional.** A product created by
+adopting a foreign tag is flagged until a human confirms it. Provisional
+products are excluded from tag write-back, so adopting a spool can never cause
+the station to rewrite a vendor's tag from data it inferred.
+
+**4. `primary_color_lab` (key 59) — add the fields, leave them blank.** The
+struct, decode and encode go in now; nothing populates them until someone
+measures. Absent on the tag means unmeasured, and `optEncodeMain()` omits the
+key entirely rather than writing zeroes — a measured black is `L*=0`, so zero
+is a legal value and cannot double as "unknown". A separate `has_lab` flag
+carries that instead, because zero-initialised structs must read as unmeasured.
+
+Two things to settle before the *first* measurement, since neither is
+recoverable afterwards and neither would surface as an error:
+
+- **Illuminant must be D65 / 2°**, which the spec requires. Nix apps offer a
+  choice and several default to D50 — valid numbers, wrong field.
+- **Pick one surface.** Wound filament and a printed swatch of the same material
+  are different colours (finish, layer lines, translucency). Either is
+  defensible; mixing them makes the values meaningless.
 
 ## Sequencing
 

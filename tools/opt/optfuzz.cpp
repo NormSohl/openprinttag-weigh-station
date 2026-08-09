@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <vector>
 #include <random>
+#include <cmath>
 #include "opt_tag.h"
 
 // Report the layout for a geometry, and check an Aux write actually fits inside
@@ -67,6 +68,12 @@ static std::vector<uint8_t> goodTag() {
     m.min_print_temperature = 230; m.max_print_temperature = 250;
     m.min_bed_temperature   = 70;  m.max_bed_temperature   = 90;
     m.material_class = 1; m.material_type = 2;
+    // Measured colour: not populated in service yet, but the encode/decode path
+    // exists and the round-trip has to hold before anything relies on it.
+    m.primary_color_lab[0] = 80.45f;
+    m.primary_color_lab[1] = -34.22f;
+    m.primary_color_lab[2] = 20.57f;
+    m.has_lab = true;
 
     OptAuxiliary a{};
     a.consumed_weight = 123.5f;
@@ -135,6 +142,35 @@ int main() {
         return 1;
     }
     std::printf("reference image decodes: ok\n");
+
+    // L*a*b* round-trip. Absent must read as unmeasured, not as a measured
+    // black — L*=0 is a legal measurement, so the flag carries that, not the
+    // values.
+    {
+        OptMeta meta{}; OptMain m{}; OptAuxiliary aux{};
+        optDecode(good.data(), good.size(), &meta, &m, &aux);
+        const bool ok = m.has_lab
+                     && std::fabs(m.primary_color_lab[0] - 80.45f) < 0.01f
+                     && std::fabs(m.primary_color_lab[1] + 34.22f) < 0.01f
+                     && std::fabs(m.primary_color_lab[2] - 20.57f) < 0.01f;
+        std::printf("lab round-trip: has_lab=%d L*=%.2f a*=%.2f b*=%.2f -> %s\n",
+                    m.has_lab, m.primary_color_lab[0], m.primary_color_lab[1],
+                    m.primary_color_lab[2], ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+
+        OptMain none{};
+        uint8_t buf[256];
+        size_t n = optEncodeMain(none, buf, sizeof buf);
+        OptMain back{};
+        // A Main with no measurement must not emit key 59 at all.
+        bool absent = true;
+        for (size_t i = 0; i + 1 < n; i++)
+            if (buf[i] == 0x18 && buf[i + 1] == 59) absent = false;
+        std::printf("lab omitted when unmeasured: %s (%zu B Main)\n",
+                    absent ? "ok" : "FAIL — key 59 present", n);
+        if (!absent) return 1;
+        (void)back;
+    }
 
     long ok = 0;
 

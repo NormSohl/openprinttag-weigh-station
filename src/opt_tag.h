@@ -24,6 +24,15 @@ struct OptMain {
     char     material_name[64];          // key 10
     char     material_abbreviation[16];  // key 52 — e.g. "PETG", "ASA"
     uint8_t  primary_color_rgba[4];      // key 19 — R G B A
+    // key 59 — measured colour, CIE L*a*b* (D65/2 degree). NOT populated today.
+    //
+    // has_lab is a separate flag rather than a sentinel in the values, because
+    // L* is legitimately 0 for a measured black and these structs are
+    // zero-initialised — so "all zeroes" has to read as UNMEASURED, not as
+    // "perfectly black". OPT forbids deriving this from RGB, so an approximated
+    // value would be worse than an absent one.
+    float    primary_color_lab[3];
+    bool     has_lab;
     float    nominal_netto_full_weight;  // key 16 — grams (label weight)
     float    actual_netto_full_weight;   // key 17 — grams (weighed at factory)
     float    empty_container_weight;     // key 18 — grams (bare spool tare)
