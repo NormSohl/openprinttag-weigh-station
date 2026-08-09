@@ -20,6 +20,18 @@ struct OptMeta {
 // Only the fields this project reads or writes.  Full field table is in the yaml.
 struct OptMain {
     uint8_t  instance_uuid[16];          // key 0  — local store lookup key / nfc_id (UUID bytes)
+    // ── Product identity (keys 1-4) ──────────────────────────────────────────
+    // All-zero / 0 means absent. Read so foreign-tag adoption can resolve a
+    // product from what the vendor wrote instead of inferring one.
+    //
+    // package_uuid is the level that matches "a different size is a different
+    // product": the spec deduces it from brand_uuid + GTIN, and GTIN is per-SKU,
+    // whereas material_uuid comes from brand_uuid + material_name and is shared
+    // by every size of the same filament.
+    uint8_t  package_uuid[16];           // key 1  — the SKU: OUR product identity
+    uint8_t  material_uuid[16];          // key 2  — the material, one level coarser
+    uint8_t  brand_uuid[16];             // key 3
+    uint64_t gtin;                       // key 4  — per-SKU, so package_uuid's basis
     char     brand_name[64];             // key 11
     char     material_name[64];          // key 10
     char     material_abbreviation[16];  // key 52 — e.g. "PETG", "ASA"
@@ -80,6 +92,12 @@ struct OptMain {
 // writable ("everything except aux section, that one should be always
 // writable"), so consumed_weight still records on a protected spool and
 // weighing keeps working.
+// All-zero UUID means "not present on the tag".
+inline bool optUuidIsNil(const uint8_t u[16]) {
+    for (int i = 0; i < 16; i++) if (u[i]) return false;
+    return true;
+}
+
 inline bool optMainWritable(const OptMain& m) { return m.write_protection == 0; }
 
 // True if rewriting Main would preserve everything the tag already carried.

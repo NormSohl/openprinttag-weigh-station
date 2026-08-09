@@ -11,6 +11,10 @@ static constexpr int META_KEY_AUX_REGION_SIZE    = 3;
 
 // Main keys (data/main_fields.yaml)
 static constexpr int MAIN_KEY_INSTANCE_UUID              = 0;
+static constexpr int MAIN_KEY_PACKAGE_UUID               = 1;
+static constexpr int MAIN_KEY_MATERIAL_UUID              = 2;
+static constexpr int MAIN_KEY_BRAND_UUID                 = 3;
+static constexpr int MAIN_KEY_GTIN                       = 4;
 static constexpr int MAIN_KEY_MATERIAL_CLASS             = 8;
 static constexpr int MAIN_KEY_MATERIAL_TYPE              = 9;
 static constexpr int MAIN_KEY_MATERIAL_NAME              = 10;
@@ -340,6 +344,22 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                 switch (key) {
                     case MAIN_KEY_INSTANCE_UUID:
                         consumed = cborTakeBytes(&mm, main->instance_uuid, 16); break;
+                    // NOTE: every case added here MUST have a matching encode
+                    // below. Since optDecode() started preserving unrecognised
+                    // keys verbatim, half-modelling a field is worse than not
+                    // modelling it: claiming it here removes it from the
+                    // passthrough, and without an encode it is then dropped on
+                    // the next rewrite. Before passthrough existed it was lost
+                    // either way, so this is a new way to get it wrong.
+                    case MAIN_KEY_PACKAGE_UUID:
+                        consumed = cborTakeBytes(&mm, main->package_uuid, 16); break;
+                    case MAIN_KEY_MATERIAL_UUID:
+                        consumed = cborTakeBytes(&mm, main->material_uuid, 16); break;
+                    case MAIN_KEY_BRAND_UUID:
+                        consumed = cborTakeBytes(&mm, main->brand_uuid, 16); break;
+                    case MAIN_KEY_GTIN:
+                        if (cborTakeInt(&mm, &v) && v > 0) main->gtin = (uint64_t)v;
+                        break;
                     case MAIN_KEY_BRAND_NAME:
                         consumed = cborTakeText(&mm, main->brand_name, sizeof(main->brand_name)); break;
                     case MAIN_KEY_MATERIAL_NAME:
@@ -446,6 +466,25 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
 
     cbor_encode_int(&map, MAIN_KEY_INSTANCE_UUID);
     cbor_encode_byte_string(&map, m.instance_uuid, 16);
+
+    // Identity, only what the tag actually carried. Writing a nil UUID would
+    // assert an identity the vendor never claimed.
+    if (!optUuidIsNil(m.package_uuid)) {
+        cbor_encode_int(&map, MAIN_KEY_PACKAGE_UUID);
+        cbor_encode_byte_string(&map, m.package_uuid, 16);
+    }
+    if (!optUuidIsNil(m.material_uuid)) {
+        cbor_encode_int(&map, MAIN_KEY_MATERIAL_UUID);
+        cbor_encode_byte_string(&map, m.material_uuid, 16);
+    }
+    if (!optUuidIsNil(m.brand_uuid)) {
+        cbor_encode_int(&map, MAIN_KEY_BRAND_UUID);
+        cbor_encode_byte_string(&map, m.brand_uuid, 16);
+    }
+    if (m.gtin) {
+        cbor_encode_int(&map, MAIN_KEY_GTIN);
+        cbor_encode_uint(&map, m.gtin);
+    }
 
     cbor_encode_int(&map, MAIN_KEY_BRAND_NAME);
     cbor_encode_text_stringz(&map, m.brand_name);

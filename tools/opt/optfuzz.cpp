@@ -149,14 +149,16 @@ int main() {
     // carries keys we do not model, decode it, re-encode, and check they came
     // back byte for byte.
     {
-        // key 4 gtin (uint), key 55 country_of_origin (text), key 29 density
-        // (float) — three shapes we have no case for.
+        // key 57 drying_temperature (int), key 55 country_of_origin (text),
+        // key 29 density (float) — three shapes with no case in the decoder.
+        // Deliberately NOT key 4: gtin is modelled now, and a modelled key must
+        // leave the passthrough or it would be written twice.
         uint8_t hand[64];
         CborEncoder e, m2;
         cbor_encoder_init(&e, hand, sizeof hand, 0);
         cbor_encoder_create_map(&e, &m2, CborIndefiniteLength);
         cbor_encode_int(&m2, 11); cbor_encode_text_stringz(&m2, "Prusament");
-        cbor_encode_int(&m2,  4); cbor_encode_uint(&m2, 8594179870000ULL);
+        cbor_encode_int(&m2, 57); cbor_encode_int(&m2, 55);
         cbor_encode_int(&m2, 55); cbor_encode_text_stringz(&m2, "CZ");
         cbor_encode_int(&m2, 29); cbor_encode_float(&m2, 1.27f);
         cbor_encoder_close_container(&e, &m2);
@@ -186,6 +188,52 @@ int main() {
         std::printf("passthrough: %u B of unmodelled keys survived a re-encode "
                     "(%zu B Main) -> %s\n",
                     (unsigned)in.extra_len, outLen, ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+    }
+
+    // Identity keys 1-4. These used to ride the passthrough; modelling them
+    // means they must now survive on their own, and must NOT also appear in
+    // extra[] or a rewrite would emit them twice.
+    {
+        uint8_t hand[96];
+        CborEncoder e, m2;
+        cbor_encoder_init(&e, hand, sizeof hand, 0);
+        cbor_encoder_create_map(&e, &m2, CborIndefiniteLength);
+        uint8_t pk[16], ma[16], br[16];
+        for (int i = 0; i < 16; i++) { pk[i] = (uint8_t)(0xA0 + i);
+                                      ma[i] = (uint8_t)(0xB0 + i);
+                                      br[i] = (uint8_t)(0xC0 + i); }
+        cbor_encode_int(&m2, 1); cbor_encode_byte_string(&m2, pk, 16);
+        cbor_encode_int(&m2, 2); cbor_encode_byte_string(&m2, ma, 16);
+        cbor_encode_int(&m2, 3); cbor_encode_byte_string(&m2, br, 16);
+        cbor_encode_int(&m2, 4); cbor_encode_uint(&m2, 8594179870000ULL);
+        cbor_encoder_close_container(&e, &m2);
+        size_t handLen = cbor_encoder_get_buffer_size(&e, hand);
+
+        std::vector<uint8_t> t = good;
+        OptMeta meta{};
+        size_t off = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+        std::memcpy(t.data() + off + meta.main_region_offset, hand, handLen);
+
+        OptMain in{};
+        optDecode(t.data(), t.size(), nullptr, &in, nullptr);
+        uint8_t out[320];
+        size_t outLen = optEncodeMain(in, out, sizeof out);
+        std::vector<uint8_t> t2 = good;
+        OptMeta m3{};
+        optBuildBlankTag(80, 4, t2.data(), t2.size(), &m3);
+        std::memcpy(t2.data() + off + m3.main_region_offset, out, outLen);
+        OptMain back{};
+        optDecode(t2.data(), t2.size(), nullptr, &back, nullptr);
+
+        const bool ok = std::memcmp(back.package_uuid,  pk, 16) == 0
+                     && std::memcmp(back.material_uuid, ma, 16) == 0
+                     && std::memcmp(back.brand_uuid,    br, 16) == 0
+                     && back.gtin == 8594179870000ULL
+                     && in.extra_len == 0;   // modelled: must leave passthrough
+        std::printf("identity round-trip: package/material/brand uuid + gtin "
+                    "survive, extra_len=%u -> %s\n",
+                    (unsigned)in.extra_len, ok ? "ok" : "FAIL");
         if (!ok) return 1;
     }
 

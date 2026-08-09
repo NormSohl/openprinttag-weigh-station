@@ -67,6 +67,21 @@ static void dumpTag() {
                   (unsigned)t.main_region_offset, (unsigned)t.main_region_size,
                   (unsigned)t.aux_region_offset,  (unsigned)t.aux_region_size);
     Serial.printf("[tag] Main  uuid %s\n", uuid);
+    {
+        // Product identity, when the vendor wrote any. package_uuid is the one
+        // the product model keys on; the others are shown for completeness.
+        char hex[33];
+        auto puuid = [&](const char* label, const uint8_t* u) {
+            if (optUuidIsNil(u)) return;
+            for (int i = 0; i < 16; i++) snprintf(hex + i * 2, 3, "%02x", u[i]);
+            Serial.printf("[tag]       %-9s %s\n", label, hex);
+        };
+        puuid("package",  m.package_uuid);
+        puuid("material", m.material_uuid);
+        puuid("brand",    m.brand_uuid);
+        if (m.gtin) Serial.printf("[tag]       gtin      %llu\n",
+                                  (unsigned long long)m.gtin);
+    }
     Serial.printf("[tag]       brand \"%s\"  name \"%s\"  abbr \"%s\"\n",
                   m.brand_name, m.material_name, m.material_abbreviation);
     if (m.primary_color_rgba[3])
