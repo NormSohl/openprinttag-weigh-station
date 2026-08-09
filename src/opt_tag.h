@@ -34,7 +34,23 @@ struct OptMain {
     int16_t  max_bed_temperature;        // key 38 — °C
     int8_t   material_class;             // key 8  — enum; see data/material_class_enum.yaml
     int8_t   material_type;              // key 9  — enum; see data/material_type_enum.yaml
+    // key 13 — 0 none, 1 irreversible, 2 PROTECT PAGE (SLIX2, password-unlockable).
+    // Non-zero means the Main section is NOT ours to rewrite: see optMainWritable().
+    int8_t   write_protection;
 };
+
+// True if the Main section of a tag carrying this record may be written.
+//
+// Only ever false for a tag someone else wrote — we never set key 13 and never
+// call lockICODESLIX2(), so our own tags stay rewritable for the life of the
+// spool. A genuine vendor tag may be protected irreversibly, and Main is not
+// ours to overwrite even when the hardware would allow it.
+//
+// Auxiliary is deliberately NOT covered: OPT requires the aux section to stay
+// writable ("everything except aux section, that one should be always
+// writable"), so consumed_weight still records on a protected spool and
+// weighing keeps working.
+inline bool optMainWritable(const OptMain& m) { return m.write_protection == 0; }
 
 // ── Auxiliary section (data/aux_fields.yaml) ──────────────────────────────────
 // remaining_weight is NOT stored on the tag.

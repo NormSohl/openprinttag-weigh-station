@@ -577,17 +577,36 @@ void nfcTask(void* param) {
             OptMain  main      = gTagMain;
             uint16_t mainOffset = gTagMeta.main_region_offset;
             xSemaphoreGive(gTagMutex);
-            size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
-            if (n > 0) {
-                // No spiBusTake here: writeSection -> writeBlockRetry takes and
-                // releases the bus per block. gSpiMutex is not recursive, so
-                // holding it across this call deadlocks the task against itself
-                // and freezes displayTask with it.
-                writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
-                // Leave ReconcilingMainSection — syncTask's next poll will confirm
-                if (getState() == DeviceState::ReconcilingMainSection)
-                    setState(DeviceState::Present);
+            // Not every tag is ours to rewrite. OPT key 13 marks a tag as write
+            // protected — irreversibly, or behind a PROTECT PAGE password — and
+            // a genuine vendor spool may well arrive that way. Without this the
+            // reconcile loop would retry Main on every placement and log
+            // "section write FAILED" forever against hardware that is correctly
+            // refusing us.
+            //
+            // Aux is untouched by this on purpose: OPT requires the aux section
+            // to stay writable, so consumed_weight still records and the spool
+            // still weighs normally. Only the vendor's identity data is off
+            // limits.
+            if (!optMainWritable(main)) {
+                Serial.printf("[nfc] Main is write-protected (key 13 = %d) — "
+                              "leaving it alone; weighing and Aux still work\n",
+                              (int)main.write_protection);
+            } else {
+                size_t n = optEncodeMain(main, cborBuf, sizeof(cborBuf));
+                if (n > 0) {
+                    // No spiBusTake here: writeSection -> writeBlockRetry takes
+                    // and releases the bus per block. gSpiMutex is not
+                    // recursive, so holding it across this call deadlocks the
+                    // task against itself and freezes displayTask with it.
+                    writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
+                }
             }
+            // Either way we are done reconciling this tag: a protected one will
+            // never match, so staying in ReconcilingMainSection would pin the
+            // display on "Updating tag..." for as long as the spool sat there.
+            if (getState() == DeviceState::ReconcilingMainSection)
+                setState(DeviceState::Present);
         }
 
         vTaskDelay(pdMS_TO_TICKS(200));

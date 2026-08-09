@@ -15,6 +15,7 @@ static constexpr int MAIN_KEY_MATERIAL_CLASS             = 8;
 static constexpr int MAIN_KEY_MATERIAL_TYPE              = 9;
 static constexpr int MAIN_KEY_MATERIAL_NAME              = 10;
 static constexpr int MAIN_KEY_BRAND_NAME                 = 11;
+static constexpr int MAIN_KEY_WRITE_PROTECTION           = 13;
 static constexpr int MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT  = 16;
 static constexpr int MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT   = 17;
 static constexpr int MAIN_KEY_EMPTY_CONTAINER_WEIGHT     = 18;
@@ -334,6 +335,10 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                     case MAIN_KEY_MAX_BED_TEMPERATURE:   if (cborTakeInt(&mm, &v)) main->max_bed_temperature   = (int16_t)v; break;
                     case MAIN_KEY_MATERIAL_CLASS: if (cborTakeInt(&mm, &v)) main->material_class = (int8_t)v; break;
                     case MAIN_KEY_MATERIAL_TYPE:  if (cborTakeInt(&mm, &v)) main->material_type  = (int8_t)v; break;
+                    // Whether this tag's Main section may be rewritten at
+                    // all. Decoded but never encoded: we do not protect our
+                    // own tags, and an absent key means "not protected".
+                    case MAIN_KEY_WRITE_PROTECTION: if (cborTakeInt(&mm, &v)) main->write_protection = (int8_t)v; break;
                 }
                 if (consumed) continue;
                 if (!cborStep(&mm)) break;
