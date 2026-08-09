@@ -5,6 +5,9 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include <string.h>
+#include <strings.h>   // strcasecmp
+#include <ctype.h>
+#include <math.h>
 #include <vector>
 #include <unordered_map>
 #include <string>
@@ -38,10 +41,12 @@ static std::vector<SpoolRecord>  sSpools;
 static std::unordered_map<std::string, size_t> sByUuid;   // uuid → sSpools index (O(1) lookup)
 static std::vector<MatInventory> sInv;
 static std::vector<UsageRow>     sUsage;   // permanent consumption rollup
+static std::vector<ProductRecord> sProducts; // permanent definitions
 static bool               sInvDirty = true;   // rebuild sInv lazily on next query
 static bool               sLogEndsNL = true;  // does the log end with a newline?
 static bool               sWriteFailed = false; // last append was short/failed
 static uint32_t           sNextId  = 1;
+static uint32_t           sNextProdId = 1;
 
 // RAII lock. No public function that takes the lock calls another that does,
 // so a plain (non-recursive) mutex is safe.
@@ -60,6 +65,7 @@ const char* storeEvName(StoreEv ev) {
         case StoreEv::Export:      return "export";
         case StoreEv::Checkpoint:  return "checkpoint";
         case StoreEv::Usage:       return "usage";
+        case StoreEv::Product:     return "product";
         default:                   return "unknown";
     }
 }
@@ -71,6 +77,7 @@ StoreEv storeEvFromName(const char* s) {
     if (!strcmp(s, "export"))       return StoreEv::Export;
     if (!strcmp(s, "checkpoint"))   return StoreEv::Checkpoint;
     if (!strcmp(s, "usage"))        return StoreEv::Usage;
+    if (!strcmp(s, "product"))      return StoreEv::Product;
     return StoreEv::Unknown;
 }
 
@@ -126,8 +133,11 @@ static String encodeBody(const StoreEvent& e) {
         snprintf(n, sizeof(n), "%.1f", e.usage_g);              b += "\"grams\":";  b += n; b += ",";
         snprintf(n, sizeof(n), "%u", (unsigned)e.usage_weighs); b += "\"weighs\":"; b += n; b += ",";
     }
-    if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
-        e.ev == StoreEv::Checkpoint) {
+    // A Product carries the same descriptive fields as a spool's identity — that
+    // IS the relationship: a spool record is a resolved cache of its product.
+    const bool ident = (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
+                        e.ev == StoreEv::Checkpoint);
+    if (ident || e.ev == StoreEv::Product) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
         b += "\"mat\":\"";    b += jsonEsc(e.material);  b += "\",";
         b += "\"abbr\":\"";   b += jsonEsc(e.abbr);      b += "\",";
@@ -136,7 +146,28 @@ static String encodeBody(const StoreEvent& e) {
         snprintf(n, sizeof(n), "%.2f", e.dia);     b += "\"dia\":";     b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.empty_g); b += "\"empty_g\":"; b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.nom_g);   b += "\"nom_g\":";   b += n; b += ",";
+        // On an identity event this is the spool's product reference; on a
+        // Product event it is the product's own id. Both answer "which product".
+        snprintf(n, sizeof(n), "%u", (unsigned)e.product);
+        b += "\"prod\":"; b += n; b += ",";
+    }
+    if (ident) {
         b += "\"needs_ob\":"; b += (e.needs_ob ? "true" : "false"); b += ",";
+    }
+    if (e.ev == StoreEv::Product) {
+        b += "\"puuid\":\""; b += jsonEsc(e.pkg_uuid);   b += "\",";
+        b += "\"muuid\":\""; b += jsonEsc(e.mat_uuid);   b += "\",";
+        b += "\"buuid\":\""; b += jsonEsc(e.brand_uuid); b += "\",";
+        snprintf(n, sizeof(n), "%llu", (unsigned long long)e.gtin);
+        b += "\"gtin\":"; b += n; b += ",";
+        // Omitted entirely when unmeasured: L* is legitimately 0 for a measured
+        // black, so zeroes cannot double as "unknown". Same reasoning as the
+        // tag encoder, which omits OPT key 59 rather than writing zeroes.
+        if (e.has_lab) {
+            snprintf(n, sizeof(n), "[%.2f,%.2f,%.2f]", e.lab[0], e.lab[1], e.lab[2]);
+            b += "\"lab\":"; b += n; b += ",";
+        }
+        b += "\"prov\":"; b += (e.provisional ? "true" : "false"); b += ",";
     }
     return b;   // always ends with ','
 }
@@ -179,8 +210,9 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.usage_g      = doc["grams"]  | 0.0f;
         e.usage_weighs = doc["weighs"] | 0u;
     }
-    if (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
-        e.ev == StoreEv::Checkpoint) {
+    const bool ident = (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
+                        e.ev == StoreEv::Checkpoint);
+    if (ident || e.ev == StoreEv::Product) {
         strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
         strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
         strlcpy(e.abbr,     doc["abbr"]   | "", sizeof(e.abbr));
@@ -188,7 +220,19 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.dia      = doc["dia"]     | 0.0f;
         e.empty_g  = doc["empty_g"] | 0.0f;
         e.nom_g    = doc["nom_g"]   | 0.0f;
-        e.needs_ob = doc["needs_ob"] | false;
+        // Absent on every line written before products existed, which reads
+        // back as 0 — "no product" — and that is exactly right for them.
+        e.product  = doc["prod"]    | 0u;
+    }
+    if (ident) e.needs_ob = doc["needs_ob"] | false;
+    if (e.ev == StoreEv::Product) {
+        strlcpy(e.pkg_uuid,   doc["puuid"] | "", sizeof(e.pkg_uuid));
+        strlcpy(e.mat_uuid,   doc["muuid"] | "", sizeof(e.mat_uuid));
+        strlcpy(e.brand_uuid, doc["buuid"] | "", sizeof(e.brand_uuid));
+        e.gtin = doc["gtin"] | (uint64_t)0;
+        e.has_lab = !doc["lab"].isNull();
+        if (e.has_lab) for (int i = 0; i < 3; i++) e.lab[i] = doc["lab"][i] | 0.0f;
+        e.provisional = doc["prov"] | false;
     }
     return true;
 }
@@ -278,7 +322,35 @@ static void usageAdd_(std::vector<UsageRow>& tbl, const char* period,
 static void applyInto_(std::vector<SpoolRecord>& spools,
                        std::unordered_map<std::string, size_t>& byUuid,
                        std::vector<UsageRow>& usage,
+                       std::vector<ProductRecord>* products,
                        const StoreEvent& e) {
+    // Products are definitions, not deltas: replay is last-write-wins on the
+    // whole record, keyed by product id. `products` is null for the compaction
+    // fold, which carries products forward from the live index instead — see
+    // storeCompact().
+    if (e.ev == StoreEv::Product) {
+        if (!products || !e.product) return;
+        ProductRecord* p = nullptr;
+        for (auto& q : *products) if (q.id == e.product) { p = &q; break; }
+        if (!p) { products->push_back(ProductRecord{}); p = &products->back(); }
+        *p = ProductRecord{};
+        p->id = e.product;
+        strlcpy(p->pkg_uuid,   e.pkg_uuid,   sizeof(p->pkg_uuid));
+        strlcpy(p->mat_uuid,   e.mat_uuid,   sizeof(p->mat_uuid));
+        strlcpy(p->brand_uuid, e.brand_uuid, sizeof(p->brand_uuid));
+        p->gtin = e.gtin;
+        strlcpy(p->vendor,   e.vendor,   sizeof(p->vendor));
+        strlcpy(p->material, e.material, sizeof(p->material));
+        strlcpy(p->abbr,     e.abbr,     sizeof(p->abbr));
+        memcpy(p->rgba, e.rgba, 4);
+        memcpy(p->lab, e.lab, sizeof(p->lab));
+        p->has_lab = e.has_lab;
+        p->dia = e.dia; p->empty_g = e.empty_g; p->nom_g = e.nom_g;
+        p->provisional = e.provisional;
+        strlcpy(p->last_ts, e.ts, sizeof(p->last_ts));
+        p->valid = true;
+        return;
+    }
     // Usage rollups carry no spool identity — they ARE the folded history.
     if (e.ev == StoreEv::Usage) {
         char p[8];
@@ -340,6 +412,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             memcpy(r.rgba, e.rgba, 4);
             r.dia = e.dia; r.empty_g = e.empty_g; r.nom_g = e.nom_g;
             r.needs_ob = e.needs_ob;
+            r.product  = e.product;
             break;
         case StoreEv::Weigh:
             r.remaining_g = e.remaining_g;
@@ -351,7 +424,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
 }
 
 static void applyEvent_(const StoreEvent& e) {
-    applyInto_(sSpools, sByUuid, sUsage, e);
+    applyInto_(sSpools, sByUuid, sUsage, &sProducts, e);
     sInvDirty = true;                    // inventory recomputed lazily
 }
 
@@ -390,6 +463,7 @@ static bool rebuildIndices_() {
     sSpools.clear();
     sByUuid.clear();
     sUsage.clear();
+    sProducts.clear();
     if (!LittleFS.exists(LOG_PATH)) { sInvDirty = true; return true; }
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
@@ -506,6 +580,18 @@ uint32_t storeNextSpoolId() {
 }
 uint32_t storePeekSpoolId() { return sNextId; }
 
+uint32_t storeNextProductId() {
+    Lock lk;
+    Preferences p;
+    p.begin("store", false);
+    uint32_t id = p.getUInt("pcounter", 1);
+    p.putUInt("pcounter", id + 1);
+    p.end();
+    sNextProdId = id + 1;
+    return id;
+}
+uint32_t storePeekProductId() { return sNextProdId; }
+
 // ── Queries ───────────────────────────────────────────────────────────────────
 bool storeGetSpool(uint32_t id, SpoolRecord& out) {
     Lock lk;
@@ -534,6 +620,138 @@ bool storeUsageAt(size_t idx, UsageRow& out) {
     return true;
 }
 
+size_t storeProductCount() { Lock lk; return sProducts.size(); }
+bool storeProductAt(size_t idx, ProductRecord& out) {
+    Lock lk;
+    if (idx >= sProducts.size()) return false;
+    out = sProducts[idx];
+    return true;
+}
+bool storeGetProduct(uint32_t id, ProductRecord& out) {
+    Lock lk;
+    for (auto& p : sProducts) if (p.id == id) { out = p; return true; }
+    return false;
+}
+
+// ── Product matching ──────────────────────────────────────────────────────────
+// Case-insensitive compare that also ignores whitespace, so "eSun" matches
+// "ESUN" and "PLA Summer Grass" matches "PLA  Summer Grass". Punctuation is
+// NOT skipped — "PLA+" and "PLA" are different filaments and must not merge.
+static bool normEq_(const char* a, const char* b) {
+    for (;;) {
+        while (*a == ' ' || *a == '\t') a++;
+        while (*b == ' ' || *b == '\t') b++;
+        if (!*a || !*b) return !*a && !*b;
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+        a++; b++;
+    }
+}
+
+// Nominal full weight is what separates a 1 kg from a 5 kg of the same
+// filament, which is the distinction "a different size is a different product"
+// rests on. A tag that carries no nominal weight offers nothing to distinguish
+// on, so treat 0 on either side as "cannot tell" and let the match stand: a
+// duplicate product silently listing the same filament twice in the inventory
+// is worse than an over-merge, which a human can see and split.
+static bool nomEq_(float a, float b) {
+    if (a <= 0 || b <= 0) return true;
+    return fabsf(a - b) < 1.0f;
+}
+
+// Caller holds the lock.
+static int findProduct_(const ProductRecord& q) {
+    // 1) package_uuid — the SKU, and our product identity.
+    if (q.pkg_uuid[0])
+        for (size_t i = 0; i < sProducts.size(); i++)
+            if (!strcasecmp(sProducts[i].pkg_uuid, q.pkg_uuid)) return (int)i;
+    // 2) GTIN — per-SKU, so equally precise where package_uuid is absent.
+    if (q.gtin)
+        for (size_t i = 0; i < sProducts.size(); i++)
+            if (sProducts[i].gtin == q.gtin) return (int)i;
+    // 3) material_uuid is one level too COARSE on its own — it is shared by
+    //    every size of the same filament — so it only identifies a product
+    //    together with the nominal weight.
+    if (q.mat_uuid[0])
+        for (size_t i = 0; i < sProducts.size(); i++)
+            if (!strcasecmp(sProducts[i].mat_uuid, q.mat_uuid) &&
+                nomEq_(sProducts[i].nom_g, q.nom_g)) return (int)i;
+    // 4) Names. What makes the second Prusament PETG Orange find the first
+    //    instead of creating a product and listing the filament twice.
+    if (q.material[0])
+        for (size_t i = 0; i < sProducts.size(); i++)
+            if (normEq_(sProducts[i].vendor, q.vendor) &&
+                normEq_(sProducts[i].material, q.material) &&
+                nomEq_(sProducts[i].nom_g, q.nom_g)) return (int)i;
+    return -1;
+}
+
+bool storeFindProduct(const ProductRecord& probe, ProductRecord& out) {
+    Lock lk;
+    int i = findProduct_(probe);
+    if (i < 0) return false;
+    out = sProducts[i];
+    return true;
+}
+
+bool storeUpsertProduct(ProductRecord& p) {
+    if (p.id == 0) p.id = storeNextProductId();   // takes the lock itself
+    StoreEvent e;
+    e.ev      = StoreEv::Product;
+    e.product = p.id;
+    strlcpy(e.pkg_uuid,   p.pkg_uuid,   sizeof(e.pkg_uuid));
+    strlcpy(e.mat_uuid,   p.mat_uuid,   sizeof(e.mat_uuid));
+    strlcpy(e.brand_uuid, p.brand_uuid, sizeof(e.brand_uuid));
+    e.gtin = p.gtin;
+    strlcpy(e.vendor,   p.vendor,   sizeof(e.vendor));
+    strlcpy(e.material, p.material, sizeof(e.material));
+    strlcpy(e.abbr,     p.abbr,     sizeof(e.abbr));
+    memcpy(e.rgba, p.rgba, 4);
+    memcpy(e.lab, p.lab, sizeof(e.lab));
+    e.has_lab     = p.has_lab;
+    e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
+    e.provisional = p.provisional;
+    return storeAppendEvent(e);            // takes the lock itself
+}
+
+// Does a tag disagree with the product it matched, on anything a human would
+// want to look at? Identity keys are excluded — a tag matching by name while
+// carrying a UUID we do not have is normal, not a conflict.
+static bool productDiffers_(const ProductRecord& have, const ProductRecord& tag) {
+    if (tag.material[0] && !normEq_(have.material, tag.material)) return true;
+    if (tag.vendor[0]   && !normEq_(have.vendor,   tag.vendor))   return true;
+    if (tag.abbr[0]     && !normEq_(have.abbr,     tag.abbr))     return true;
+    if (tag.nom_g > 0   && !nomEq_(have.nom_g,     tag.nom_g))    return true;
+    if (tag.dia   > 0   && fabsf(have.dia - tag.dia) > 0.01f)     return true;
+    if (tag.rgba[3] && have.rgba[3] && memcmp(have.rgba, tag.rgba, 3)) return true;
+    return false;
+}
+
+uint32_t storeAdoptProduct(const ProductRecord& fromTag, bool* outDiffers) {
+    if (outDiffers) *outDiffers = false;
+    uint32_t found = 0;
+    {
+        Lock lk;
+        int i = findProduct_(fromTag);
+        if (i >= 0) {
+            found = sProducts[i].id;
+            // Create on first sight, NEVER auto-update. Product edits propagate
+            // to every tag of that product, so a tag that could also update one
+            // would let a single odd or damaged tag rewrite a whole shelf. The
+            // disagreement is reported for a human to adjudicate; nothing is
+            // written here.
+            if (outDiffers) *outDiffers = productDiffers_(sProducts[i], fromTag);
+        }
+    }
+    if (found) return found;
+
+    ProductRecord p = fromTag;
+    p.id = 0;
+    p.provisional = true;   // inferred from a tag; excluded from write-back
+                            // until a human confirms it
+    if (!storeUpsertProduct(p)) return 0;
+    return p.id;
+}
+
 size_t storeInventoryCount() { Lock lk; ensureInventory_(); return sInv.size(); }
 bool storeInventoryAt(size_t idx, MatInventory& out) {
     Lock lk;
@@ -559,9 +777,11 @@ bool storeInventoryAt(size_t idx, MatInventory& out) {
 // Must run AFTER storeRebuildIndices() — it reads the rebuilt index.
 static void reconcileIdCounter_() {
     Lock lk;
-    uint32_t maxId = 0;
+    uint32_t maxId = 0, maxProd = 0;
     for (const auto& s : sSpools)
         if (s.spool > maxId) maxId = s.spool;
+    for (const auto& p : sProducts)
+        if (p.id > maxProd) maxProd = p.id;
 
     // Read-WRITE, deliberately. Opening a namespace read-only before it exists
     // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
@@ -581,6 +801,14 @@ static void reconcileIdCounter_() {
     } else {
         sNextId = cur;
     }
+    // Products need this for the same reason and more sharply: a reissued
+    // product number would not merely duplicate a label, it would make two
+    // definitions overwrite each other on replay, and every spool pointing at
+    // that number would follow whichever won.
+    const uint32_t pcur  = p.getUInt("pcounter", 1);
+    const uint32_t pwant = maxProd + 1;
+    if (pwant > pcur) { p.putUInt("pcounter", pwant); sNextProdId = pwant; }
+    else              { sNextProdId = pcur; }
     p.end();
 }
 
@@ -625,8 +853,7 @@ const char* storeLogPath() { return LOG_PATH; }
 
 bool storeImportLogFile(const char* stagingPath) {
     // 1) Validate staging first — never destroy a good log for a bad upload.
-    uint32_t maxId = 0;
-    size_t   good  = 0;
+    size_t good = 0;
     {
         Lock lk;
         File f = LittleFS.open(stagingPath, "r");
@@ -637,7 +864,7 @@ bool storeImportLogFile(const char* stagingPath) {
             line.trim();
             if (line.length() == 0) continue;
             StoreEvent e;
-            if (decodeLine(line, e)) { good++; if (e.spool > maxId) maxId = e.spool; }
+            if (decodeLine(line, e)) good++;
         }
         f.close();
     }
@@ -662,19 +889,12 @@ bool storeImportLogFile(const char* stagingPath) {
 
     // 3) Rebuild indices (takes the lock itself) and re-prime the newline flag.
     storeRebuildIndices();
-    {
-        Lock lk;
-        primeLogEndsNL_();
-        sWriteFailed = false;
-        // 4) Advance the ID counter past the highest imported id (no reuse).
-        Preferences p;
-        p.begin("store", false);
-        uint32_t cur  = p.getUInt("counter", 1);
-        uint32_t want = maxId + 1;
-        if (want > cur) { p.putUInt("counter", want); sNextId = want; }
-        else            { sNextId = cur; }
-        p.end();
-    }
+    { Lock lk; primeLogEndsNL_(); sWriteFailed = false; }
+    // 4) Advance both counters past the highest imported id (no reuse). Shared
+    //    with boot rather than open-coded here: this used to track only the
+    //    spool id, and every counter added afterwards would have to remember to
+    //    add itself in two places.
+    reconcileIdCounter_();
     return true;
 }
 
@@ -734,7 +954,8 @@ bool storeCompact() {
             if (l.length() == 0) continue;
             seen++;
             StoreEvent e;
-            if (decodeLine(l, e)) applyInto_(foldSpools, foldByUuid, foldUsage, e);
+            if (decodeLine(l, e))
+                applyInto_(foldSpools, foldByUuid, foldUsage, nullptr, e);
         }
         in.close();
     }
@@ -756,9 +977,42 @@ bool storeCompact() {
         return out.print(line) == line.length() && out.print('\n') == 1;
     };
 
-    // Usage first: it is independent of spool state, and putting it at the head
+    // Products first: they are definitions the rest of the log points at, so an
+    // exported file reads top-down.
+    //
+    // Emitted from the LIVE index, not from the folded region — and unlike the
+    // checkpoints below, that is not merely safe but required. A Product event
+    // is not a delta: replay is last-write-wins on the whole record, so the
+    // live index already holds the newest definition of every product. Any
+    // product whose newest definition sits in the retained tail gets that same
+    // definition replayed on top, which is a no-op; any product last defined in
+    // the discarded region survives only because of this. Nothing can revert,
+    // because the tail cannot contain an OLDER definition than the index built
+    // by replaying it.
+    for (const auto& p : sProducts) {
+        if (!p.valid || !p.id) continue;
+        StoreEvent x;
+        x.ev      = StoreEv::Product;
+        x.product = p.id;
+        strlcpy(x.ts, p.last_ts[0] ? p.last_ts : "1970-01-01T00:00:00Z", sizeof(x.ts));
+        strlcpy(x.pkg_uuid,   p.pkg_uuid,   sizeof(x.pkg_uuid));
+        strlcpy(x.mat_uuid,   p.mat_uuid,   sizeof(x.mat_uuid));
+        strlcpy(x.brand_uuid, p.brand_uuid, sizeof(x.brand_uuid));
+        x.gtin = p.gtin;
+        strlcpy(x.vendor,   p.vendor,   sizeof(x.vendor));
+        strlcpy(x.material, p.material, sizeof(x.material));
+        strlcpy(x.abbr,     p.abbr,     sizeof(x.abbr));
+        memcpy(x.rgba, p.rgba, 4);
+        memcpy(x.lab, p.lab, sizeof(x.lab));
+        x.has_lab     = p.has_lab;
+        x.dia = p.dia; x.empty_g = p.empty_g; x.nom_g = p.nom_g;
+        x.provisional = p.provisional;
+        if (!emit(encodeLine(x))) { ok = false; break; }
+    }
+
+    // Usage next: it is independent of spool state, and putting it at the head
     // keeps it obvious in an exported file.
-    for (const auto& u : foldUsage) {
+    if (ok) for (const auto& u : foldUsage) {
         StoreEvent x;
         x.ev = StoreEv::Usage;
         strlcpy(x.ts,       u.period,   sizeof(x.ts));
@@ -785,6 +1039,7 @@ bool storeCompact() {
         memcpy(c.rgba, r.rgba, 4);
         c.dia = r.dia; c.empty_g = r.empty_g; c.nom_g = r.nom_g;
         c.needs_ob = r.needs_ob;
+        c.product  = r.product;
         if (!emit(encodeLine(c))) { ok = false; break; }
     }
 
@@ -900,6 +1155,33 @@ bool storeSerialCommand(const String& lineIn) {
                     total += u.grams;
                 }
             Serial.printf("  total %.1f g (%.2f kg)\n", total, total / 1000.0f);
+        } else if (what == "prod" || what == "products") {
+            Serial.printf("[store] products (%u), next #%u:\n",
+                          (unsigned)storeProductCount(), (unsigned)storePeekProductId());
+            ProductRecord p;
+            for (size_t i = 0; i < storeProductCount(); i++) {
+                if (!storeProductAt(i, p)) continue;
+                Serial.printf("  #%-4u %-12s %-24s %-6s %.2fmm tare %.0f g nom %.0f g%s\n",
+                              (unsigned)p.id, p.vendor, p.material, p.abbr,
+                              p.dia, p.empty_g, p.nom_g,
+                              p.provisional ? "  [provisional]" : "");
+                if (p.rgba[3]) Serial.printf("        color #%02X%02X%02X\n",
+                                             p.rgba[0], p.rgba[1], p.rgba[2]);
+                if (p.has_lab) Serial.printf("        lab L*=%.2f a*=%.2f b*=%.2f\n",
+                                             p.lab[0], p.lab[1], p.lab[2]);
+                if (p.pkg_uuid[0])   Serial.printf("        package_uuid  %s\n", p.pkg_uuid);
+                if (p.mat_uuid[0])   Serial.printf("        material_uuid %s\n", p.mat_uuid);
+                if (p.brand_uuid[0]) Serial.printf("        brand_uuid    %s\n", p.brand_uuid);
+                if (p.gtin)          Serial.printf("        gtin          %llu\n",
+                                                   (unsigned long long)p.gtin);
+                // Which spools resolved to it — the check that adoption is
+                // converging rather than making one product per spool.
+                unsigned n = 0;
+                SpoolRecord r;
+                for (size_t j = 0; j < storeSpoolCount(); j++)
+                    if (storeSpoolAt(j, r) && r.product == p.id) n++;
+                Serial.printf("        %u spool%s\n", n, n == 1 ? "" : "s");
+            }
         } else {
             Serial.printf("[store] spools (%u):\n", (unsigned)storeSpoolCount());
             SpoolRecord r;
@@ -925,7 +1207,9 @@ bool storeSerialCommand(const String& lineIn) {
                       (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10),
                       storeCompactNeeded() ? "  [compaction due]" : "",
                       storeWriteFailed()   ? "  [WRITES FAILING]" : "");
-        Serial.printf("[store] usage: %u buckets\n", (unsigned)storeUsageCount());
+        Serial.printf("[store] usage: %u buckets, products: %u (next #%u)\n",
+                      (unsigned)storeUsageCount(), (unsigned)storeProductCount(),
+                      (unsigned)storePeekProductId());
         return true;
     }
     // Force a compaction regardless of the size threshold. The point is to make
@@ -981,9 +1265,11 @@ bool storeSerialCommand(const String& lineIn) {
             Preferences p;
             p.begin("store", false);
             p.putUInt("counter", 1);
+            p.putUInt("pcounter", 1);
             p.end();
             sNextId = 1;
-            Serial.println("[store] log wiped and spool numbering reset to #1");
+            sNextProdId = 1;
+            Serial.println("[store] log wiped; spool and product numbering reset to #1");
         } else {
             Serial.printf("[store] log wiped (spool numbering continues at #%u; "
                           "use WIPE ALL to restart at #1)\n", (unsigned)sNextId);

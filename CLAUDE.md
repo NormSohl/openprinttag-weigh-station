@@ -103,7 +103,9 @@ Material *popularity* (grams consumed per month per vendor+material) is a first-
 
 Surfaced on the web app's **Usage** page, `/usage.csv`, `/api/usage`, and `DUMP usage` over serial. Test the fold on the bench with `SEED` → `DUMP usage` → `COMPACT` → `DUMP usage`; the totals must match.
 
-A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyInto_` falls through from it into the identity case.
+A `Checkpoint` carries both the identity and weight field groups, so `encodeBody`/`decodeLine` test for it with independent `if`s rather than an `if/else` chain, and `applyInto_` falls through from it into the identity case. A `Product` shares the descriptive group with identity events — that *is* the relationship, a spool record being a resolved cache of its product — but not `needs_ob`.
+
+**Products survive compaction, and they are written from the live index — the opposite of checkpoints.** A Product event is not a delta: replay is last-write-wins on the whole record, so the live index already holds the newest definition of every product, and the retained tail cannot contain an older one than the index built by replaying it. A checkpoint is a baseline the tail measures deltas against, which is exactly why writing *those* from the live index corrupts the totals. Do not "simplify" the two into one rule.
 
 ## HTTP API
 
@@ -116,11 +118,19 @@ Full reference: `docs/api.md`. Shape of it:
 - No TLS. The key is a guard rail against misaimed scripts and stray clicks, not transport security; the LAN is the real boundary.
 - `deviceStateName()` in `device_state.h` is part of the API surface — external dashboards match on those strings.
 
-## Proposed: products and instances
+## Products and instances
 
-`docs/design/product-instance.md` — **proposed, not built.** Spool records are currently flat: ten spools of the same filament are ten copies of the same vendor, material, colour, diameter and tare. The design splits Brand → Product → Profile → Instance, matching the four-level identity OPT already defines (`brand_uuid` / `material_uuid` / `package_uuid` / `instance_uuid`), and gives onboarding two paths — "another spool of X" versus "a new product".
+`docs/design/product-instance.md`. Spool records were flat: ten spools of the same filament were ten copies of the same vendor, material, colour, diameter and tare. The design splits Brand → Product → Profile → Instance, matching the four-level identity OPT already defines (`brand_uuid` / `material_uuid` / `package_uuid` / `instance_uuid`), and gives onboarding two paths — "another spool of X" versus "a new product".
 
-Two things in it are load-bearing if it gets built: `SpoolRecord` keeps its fields as a **resolved cache** with a product reference added, so the reconcile loop and inventory roll-up need no changes and foreign tags still work; and a foreign tag may **create** a product but must never **update** one, because product edits propagate to tags and one bad tag would otherwise rewrite a whole shelf.
+**The store layer is built; nothing is wired to it yet.** `ProductRecord`, `StoreEv::Product`, the products index, compaction survival, the NVS product-id counter, `storeFindProduct()` / `storeAdoptProduct()`, and `DUMP prod`. No caller creates a product, so every spool still has `product == 0` and behaves exactly as before — which is the property that makes onboarding, reorder and the web pages independently shippable on top.
+
+Three things are load-bearing:
+
+- `SpoolRecord` keeps its fields as a **resolved cache** with a `product` reference added, so the reconcile loop, inventory roll-up and display need no changes, and foreign tags still work.
+- A tag may **create** a product but must never **update** one — product edits propagate to tags, so one odd or damaged tag would otherwise rewrite a whole shelf. `storeAdoptProduct()` reports the disagreement via `outDiffers` and writes nothing; tag-derived products are flagged `provisional` and excluded from write-back until a human confirms them.
+- **A decode case without a matching encode is now worse than not modelling the field at all.** Since `optDecode()` began preserving unrecognised keys verbatim, claiming a key removes it from the passthrough — so half-modelling it silently drops the vendor's value on the next rewrite. `src/opt_tag.cpp`'s decode switch carries that warning; `tools/opt/optfuzz` asserts the modelled identity keys leave `extra` rather than being written twice.
+
+`tools/store/` tests the matching ladder natively by **slicing the real functions out of `src/store.cpp`** rather than restating them, so the test cannot drift from the code — and it is the only compile verification anything in `src/` gets while the PlatformIO registry is blocked.
 
 ## Device State Machine
 
@@ -158,7 +168,7 @@ syncTask also watches the link: a station-mode drop is otherwise silent, and DHC
 ## Gotchas paid for in blood
 
 - **`getSystemInfo(uid, blockSize, numBlocks)`** — blockSize is the SECOND argument. Passing them swapped reads an 80x4 tag as 4x80. The total size is identical either way, so nothing looks wrong until every write is rejected with `NO_CARD` for asking a 4-byte block to hold 80 bytes. `nfcTask` now validates the geometry (blockSize 1..32, total <= `sRawBuf`) on every detection.
-- **Tasks that touch the store need real stack.** `storeAppendEvent` -> `FS::open` -> `lfs_dir_fetchmatch` -> `esp_flash_read` is deep, on top of String/JSON work. scaleTask at 3072 overflowed its canary on the first `SEED`; it is 8192 now. nfcTask 6144, syncTask 8192.
+- **Tasks that touch the store need real stack.** `storeAppendEvent` -> `FS::open` -> `lfs_dir_fetchmatch` -> `esp_flash_read` is deep, on top of String/JSON work. scaleTask at 3072 overflowed its canary on the first `SEED`; it is 8192 now. nfcTask 6144, syncTask 8192. `StoreEvent` is a ~375-byte stack object and it is a UNION OF EVERY EVENT TYPE'S FIELDS — the product identity added ~125 bytes to every function that declares one, including ones that only ever handle weighs. Adding fields for a new event type is not free for the others.
 - **Never read the log with `File::readStringUntil()`.** It costs one VFS call per *byte*: replaying 1583 lines took 6.4 s at boot, scaling to ~24 s at the compaction threshold. Every full-log pass goes through `LogReader` (512-byte buffered) instead.
 - **Never read serial commands with `readStringUntil()`.** It returns whatever it has after a 1 s timeout, and the PlatformIO monitor sends each keystroke as typed rather than buffering the line. A pause while typing split `SEED 20 200` into `SEED` (which seeded nothing) and `20 200` (silently dropped). `handleSerialCommand()` accumulates characters and dispatches on newline; unrecognised lines now report themselves.
 - **The serial console lives in scaleTask.** ZERO, CAL, SEED, COMPACT, DUMP, APIKEY and TAGFORMAT are all dispatched from `handleSerialCommand()` there. The task used to `vTaskDelete` itself when the NAU7802 was missing, which silently removed every diagnostic command at the exact moment something was wrong. It now stays alive, keeps servicing commands, and retries the ADC every 5 s.
@@ -203,7 +213,7 @@ Three code commits have landed since the last build that was flashed and run (`d
 
 **The compaction check is DUE.** `applyInto_` changed twice on 2026-08-08 — the consumption rollup now keys on `abbr` rather than `material`, and `rebuildInventory_` carries `rgba` — so the fold needs re-verifying against the figures below. This is the one check where a silent regression cannot be recovered afterwards: once raw events are folded away, the `Usage` rows are the only evidence left.
 
-To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
+To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything. **`DUMP prod` must also match across the fold** — products are carried forward, not folded away, so a product that disappears means `storeCompact()` stopped emitting them.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 

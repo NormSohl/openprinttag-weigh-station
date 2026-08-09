@@ -1,7 +1,19 @@
 # Design: products and instances
 
-Status: **proposed** — nothing here is built. Written so the data model can be
-argued about before code hardens against the current flat one.
+Status: **store layer built** (2026-08-09), nothing wired to it yet.
+
+| step | state |
+|---|---|
+| Stop destroying unmodelled tag fields | **done** — `OptMain.extra` passthrough |
+| Read OPT identity keys 1–4 | **done** — `package_uuid` / `material_uuid` / `brand_uuid` / `gtin` |
+| Product entity, index, event type, compaction survival, matching | **done** — `ProductRecord`, `StoreEv::Product`, `storeFindProduct()` / `storeAdoptProduct()` |
+| Onboarding ("another spool of X" vs "a new product") | not started |
+| Reorder against products | not started |
+| Web pages | not started |
+
+Nothing calls `storeAdoptProduct()` yet, so every spool still has
+`product == 0` and behaves exactly as it did — which is the property that makes
+each step independently shippable.
 
 ## The problem
 
@@ -154,9 +166,15 @@ Steps 3–4 are what make adoption converge rather than multiply: without them t
 second Prusament PETG Orange creates a second product and the inventory lists it
 twice.
 
-**None of these four keys is read today** — `OptMain` carries neither UUID nor
-GTIN. Adding them is a prerequisite for this work, and cheap: four more fields
-on a struct that already round-trips sixteen.
+**All four keys are now read and written** — `OptMain` carries `package_uuid`,
+`material_uuid`, `brand_uuid` and `gtin`, and `tools/opt/optfuzz` asserts they
+survive decode → re-encode. Note the trap that came with the passthrough above:
+a decode case without a matching encode is now *worse* than not modelling the
+field, because claiming the key removes it from `extra` and it is then dropped
+on the next rewrite.
+
+`tools/store/` tests the ladder natively — see that README for what each rung
+is protecting against.
 
 ## Storage: spool records stay resolved snapshots
 
@@ -188,12 +206,32 @@ This falls out well:
 The cost is one event per spool per product edit, bounded by spools per product.
 At lab scale that is single digits.
 
-### New event type
+### New event type — built
 
-`StoreEv::Product` — an upsert of a product definition, replayed into a
+`StoreEv::Product` is an upsert of a product definition, replayed into a
 products index like spools are. Products are **definitions, not events**: they
-must survive compaction the way `Usage` rows do, so `storeCompact()` has to
-carry them into the rewritten log rather than folding them away.
+must survive compaction the way `Usage` rows do, so `storeCompact()` carries
+them into the rewritten log rather than folding them away.
+
+It emits them from the **live** index, not from the folded region — and unlike
+the spool checkpoints, that is not merely safe but required. A Product event is
+not a delta: replay is last-write-wins on the whole record, so the live index
+already holds the newest definition of every product. A product last defined in
+the retained tail gets that same definition replayed on top (a no-op); a product
+last defined in the discarded region survives only because of this. Nothing can
+revert, because the tail cannot contain an *older* definition than the index
+built by replaying it.
+
+That argument is the mirror image of the one for checkpoints, where writing from
+the live index **is** wrong — see *Consumption rollup* in `CLAUDE.md`. The
+difference is that a checkpoint is a baseline the tail measures deltas against,
+and a product definition is not.
+
+The product-id counter is reconciled against the log at boot and on import, for
+the same reason the spool counter is, and one sharper: a reissued spool number
+duplicates a label, but a reissued *product* number makes two definitions
+overwrite each other on replay, and every spool pointing at that number follows
+whichever won.
 
 ### What must not change
 

@@ -21,6 +21,7 @@ enum class StoreEv : uint8_t {
     Export,      // a backup/export was taken
     Checkpoint,  // compaction summary: one spool's full state, folds its history
     Usage,       // consumption rollup for one period+vendor+material; permanent
+    Product,     // upsert of a product definition; permanent (see ProductRecord)
     Unknown
 };
 
@@ -63,6 +64,23 @@ struct StoreEvent {
     // timestamp; vendor + material are the grouping key.
     float    usage_g      = 0;   // grams consumed in this period + category
     uint32_t usage_weighs = 0;   // weigh events that contributed
+
+    // Product reference. Rides on Onboard/Reconcile/Checkpoint (which product
+    // this spool resolved to) and on Product (which product is being upserted).
+    // 0 = none: a foreign tag we have not resolved, or a pre-products record.
+    uint32_t product = 0;
+
+    // Product definition (Product only). vendor/material/abbr/rgba/dia/empty_g/
+    // nom_g above carry the rest — they mean the same thing for a product as
+    // for a spool, which is the point: a spool record is a resolved cache of
+    // its product.
+    char     pkg_uuid[33]   = {};  // OPT key 1 — the SKU; our product identity
+    char     mat_uuid[33]   = {};  // OPT key 2 — the material, one level coarser
+    char     brand_uuid[33] = {};  // OPT key 3
+    uint64_t gtin           = 0;   // OPT key 4
+    float    lab[3]         = {};  // OPT key 59 — measured colour, D65/2 degree
+    bool     has_lab        = false;
+    bool     provisional    = false;  // created by adopting a tag; unconfirmed
 };
 
 // ── Current-state record (derived) ────────────────────────────────────────────
@@ -76,6 +94,51 @@ struct SpoolRecord {
     float    dia = 0, empty_g = 0, nom_g = 0;
     float    remaining_g = 0, used_g = 0;
     bool     needs_ob = false;
+    char     last_ts[25] = {};
+    bool     valid = false;
+
+    // Which product this spool is an instance of; 0 = none.
+    //
+    // The identity fields above stay as a RESOLVED CACHE rather than moving to
+    // the product, deliberately. Resolving them through the product on every
+    // read would break foreign tags (a genuine vendor spool has full identity
+    // inline and no local product) and would force a migration of every
+    // existing record. As a cache, everything downstream — the reconcile loop,
+    // the inventory roll-up, the display — needs no changes, and a record with
+    // product == 0 behaves exactly as it did before products existed.
+    //
+    // Products are where edits ORIGINATE: editing one emits a Reconcile per
+    // spool of it, which is the existing mechanism that rewrites tags on next
+    // placement.
+    uint32_t product = 0;
+};
+
+// ── Product (definition, NOT derived) ─────────────────────────────────────────
+// Everything true of every spool of one filament SKU. A different size is a
+// different product, so the identity is OPT's package_uuid (key 1) — deducible
+// from brand_uuid + GTIN, which is per-SKU — and not material_uuid (key 2),
+// which is shared by every size of the same filament.
+//
+// Like UsageRow this survives compaction: products are definitions, so
+// storeCompact() carries them into the rewritten log instead of folding them
+// away. See docs/design/product-instance.md.
+struct ProductRecord {
+    uint32_t id = 0;               // local auto-increment, NVS-backed; never reused
+    char     pkg_uuid[33]   = {};  // OPT key 1 — "" if the tag carried none
+    char     mat_uuid[33]   = {};  // OPT key 2
+    char     brand_uuid[33] = {};  // OPT key 3
+    uint64_t gtin           = 0;   // OPT key 4 — 0 if absent
+    char     vendor[64]     = {};
+    char     material[64]   = {};  // OPT display string, e.g. "PLA Summer Grass"
+    char     abbr[16]       = {};  // e.g. "PLA"
+    uint8_t  rgba[4]        = {};  // a[3]==0 means no colour assigned
+    float    lab[3]         = {};  // measured colour; a product fact, not a spool one
+    bool     has_lab        = false;
+    float    dia = 0, empty_g = 0, nom_g = 0;
+    // True while this product was inferred from a tag and no human has confirmed
+    // it. Provisional products are excluded from tag write-back, so adopting a
+    // spool can never make the station rewrite a vendor's tag from guessed data.
+    bool     provisional = false;
     char     last_ts[25] = {};
     bool     valid = false;
 };
@@ -116,6 +179,38 @@ bool storeBegin();
 // ── Spool-ID counter (NVS, atomic) ────────────────────────────────────────────
 uint32_t storeNextSpoolId();   // read-increment-commit; never reused
 uint32_t storePeekSpoolId();   // next ID without consuming it
+
+// ── Products ──────────────────────────────────────────────────────────────────
+// Write a product definition. id == 0 allocates the next product number and
+// fills it in; a non-zero id overwrites that product (last write wins on
+// replay). Appends a Product event, so it is durable and survives compaction.
+//
+// This is the HUMAN-ORIGINATED path. It is the only thing that may change an
+// existing product, because product edits propagate to every tag of that
+// product — see storeAdoptProduct() for why a tag must never take this path.
+bool storeUpsertProduct(ProductRecord& p);
+
+// Find the product a tag belongs to, by, in order:
+//   1. package_uuid   2. gtin   3. material_uuid + nominal weight
+//   4. normalised (vendor, material, nominal weight)
+// Fill `probe` with whatever the tag carried; unset fields are simply skipped.
+// Returns false if nothing matches. Steps 3-4 are what make adoption converge
+// instead of listing the same filament once per spool.
+bool storeFindProduct(const ProductRecord& probe, ProductRecord& out);
+
+// Resolve a tag to a product, CREATING one (marked provisional) if none matches.
+// Never updates an existing product, even when the tag disagrees with it:
+// product edits propagate to tags, so one odd or damaged tag could otherwise
+// rewrite a whole shelf. `outDiffers` reports a disagreement for a human to
+// adjudicate; nothing is written on that path. Returns the product id, or 0 on
+// failure.
+uint32_t storeAdoptProduct(const ProductRecord& fromTag, bool* outDiffers);
+
+uint32_t storeNextProductId();
+uint32_t storePeekProductId();
+bool     storeGetProduct(uint32_t id, ProductRecord& out);
+size_t   storeProductCount();
+bool     storeProductAt(size_t idx, ProductRecord& out);
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 bool   storeAppendEvent(const StoreEvent& e);   // serialize, append, flush, index
@@ -192,7 +287,8 @@ bool storeImportLogFile(const char* stagingPath);
 // ── Serial test harness (Phase 1) ─────────────────────────────────────────────
 // Handles one command line and returns true if it was a store command:
 //   EV onboard <uuid> <vendor> <material> | EV weigh <uuid> <gross_g>
-//   DUMP spools | DUMP inv | DUMP usage | REBUILD | LOGSTATS | TORN | WIPE
+//   DUMP spools | DUMP inv | DUMP usage | DUMP prod
+//   REBUILD | LOGSTATS | TORN | WIPE
 //   SEED <spools> <events_per_spool>   — bulk-fill for capacity testing
 //   COMPACT                            — force a fold now, ignoring the size
 //                                        threshold (SEED, DUMP usage, COMPACT,
