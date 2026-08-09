@@ -177,7 +177,9 @@ Still to confirm: **Auxiliary write-back on weigh.** The display path never read
 
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 
-Also unvalidated: foreign-tag adoption and local persistence across power cycles.
+**Foreign-tag adoption is validated** (2026-08-08). After `WIPE ALL`, the eSun spool's tag was unknown to the store; the station decoded its Main section, created a record from the tag's own vendor/material/tare rather than a stub, and weighed it — `Spool #1 / eSun / PLA / 813 g remaining / Weight recorded`, with no blank-tag countdown and no onboarding prompt.
+
+Also unvalidated: local persistence across power cycles.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 
