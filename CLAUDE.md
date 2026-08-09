@@ -167,19 +167,23 @@ syncTask also watches the link: a station-mode drop is otherwise silent, and DHC
 
 **The compaction fold is validated** (2026-08-08). `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage` on the bench: 661065 → 332471 bytes, 4020 → 2015 lines, and the rollup **unchanged across the fold** — 4 buckets, 4477.5 g and 995 weighs each, 17910.0 g total, before and after. That is the check that matters: it proves `storeCompact()` replays only the region it discards and measures deltas against the right baseline, so the long-term popularity data survives having its raw events folded away.
 
+**Onboarding form round-trip** (2026-08-08, first tag with the 24-byte aux layout). Onboard form → local record → Main write-back → tag → re-read → display. The material name and remaining weight on that screen both come off the **tag**, not the store: `display_task.cpp` snapshots `gTagMain`, which `nfcTask` fills by decoding the physical tag, and `remaining` is `weight - empty_container_weight` — so the spool profile's tare made the round trip too, not just the name. This is the mechanism behind "edit in the web app, the tag updates itself".
+
+**Foreign-tag adoption** (2026-08-08). After `WIPE ALL` the eSun spool's tag was unknown to the store; the station decoded its Main section, built a record from the tag's own vendor/material/tare rather than an empty stub, and weighed it — `Spool #1 / eSun / PLA / 813 g remaining / Weight recorded`, with no blank-tag countdown and no onboarding prompt.
+
+**Local persistence across power cycles** (2026-08-08). After a power cycle the same spool read back as `Spool #1` from the log instead of re-adopting itself as a new record.
+
 Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per append — LittleFS, one weigh per append in real use, so irrelevant in service); compacting 4020 lines took ~5.5 s under the store lock, which is why syncTask only ever calls it while the scale is idle. The threshold is `STORE_LOG_COMPACT_BYTES` = 900 kB, so a real device compacts well before the log reaches the size used here.
 
 ## Pending (requires hardware)
 
-**The onboarding form round-trip is validated** (2026-08-08, on the first tag formatted with the 24-byte aux layout). Onboard form → local record → Main write-back → tag → re-read → display, showing `Spool #N / PLA / 629 g remaining / Saved locally`. Both of those last two values come off the **tag**, not the store: `display_task.cpp` snapshots `gTagMain`, which `nfcTask` fills by decoding the physical tag, and `remaining` is `weight - empty_container_weight` — so the spool profile's tare made the round trip too, not just the name. That is the mechanism behind "edit in the web app, the tag updates itself".
+**Bring-up is complete.** Every mechanism in the pipeline has now run on hardware — see *Bring-up status* above for what each one proved.
 
-Still to confirm: **Auxiliary write-back on weigh.** The display path never reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map landed. The only witness is serial — the *absence* of `section write FAILED at block 79` on the weigh after onboarding.
+One gap remains, and it is a gap in **observation**, not in function:
+
+- **Auxiliary write-back on weigh has never been directly witnessed.** Nothing on the display or in the web app reads `consumed_weight`, so a correct Present screen says nothing about whether the 8-byte Aux map actually landed. The only evidence either way is serial: the *absence* of `section write FAILED at block …` on a weigh. Closing this properly wants a `DUMP tag` serial command that decodes and prints Main + Aux of whatever is on the scale — useful well beyond this one question.
 
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
-
-**Foreign-tag adoption is validated** (2026-08-08). After `WIPE ALL`, the eSun spool's tag was unknown to the store; the station decoded its Main section, created a record from the tag's own vendor/material/tare rather than a stub, and weighed it — `Spool #1 / eSun / PLA / 813 g remaining / Weight recorded`, with no blank-tag countdown and no onboarding prompt.
-
-Also unvalidated: local persistence across power cycles.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 
