@@ -5,6 +5,8 @@
 #include "api_key.h"
 
 extern volatile bool gTagForceFormat;
+// Task handles, for the STACK command's high-water report (defined in main.cpp).
+extern TaskHandle_t gNfcTask, gScaleTask, gDisplayTask, gSyncTask;
 
 // False until the ADC answers. ZERO/CAL are still reachable over serial
 // while it is missing, and averaging 32 samples from a chip that is not
@@ -165,6 +167,39 @@ static void handleCalRequests(NAU7802& nau) {
 }
 
 // Dispatch one complete command line.
+// Report how close each task has come to overflowing its stack.
+//
+// This project's characteristic failure is a stack overflow, and its symptom is
+// a reboot loop with no useful backtrace — scaleTask blew its canary on the
+// first SEED, and displayTask nearly did on a QR code whose encoder puts its
+// working buffers on the CALLER's stack. Both were found the expensive way.
+// uxTaskGetStackHighWaterMark reports the smallest free margin ever observed,
+// so this turns "is there headroom" into a question with an answer.
+//
+// Exercise the deep paths first — place a spool, DUMP, COMPACT, load the web
+// app — then run STACK. A margin under ~512 bytes is where to worry.
+static void reportStacks() {
+    struct { const char* name; TaskHandle_t h; uint32_t size; } t[] = {
+        { "nfc",     gNfcTask,     6144 },
+        { "scale",   gScaleTask,   8192 },
+        { "display", gDisplayTask, 6144 },
+        { "sync",    gSyncTask,    8192 },
+    };
+    Serial.println("[stack] smallest free margin seen since boot:");
+    for (auto& e : t) {
+        if (!e.h) { Serial.printf("  %-8s (not running)\n", e.name); continue; }
+        // Returns words on some ports and bytes on ESP-IDF; ESP-IDF's is bytes.
+        const uint32_t free_b = uxTaskGetStackHighWaterMark(e.h);
+        Serial.printf("  %-8s %5u B free of %u  (%u%% used)%s\n",
+                      e.name, (unsigned)free_b, (unsigned)e.size,
+                      (unsigned)(100 - (free_b * 100 / e.size)),
+                      free_b < 512 ? "   <-- TIGHT" : "");
+    }
+    Serial.printf("[stack] heap: %u kB free, %u kB largest block\n",
+                  (unsigned)(ESP.getFreeHeap() >> 10),
+                  (unsigned)(ESP.getMaxAllocHeap() >> 10));
+}
+
 static void dispatchCommand(const String& cmd, NAU7802& nau) {
     if (cmd.equalsIgnoreCase("ZERO")) {
         doZero(nau);
@@ -178,6 +213,8 @@ static void dispatchCommand(const String& cmd, NAU7802& nau) {
         gTagForceFormat = true;
         Serial.println("[nfc] TAGFORMAT armed — place the tag (or leave it in "
                        "place and lift/replace it) to reformat it.");
+    } else if (cmd.equalsIgnoreCase("STACK")) {
+        reportStacks();
     } else if (cmd.equalsIgnoreCase("APIKEY")) {
         Serial.printf("[api] key is %s%s\n",
                       apiKeyIsSet() ? "set: " : "NOT set (write endpoints are open)",

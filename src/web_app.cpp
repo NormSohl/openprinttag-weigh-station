@@ -553,6 +553,29 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     String display = matName;
     if (colName.length()) display += " " + colName;
 
+    // Resolve which product these values describe, creating one if this is a
+    // filament we have never stocked. Not provisional: a person typed this.
+    //
+    // Deliberately does NOT update a product that already matches, even though
+    // a human is the source here and would be entitled to. Product edits are
+    // meant to propagate to every spool of that product (one Reconcile each,
+    // which rewrites their tags on next placement) and that propagation is not
+    // built yet — so an update would change the definition while leaving every
+    // other spool's cached copy and tag stale, which is worse than not editing.
+    // Editing a product belongs on a product page, not on one spool's form.
+    ProductRecord prod;
+    strlcpy(prod.vendor,   vendor.c_str(),  sizeof(prod.vendor));
+    strlcpy(prod.material, display.c_str(), sizeof(prod.material));
+    strlcpy(prod.abbr,     haveMat ? m.abbr : "", sizeof(prod.abbr));
+    memcpy(prod.rgba, col.rgba, 4);
+    prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
+    uint32_t pid = 0;
+    {
+        ProductRecord found;
+        if (storeFindProduct(prod, found))      pid = found.id;
+        else if (storeUpsertProduct(prod))      pid = prod.id;
+    }
+
     // 1) Append the identity to the log so indices + inventory reflect it.
     StoreEvent e; e.ev = StoreEv::Reconcile;
     strlcpy(e.uuid, rec.uuid, sizeof(e.uuid));
@@ -563,6 +586,10 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     memcpy(e.rgba, col.rgba, 4);
     e.dia = dia; e.empty_g = empty; e.nom_g = nominal;
     e.needs_ob = false;
+    // Identity events replace the record's whole identity group, so this must
+    // be set explicitly — leaving it at 0 would silently un-assign the product
+    // every time someone edited a spool through this form.
+    e.product = pid ? pid : rec.product;
     storeAppendEvent(e);
 
     // 2) If this spool is on the scale, write the full OPT Main to its tag now.

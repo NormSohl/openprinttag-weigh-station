@@ -88,6 +88,28 @@ static bool recordDiffersFromMain(const SpoolRecord& r, const OptMain& m) {
         || r.nom_g   != m.nominal_netto_full_weight;
 }
 
+// Build a product probe from a tag's Main section: everything the matching
+// ladder can key on, in the order it tries them.
+//
+// The three UUIDs are stored as 32 hex chars to match the store's uuid format;
+// a nil UUID on the tag means "absent" and must stay an EMPTY STRING rather
+// than 32 zeroes, or every tag that carries no package_uuid would match every
+// other one on rung 1.
+static void productFromMain(const OptMain& m, ProductRecord& p) {
+    if (!optUuidIsNil(m.package_uuid))  uuidToHex32(m.package_uuid,  p.pkg_uuid);
+    if (!optUuidIsNil(m.material_uuid)) uuidToHex32(m.material_uuid, p.mat_uuid);
+    if (!optUuidIsNil(m.brand_uuid))    uuidToHex32(m.brand_uuid,    p.brand_uuid);
+    p.gtin = m.gtin;
+    strlcpy(p.vendor,   m.brand_name[0]    ? m.brand_name    : "Unknown", sizeof(p.vendor));
+    strlcpy(p.material, m.material_name[0] ? m.material_name : "Unknown", sizeof(p.material));
+    strlcpy(p.abbr,     m.material_abbreviation, sizeof(p.abbr));
+    memcpy(p.rgba, m.primary_color_rgba, 4);
+    if (m.has_lab) { memcpy(p.lab, m.primary_color_lab, sizeof(p.lab)); p.has_lab = true; }
+    p.dia     = m.filament_diameter;
+    p.empty_g = m.empty_container_weight;
+    p.nom_g   = m.nominal_netto_full_weight;
+}
+
 // Fill an Onboard/Reconcile event's identity fields from a tag's Main section.
 static void identityFromMain(const OptMain& m, StoreEvent& e) {
     strlcpy(e.vendor,   m.brand_name[0]    ? m.brand_name    : "Unknown", sizeof(e.vendor));
@@ -473,10 +495,30 @@ void syncTask(void* param) {
             if (isNilUUID(main.instance_uuid)) generateUUIDv4(main.instance_uuid);
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
+            // Resolve the product this spool is an instance of, creating one
+            // (provisional) if we have never seen this filament. This is what
+            // makes an inventory of four genuine Prusament spools roll up as one
+            // product instead of four identical rows — the second spool finds
+            // the product the first one created.
+            //
+            // Adoption never UPDATES an existing product: a product edit
+            // propagates to every tag of that product, so one odd or damaged tag
+            // could otherwise rewrite a whole shelf. A disagreement is logged for
+            // a human to adjudicate and nothing is written.
+            ProductRecord probe;
+            productFromMain(main, probe);
+            bool differs = false;
+            const uint32_t pid = storeAdoptProduct(probe, &differs);
+            if (differs)
+                Serial.printf("[sync] tag %s disagrees with product #%u "
+                              "(%s / %s) — product left as-is, tag adopted\n",
+                              hex, (unsigned)pid, probe.vendor, probe.material);
+
             StoreEvent e; e.ev = StoreEv::Onboard;
             strlcpy(e.uuid, hex, sizeof(e.uuid));
             identityFromMain(main, e);
             e.needs_ob = false;
+            e.product  = pid;
             e.spool = storeNextSpoolId();
             storeAppendEvent(e);
 

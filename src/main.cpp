@@ -59,6 +59,14 @@ volatile bool gSpoolNeedsOnboarding = false;
 char gWebAddr[48] = {};
 char gApSsid[24]  = {};
 
+// Task handles, kept so the STACK serial command can report each task's
+// high-water mark. Stack overflow has been this project's characteristic
+// failure — scaleTask blew its canary on the first SEED, and the symptom is a
+// reboot loop with no useful backtrace — so "how much headroom is left" needs
+// to be an answerable question rather than something guessed at after the fact.
+TaskHandle_t gNfcTask = nullptr, gScaleTask = nullptr,
+             gDisplayTask = nullptr, gSyncTask = nullptr;
+
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);
 void scaleTask(void* param);
@@ -146,13 +154,13 @@ void setup() {
 
     // Core 1: time-sensitive hardware polling
     bootMark("starting nfcTask (PN5180)");
-    xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(nfcTask,     "nfc",     6144, nullptr, 2, &gNfcTask, 1);
     bootMark("starting scaleTask (NAU7802)");
     // 8192, not 3072: the serial harness runs on this task, and SEED / COMPACT /
     // DUMP call into the store. storeAppendEvent -> FS::open -> lfs_dir_fetchmatch
     // -> esp_flash_read is a deep chain on top of the String and JSON work, and
     // 3072 overflowed the stack canary on the first SEED.
-    xTaskCreatePinnedToCore(scaleTask,   "scale",   8192, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(scaleTask,   "scale",   8192, nullptr, 2, &gScaleTask, 1);
 
     // Core 0: I/O — co-located with the WiFi stack
     bootMark("starting displayTask (TFT)");
@@ -163,9 +171,9 @@ void setup() {
     // That is ~600 bytes of transient on top of the TFT call frames, on a task
     // that used to do nothing deeper than fillRect. scaleTask already cost us
     // one canary panic for exactly this kind of hidden depth.
-    xTaskCreatePinnedToCore(displayTask, "display", 6144, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(displayTask, "display", 6144, nullptr, 1, &gDisplayTask, 0);
     bootMark("starting syncTask (WiFi + web)");
-    xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, &gSyncTask, 0);
 
     bootMark("setup() complete — tasks running");
 }

@@ -7,13 +7,18 @@ Status: **store layer built** (2026-08-09), nothing wired to it yet.
 | Stop destroying unmodelled tag fields | **done** — `OptMain.extra` passthrough |
 | Read OPT identity keys 1–4 | **done** — `package_uuid` / `material_uuid` / `brand_uuid` / `gtin` |
 | Product entity, index, event type, compaction survival, matching | **done** — `ProductRecord`, `StoreEv::Product`, `storeFindProduct()` / `storeAdoptProduct()` |
-| Onboarding ("another spool of X" vs "a new product") | not started |
+| Foreign-tag adoption resolves a product | **done** — `syncTask`, provisional |
+| Web onboard/edit form resolves a product | **done** — not provisional |
+| Onboarding UI ("another spool of X" vs "a new product") | not started |
+| A product edit propagating to its spools | not started |
 | Reorder against products | not started |
-| Web pages | not started |
+| Product web pages | not started |
 
-Nothing calls `storeAdoptProduct()` yet, so every spool still has
-`product == 0` and behaves exactly as it did — which is the property that makes
-each step independently shippable.
+Both write paths **create** products and never **update** them — see *Authority*
+below. Until propagation is built, an update would change the definition while
+leaving every other spool's cached copy and tag stale, so even the human path
+declines it. `product == 0` remains valid throughout, which is what makes each
+remaining step independently shippable.
 
 ## The problem
 
