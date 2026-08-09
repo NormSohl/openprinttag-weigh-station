@@ -190,6 +190,18 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 `DUMP TAG` prints the decoded Meta/Main/Aux of whatever nfcTask last read, plus `write_protection` and whether the colour is assigned — none of which appears anywhere else. Note Meta offsets are **payload-relative**: `aux@246` with the payload starting at 42 is absolute 288, i.e. the 24-byte layout.
 
+### Due on the bench (2026-08-08)
+
+Three code commits have landed since the last build that was flashed and run (`dafb4d5`, the one that validated Aux write-back). **None of them is compile-verified** — the PlatformIO registry is unreachable from the sandbox, so only a real `pio run` proves them:
+
+| commit | touches | what to look for |
+|---|---|---|
+| `be622c4` | `config_store.cpp` | catalog colours load with alpha 255; a 3-element `rgba` no longer reads as unassigned |
+| `b40ccb1` | `nfc_task.cpp`, `opt_tag.*` | normal weighs still write Aux; an old-layout tag now logs `section write REFUSED` instead of half-writing |
+| `ffc5b9f` | `opt_tag.*`, `scale_task.cpp` | `DUMP TAG` shows `lab NOT MEASURED`; everything else on that dump unchanged |
+
+**The compaction check is DUE.** `applyInto_` changed twice on 2026-08-08 — the consumption rollup now keys on `abbr` rather than `material`, and `rebuildInventory_` carries `rgba` — so the fold needs re-verifying against the figures below. This is the one check where a silent regression cannot be recovered afterwards: once raw events are folded away, the `Usage` rows are the only evidence left.
+
 To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
