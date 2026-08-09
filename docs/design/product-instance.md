@@ -40,7 +40,7 @@ four-level identity:
 |---|---|---|---|
 | 3 | `brand_uuid` | brand | ✗ (name only) |
 | 2 | `material_uuid` | **the product** | ✗ |
-| 1 | `package_uuid` | the SKU | ✗ — *not modelled; a different size is a different product* |
+| 1 | `package_uuid` | the SKU | ✗ — **this is our Product**, since a different size is a different product |
 | 0 | `instance_uuid` | **this spool** | ✓ as `SpoolRecord.uuid` |
 
 And the spec gives a derivation rule that makes this adoptable without vendor
@@ -51,6 +51,48 @@ cooperation:
 
 So a product identity can be computed from data we already hold. No new tag
 field, no dependency on vendors writing UUIDs.
+
+## Prerequisite: stop destroying fields we do not model
+
+**This blocks the work above, and it is a bug today.**
+
+`optEncodeMain()` writes **16 of the spec's 61 Main keys**. Rewriting Main on a
+compliant vendor tag therefore *destroys* up to 44 fields the vendor wrote —
+GTIN, all four UUIDs, manufactured and expiry dates, density, drying temperature
+and time, chamber temperatures, viscosities, certifications, RAL reference,
+secondary colours. Silently, with no error, and irreversibly.
+
+It is latent only because an adopted foreign tag's record is built *from* the
+tag, so the two agree and the reconcile loop never fires. **Products make
+rewrites routine** — a product edit sets `gWriteMainPending` for every spool of
+it — so this stops being latent exactly when the work above lands.
+
+Three options:
+
+1. **Never rewrite Main on a tag we did not originate.** Safe, and gives up
+   "edit the product, every tag updates itself" for precisely the spools most
+   likely to carry rich data.
+2. **Preserve unmodelled keys verbatim.** The decoder already walks the Main map
+   key by key; record the byte span of each *unrecognised* key/value pair and
+   splice those bytes back in on encode, after our own keys and before the map
+   closes. No duplication is possible, because a span is only kept for a key the
+   switch did not claim.
+3. Model all 61 keys. Not realistic, and it would only move the problem to key
+   62.
+
+**(2).** It is the only one that keeps both the feature and the data, and the
+whole point of strict OPT compliance is that another reader can trust what is on
+the tag.
+
+Shape of it: a fixed `extra[]` buffer plus length on `OptMain`, sized against
+the largest Main region the layout can produce so it cannot realistically
+overflow. `tools/opt/optfuzz` can prove the round-trip — build a tag carrying
+keys we do not model, decode, re-encode, and assert they survive byte for byte.
+
+Open: what to do if the extras genuinely do not fit. Dropping them is the data
+loss this exists to prevent; refusing the write blocks a legitimate edit. Sizing
+the buffer from the region makes the case unreachable, which is the better
+answer than choosing between two bad ones.
 
 ## The four entities
 
@@ -90,14 +132,34 @@ being renamed, and `brand|material_name` does not.
 
 **Matching** — when a tag arrives, find its product by, in order:
 
-1. `material_uuid` from the tag, if the vendor wrote one;
-2. normalised (`brand_name`, `material_name`) — the spec's own derivation, case-
-   and whitespace-insensitive;
-3. no match → create one.
+1. **`package_uuid`** (key 1), if the vendor wrote one;
+2. **`gtin`** (key 4), if present;
+3. `material_uuid` (key 2) **plus nominal full weight** (key 16);
+4. normalised (`brand_name`, `material_name`, nominal full weight);
+5. no match → create one.
 
-Step 2 is what makes adoption converge instead of multiply. Without it the
-second Prusament PETG Orange creates a second product and the inventory lists
-it twice.
+**`package_uuid` first, not `material_uuid`.** The spec distinguishes them
+precisely along the line this design draws:
+
+> key 2 `material_uuid` — *"identifier of the **material**"*, deducible from
+> `brand_uuid` + `material_name`
+> key 1 `package_uuid` — *"identifier of the **package (product)**"*, deducible
+> from `brand_uuid` + **`gtin`**
+
+GTIN is per-SKU: a 1 kg and a 5 kg of the same filament carry different GTINs
+and the same `material_name`. Since **a different size is a different product**
+here, `package_uuid` *is* our product identity and `material_uuid` is one level
+too coarse — matching on it alone would merge the sizes we just decided to keep
+apart. Nominal weight is the fallback that recovers the distinction when a tag
+carries neither identifier.
+
+Steps 3–4 are what make adoption converge rather than multiply: without them the
+second Prusament PETG Orange creates a second product and the inventory lists it
+twice.
+
+**None of these four keys is read today** — `OptMain` carries neither UUID nor
+GTIN. Adding them is a prerequisite for this work, and cheap: four more fields
+on a struct that already round-trips sixteen.
 
 ## Storage: spool records stay resolved snapshots
 
@@ -215,10 +277,11 @@ levels: Brand → Product → Profile → Instance.
 
 > **Consequence for identity.** If size distinguishes products, the match key
 > cannot be (`brand_name`, `material_name`) alone — a 1 kg and a 5 kg of the
-> same filament often carry the identical `material_name`, and would merge into
-> one product. Add **nominal full weight** to the key: match on (`brand_name`,
-> `material_name`, `nominal_netto_full_weight`). It comes off the tag (key 16),
-> so foreign-tag adoption still resolves without guessing.
+> same filament often carry the identical `material_name` and would merge. The
+> spec already draws this line: `package_uuid` (key 1) identifies the *package*
+> and is deducible from `brand_uuid` + GTIN, which is per-SKU. So
+> `package_uuid` is our product identity; nominal full weight is the fallback
+> when a tag carries no identifier. See *Identity* above.
 
 **2. No per-instance tare override.** Tare lives on the Profile, reached through
 the Product. An Instance is just `instance_uuid`, spool number, remaining/used
