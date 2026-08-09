@@ -31,6 +31,7 @@ extern volatile bool        gTagForceFormat;
 static uint8_t sRawBuf[512];
 static size_t  sRawLen        = 0;
 static size_t  sPayloadOffset = SIZE_MAX;  // byte offset of NDEF payload in sRawBuf
+static size_t  sPayloadLen    = 0;         // ...and how many bytes of it are formatted
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,33 @@ static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
                          const uint8_t* cborData, size_t cborLen) {
     if (sPayloadOffset == SIZE_MAX) return false;
     size_t absStart = sPayloadOffset + sectionOffset;
-    if (absStart + cborLen > sRawLen) return false;
+
+    // Bound by what is FORMATTED, not by how big the tag is.
+    //
+    // sRawLen is the physical size getSystemInfo reports — 320 B for an 80x4
+    // SLIX2. The formatted layout can be shorter: the block-79 workaround
+    // reformats at 79 blocks, so the NDEF payload ends at 314 while the tag runs
+    // to 320. Checking only against sRawLen let a write start inside the layout
+    // and finish outside it, in the very block that refuses writes. Block 78
+    // took its half, block 79 rejected the rest, and the tag was left carrying a
+    // CBOR map that opens and never closes — the reboot loop of 2026-08-08.
+    //
+    // The new Aux layout keeps writes clear of the final block, so this is now a
+    // backstop rather than the primary defence. It still matters for a tag
+    // formatted by an older build, or by anyone else: refusing cleanly leaves
+    // the tag readable, whereas a partial write destroys it.
+    const size_t formattedEnd = (sPayloadLen > 0)
+                              ? sPayloadOffset + sPayloadLen
+                              : sRawLen;          // extent unknown: fall back
+    if (absStart + cborLen > formattedEnd) {
+        Serial.printf("[nfc] section write REFUSED: %u..%u would run past the "
+                      "formatted payload (ends %u) — writing anyway would leave "
+                      "a half-written section\n",
+                      (unsigned)absStart, (unsigned)(absStart + cborLen),
+                      (unsigned)formattedEnd);
+        return false;
+    }
+    if (absStart + cborLen > sRawLen) return false;   // never past the buffer
 
     memcpy(sRawBuf + absStart, cborData, cborLen);
 
@@ -357,7 +384,10 @@ void nfcTask(void* param) {
                                       : "no NDEF magic — foreign or corrupt content.");
                     setState(DeviceState::TagReadError);
                 } else {
-                    sPayloadOffset = optPayloadOffset(sRawBuf, sRawLen);
+                    if (!optPayloadExtent(sRawBuf, sRawLen, &sPayloadOffset, &sPayloadLen)) {
+                        sPayloadOffset = SIZE_MAX;
+                        sPayloadLen    = 0;
+                    }
                     xSemaphoreTake(gTagMutex, portMAX_DELAY);
                     memcpy(gTagUid, uid, 8);
                     gTagMeta = meta;
@@ -503,7 +533,10 @@ void nfcTask(void* param) {
             // shorter tag, and sRawLen is what bounds those writes.
             memcpy(sRawBuf, initBuf, (size_t)usable * blockSize);
             sRawLen        = (size_t)usable * blockSize;
-            sPayloadOffset = payloadOff;
+            if (!optPayloadExtent(sRawBuf, sRawLen, &sPayloadOffset, &sPayloadLen)) {
+                sPayloadOffset = payloadOff;   // fall back; the layout is ours
+                sPayloadLen    = 0;
+            }
 
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             memcpy(gTagUid, uid, 8);
@@ -543,6 +576,7 @@ void nfcTask(void* param) {
                 missCount = 0;
                 sRawLen = 0;
                 sPayloadOffset = SIZE_MAX;
+                sPayloadLen    = 0;
                 setState(DeviceState::Idle);
             }
             vTaskDelay(pdMS_TO_TICKS(200));

@@ -200,7 +200,7 @@ Now `AUX_REGION_SIZE` is **24 bytes** (headroom for the aux fields OPT defines b
 
 `tools/opt/optfuzz` asserts that table on every run.
 
-**Tags formatted before this change carry the old layout** and must be reformatted with `TAGFORMAT`. They still *decode* (Meta on the tag declares its own offsets), but Aux write-back to them stays broken.
+**Tags formatted before this change carry the old layout** and must be reformatted with `TAGFORMAT`. They still *decode* (Meta on the tag declares its own offsets), but Aux write-back to them is now **refused cleanly** rather than half-written: `writeSection()` bounds writes by the formatted payload extent (`optPayloadExtent()`), not by the physical tag size. Those differ whenever the block-79 workaround has shortened the layout — 314 vs 320 on an 80×4 — and it was writing into that gap, into the block that refuses, that left the opens-and-never-closes CBOR map behind.
 
 Known tradeoffs, accepted:
 - `PN5180::reset()` waits on the chip with an unbounded loop **while holding the bus**, so a reader that stops answering stalls `displayTask` too. Fine while the reader is reliable; the fix, if ever needed, is a bounded wait in a vendored copy of the library.

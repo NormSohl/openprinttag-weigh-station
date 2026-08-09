@@ -447,6 +447,16 @@ size_t optPayloadOffset(const uint8_t* tagBytes, size_t len) {
     return (size_t)(payload - tagBytes);
 }
 
+bool optPayloadExtent(const uint8_t* tagBytes, size_t len,
+                      size_t* outOffset, size_t* outLength) {
+    const uint8_t* payload;
+    size_t payloadLen;
+    if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return false;
+    if (outOffset) *outOffset = (size_t)(payload - tagBytes);
+    if (outLength) *outLength = payloadLen;
+    return true;
+}
+
 size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
                         uint8_t* outBuf, size_t outBufLen, OptMeta* outMeta) {
     const size_t tagSize = (size_t)numBlocks * blockSize;

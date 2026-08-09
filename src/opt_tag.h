@@ -87,6 +87,16 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen);
 // Add OptMeta.main_region_offset / aux_region_offset to this to get absolute write positions.
 size_t optPayloadOffset(const uint8_t* tagBytes, size_t len);
 
+// Offset AND length of the OPT CBOR payload. Returns false if no OPT record.
+//
+// The length matters as much as the offset, because "how much of this tag is
+// FORMATTED" is not the same as "how big this tag is". A tag formatted one block
+// short — which is what the block-79 workaround produces — has a payload that
+// ends before the physical end, and a write bounded only by the tag size can
+// run past the formatted region into a block that refuses it. See writeSection().
+bool optPayloadExtent(const uint8_t* tagBytes, size_t len,
+                      size_t* outOffset, size_t* outLength);
+
 // Build a complete initialised (data-empty) OPT tag byte array for a blank tag.
 // outBuf must be at least numBlocks * blockSize bytes.
 // On success: outMeta is populated with region offsets; returns the NDEF payload
