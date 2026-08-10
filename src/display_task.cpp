@@ -21,6 +21,7 @@ extern volatile bool        gSpoolNeedsOnboarding;
 extern SemaphoreHandle_t    gSpiMutex;
 extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
+extern volatile int         gPortalSecsLeft;
 extern volatile bool        gScaleCalibrated;
 
 // TFT_eSPI configured via -D flags in platformio.ini (ILI9488, 480x320).
@@ -410,6 +411,9 @@ void displayTask(void* param) {
                 row(3, "WeighStation-Setup", TFT_CYAN);
                 row(5, "Then open browser to", TFT_DARKGREY);
                 row(6, "192.168.4.1", TFT_DARKGREY);
+                // Row 8 carries the countdown, written by the dynamic block
+                // below — this screen is a window that closes, and until it
+                // said so the only cue was the screen changing on its own.
                 pixelColor = pixel.Color(0, 0, 60);
                 break;
 
@@ -449,6 +453,13 @@ void displayTask(void* param) {
                     row(4, "Join WiFi:", TFT_DARKGREY);
                     rowf(5, TFT_CYAN, "%s", gApSsid);
                     rowf(6, TFT_CYAN, "http://%s", gWebAddr);
+                    // The way back to network setup. Reaching this screen means
+                    // the setup window has already closed, and without this the
+                    // only route onward is knowing the /reset URL by heart —
+                    // which is exactly how a unit ends up stranded on its own
+                    // AP in a space whose WiFi it was carried there to join.
+                    row(7, "Change network:", TFT_DARKGREY);
+                    rowf(8, TFT_CYAN, "%s/reset", gWebAddr);
                     // Only useful after joining the AP, but that is exactly when
                     // someone is standing here squinting at an IP address.
                     char url[64];
@@ -616,6 +627,22 @@ void displayTask(void* param) {
             rendered = true;
             pixel.setPixelColor(0, pixelColor);
             pixel.show();
+        }
+
+        // ── Dynamic: how long the setup window has left ───────────────────────
+        // One row, rewritten only when the second changes. row() clears its own
+        // strip first, so this needs no cls() — a full redraw once a second
+        // would flicker and cost ~840 SPI transactions each time.
+        if (state == DeviceState::WiFiSetupMode) {
+            const int secs = gPortalSecsLeft;
+            if (secs != lastCount) {
+                lastCount = secs;
+                spiBusTakeTft();
+                if (secs >= 0) rowf(8, tft.color565(220, 140, 0),
+                                    "Closes in %d:%02d", secs / 60, secs % 60);
+                else           row(8, "", TFT_BLACK);
+                spiBusGive();
+            }
         }
 
         // ── Dynamic: AwaitingFormatConfirm countdown + NeoPixel blink ─────────

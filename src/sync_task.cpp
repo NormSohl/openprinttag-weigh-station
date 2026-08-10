@@ -23,6 +23,7 @@ extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
+extern volatile int         gPortalSecsLeft;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -199,13 +200,24 @@ static bool runConfigPortal(WiFiManager& wm) {
         if (now - lastClient >= idleMs) {
             Serial.printf("[wifi] portal: idle %u s with no client — giving up\n",
                           (unsigned)(idleMs / 1000));
+            gPortalSecsLeft = -1;
             return false;
         }
         if (now - start >= maxMs) {
             Serial.printf("[wifi] portal: hit the %u s cap — giving up\n",
                           (unsigned)(maxMs / 1000));
+            gPortalSecsLeft = -1;
             return false;
         }
+
+        // Publish whichever deadline is actually governing, so the screen shows
+        // the one that will fire: the idle timer until somebody associates,
+        // then the absolute cap, which never restarts.
+        const uint32_t leftMs = sawClient && WiFi.softAPgetStationNum() > 0
+                                  ? (maxMs  - (now - start))
+                                  : (idleMs - (now - lastClient));
+        gPortalSecsLeft = (int)(leftMs / 1000);
+
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

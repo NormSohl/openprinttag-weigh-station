@@ -59,6 +59,15 @@ volatile bool gSpoolNeedsOnboarding = false;
 char gWebAddr[48] = {};
 char gApSsid[24]  = {};
 
+// Seconds left before the captive portal gives up; -1 when no portal is running.
+//
+// The portal is a TIMED window and nothing said so. Carried to a new location,
+// the unit opened it, waited two minutes with nobody looking, closed it, and
+// fell back to its own AP — which looks from the outside like it simply never
+// offered to be configured. Written by syncTask's portal loop, shown by
+// displayTask.
+volatile int gPortalSecsLeft = -1;
+
 // Task handles, kept so the STACK serial command can report each task's
 // high-water mark. Stack overflow has been this project's characteristic
 // failure — scaleTask blew its canary on the first SEED, and the symptom is a

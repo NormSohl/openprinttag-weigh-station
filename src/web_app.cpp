@@ -1127,6 +1127,31 @@ static void handleConfig(AsyncWebServerRequest* req) {
     configTableForm(p, "Colors",         "colors");
     configTableForm(p, "Stock items",    "stock-items");
 
+    // Network. Nothing in the app offered this before — /reset existed but was
+    // reachable only by typing the URL, so a station that had fallen back to
+    // its own AP (the setup window closes after WIFI_PORTAL_TIMEOUT_SEC with
+    // nobody connected) looked from the outside like it had no way to be put on
+    // a network at all. Which is what happened the first time it was carried to
+    // the lab.
+    p += "<h3>Network</h3><div class='card'>";
+    if (gApSsid[0])
+        p += "<p><b class='ob'>Not on a network.</b> This page is being served "
+             "from the station's own access point <b>" + esc(gApSsid) + "</b>, so "
+             "nobody else can reach it and <code>weighstation.local</code> will "
+             "not resolve.</p>";
+    else
+        p += "<p>Connected to <b>" + esc(WiFi.SSID().c_str()) + "</b> as <b>"
+           + WiFi.localIP().toString() + "</b>.</p>";
+    p += "<p class='muted'>Choosing a network clears the stored credentials and "
+         "reboots into the setup portal. Join <b>WeighStation-Setup</b> from a "
+         "phone within " + String(WIFI_PORTAL_TIMEOUT_SEC) + " seconds of the "
+         "reboot &mdash; once you are connected the timer stops, so there is no "
+         "rush after that. The station is 2.4 GHz only and cannot join "
+         "WPA2-Enterprise networks.</p>";
+    p += "<form method='POST' action='/reset'>"
+         "<button type='submit' class='sec'>Choose a WiFi network&hellip;</button>"
+         "</form></div>";
+
     p += "<h3>API access</h3>";
     if (apiKeyIsSet())
         p += "<div class='card'><p>An API key <b>is set</b>. Endpoints that change "
