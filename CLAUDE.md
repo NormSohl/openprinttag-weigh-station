@@ -217,7 +217,33 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 `DUMP TAG` prints the decoded Meta/Main/Aux of whatever nfcTask last read, plus `write_protection` and whether the colour is assigned — none of which appears anywhere else. Note Meta offsets are **payload-relative**: `aux@246` with the payload starting at 42 is absolute 288, i.e. the 24-byte layout.
 
-### Due on the bench (2026-08-10)
+### Verified on hardware (2026-08-09, build `2bcc035`)
+
+Steps 1-5 of the checklist below all passed. What each one proved:
+
+- **The compaction fold.** `WIPE ALL` -> `SEED 20 200` -> `COMPACT`: 659436 -> 332642 bytes, 4020 -> 2015 lines, and the rollup **identical either side** — 4 buckets, 4477.5 g and 995 weighs each, 17910.0 g total. Byte-for-byte the same as `tools/store/run.sh` produces on the host, which is a useful cross-check on the shim.
+- **Foreign-tag adoption.** The eSun spool built product #1 from its own Main section (eSun / PLA / 1.75 mm / tare 200 g / nominal 1000 g / `#8FD8A0`), marked `[provisional]`. Lifting and replacing it left the product **unchanged** — re-placement takes the known-spool path and does not fork a product.
+- **Both onboarding paths.** `/onboard` led with "another spool of X", detail fields hidden; selecting "a new product" revealed them. Submitting the product path inherited every field onto the spool.
+- **Product edit propagation, end to end.** `/product?id=1` named the spool it would touch *before* saving. Changing name, abbreviation, colour and tare then: cleared `provisional`, updated the spool record, and **rewrote the physical tag** — `DUMP TAG` showed `name "PETG Transparent Blue"`, `abbr "PETG"`, `colour 1221f8`, `empty 205.0 g`. That is the whole point of the product model, working on real hardware.
+- **Reorder** rendered the "Matched by" column, and the `mailto:` link was well-formed enough for the browser to offer a handler.
+
+**Still outstanding from that session:**
+
+- **`STACK` was not captured** — the monitor was reconnected, which rebooted the board and reset every high-water mark. Run it after normal use, not after a fresh boot. Note it reports only the four project tasks: **the web handlers run on ESPAsyncWebServer's own `async_tcp` task, which `STACK` does not measure**, so a stack problem in `/reorder` or `/products` would surface as a crash rather than a number.
+- **The clock is never set, so every event is stamped 1970.** See *The clock* below.
+
+### The clock — nothing sets it, and the rollup depends on it
+
+There is no `configTime()`, no SNTP, nowhere in `src/`. `storeNowIso()` formats whatever `time(nullptr)` returns, which on a fresh boot is seconds since the epoch — so every log line is stamped `1970-01-01T00:xx:xxZ` and `periodOf_()` buckets all consumption into a single permanent `1970-01` row.
+
+That defeats a first-class requirement: grams per **month** per vendor+material. The totals are right and the fold preserves them exactly; only the period is wrong, and it is wrong for every row equally.
+
+Two things to settle before fixing it, because neither is obvious:
+
+- **The lab network may not route to an NTP server.** The device needs no internet for anything else, so a fix that only works with outbound UDP 123 leaves the requirement half-met. Whatever is chosen has to degrade honestly — an event stamped with a clock that was never set must be distinguishable from one that was.
+- **Existing 1970 rows cannot be repaired.** They were never attributable to a real month. Whatever lands should leave them alone rather than silently relabelling them.
+
+### Due on the bench (2026-08-10)### Due on the bench (2026-08-10)
 
 **Nothing since `dafb4d5` has been flashed** — that is the build that validated Aux write-back, and everything after it is source-only. The PlatformIO registry is unreachable from the Claude Code sandbox, so `pio run` is the first real compile. Expect to fix compile errors before any of this runs; that is the expected state, not a surprise.
 
