@@ -204,13 +204,16 @@ static String colorJson(const uint8_t rgba[4]) {
 // mail client shows it literally. Newlines matter most here: the reorder body
 // is nothing but newlines, and a raw one truncates the whole URL.
 static String urlEnc(const String& s) {
-    static const char* HEX = "0123456789ABCDEF";
+    // NOT `HEX`: Arduino's Print.h does `#define HEX 16`, so that name expands
+    // to a numeric constant here and the declaration fails to parse. DEC, OCT
+    // and BIN are the same. Anything named after a print base needs a prefix.
+    static const char* kHexDigits = "0123456789ABCDEF";
     String o;
     o.reserve(s.length() + 16);
     for (size_t i = 0; i < s.length(); i++) {
         const unsigned char c = (unsigned char)s[i];
         if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
-        else { o += '%'; o += HEX[c >> 4]; o += HEX[c & 0x0F]; }
+        else { o += '%'; o += kHexDigits[c >> 4]; o += kHexDigits[c & 0x0F]; }
     }
     return o;
 }
