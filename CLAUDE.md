@@ -232,9 +232,10 @@ Run in this order — each step's failure mode is cheapest to diagnose before th
 - `DUMP prod` must also match. Products are carried forward, not folded away, so a product that vanishes means `storeCompact()` stopped emitting them.
 - **This is the one check where a silent regression cannot be recovered afterwards.** Once raw events are folded away the `Usage` rows are the only evidence left. If the totals move, deltas are being measured against the wrong baseline — read *Consumption rollup* before touching anything.
 
-**2. Foreign-tag adoption converging.** `WIPE ALL`, place the eSun spool, then lift and replace it.
-- First placement: a spool record *and* product #1, marked `[provisional]` in `DUMP prod`.
-- Second placement: **still product #1 with 2 spools** — not #2. A second product here means the matching ladder missed, and `/products` is where it shows.
+**2. Foreign-tag adoption.** `WIPE ALL`, place the eSun spool, `DUMP prod`, then lift and replace it and `DUMP prod` again.
+- First placement: a spool record *and* product #1, marked `[provisional]`, `1 spool`.
+- Second placement: **unchanged** — still product #1, still `1 spool`. Lifting and replacing the same physical spool re-reads the same `instance_uuid`, so it takes the known-spool path, not adoption. What this proves is that re-placement does not fork a product; it is not the convergence test.
+- **Convergence needs a SECOND tagged spool of the same filament** — a different `instance_uuid`, same vendor/material/nominal. That one must land on product #1 with `2 spools`, not create #2. A second product means the matching ladder missed, and `/products` is where it shows. Without a second physical spool this can only be checked via `tools/store/run.sh --products`, which does exactly this and passes.
 
 **3. The onboarding paths.** `/onboard` should offer "another spool of X" with the detail fields hidden. Pick the product → the new spool inherits vendor, filament, colour, tare and nominal, and `DUMP prod` shows the spool count rise with no new product. Then onboard one as "a new product" and confirm the full form still works.
 
