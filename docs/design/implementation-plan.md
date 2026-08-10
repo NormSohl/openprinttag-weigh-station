@@ -4,8 +4,8 @@ Moving `docs/design/sd-local-ecosystem.md` from design to code. This is the
 sequencing/scoping plan: phases, dependencies, testable milestones, and the
 decisions to lock before/while building.
 
-Status: **scope** — nothing built yet. Target branch:
-`redesign/sd-local-ecosystem`.
+Status: **complete** — see the Status section below for what closed differently
+from how it was written here. Kept as the record of what was planned and why.
 
 ## Approach
 
@@ -38,6 +38,34 @@ splits into:
 Spoolman calls to `store`; `display_task.cpp` minor (idle address, local
 spool ID).
 
+## Status (2026-08-10): **all seven phases are done and validated on hardware**
+
+Every phase below is built, and every mechanism has run on the board — see
+*Bring-up status* in `CLAUDE.md` for what each one proved. Three things closed
+differently from how they were written, and are recorded as such rather than
+quietly ticked off:
+
+- **Phase 0's SD gate was closed by REMOVAL, not by completion.** The S3 has two
+  general-purpose SPI peripherals and both are taken (PN5180 on SPI2, TFT on
+  SPI3), so the card never had a host. Storage is internal flash only.
+- **Phase 6's SD half went with it.** The host export/import path is built and
+  verified; what actually bounds storage growth is `storeCompact()`, which was
+  not in the original plan.
+- **The `mailto:` link on `/reorder` is not built.** CSV download is. Nothing
+  else in the plan is outstanding.
+
+Backlog **B1** (per-spool weigh history, CSV, sparkline) was built as part of
+Phase 4's spool detail page — it is no longer backlog. **B2** (3dfilamentprofiles
+import) is still open.
+
+Work continuing *on top of* this redesign — the product/instance data model —
+is a separate design: `product-instance.md`. It is not part of these phases.
+
+**Caveat on "done":** commits since `dafb4d5` are source-complete but have not
+been flashed. The PlatformIO registry is unreachable from the Claude Code
+sandbox, so only a real `pio run` compiles them. See *Due on the bench* in
+`CLAUDE.md`.
+
 ## Phases
 
 ### Phase 0 — Scaffolding & hardware gate
@@ -46,10 +74,10 @@ spool ID).
   LittleFS (`spiffs` label) + nvs/coredump. Layout validated (contiguous,
   ends at 0x400000). *Verified 4 MB / 2 MB quad PSRAM with `esptool flash_id`.*
 - ✅ Build-time decisions locked (see Decisions section).
-- ☐ **Wire + bring up the SD** on the ESP32-S3's second SPI host; read/write
-  a test file. *(the remaining hardware gate)*
-- **Milestone:** board mounts LittleFS (custom partition) and reads/writes
-  an SD file.
+- ~~**Wire + bring up the SD** on the ESP32-S3's second SPI host.~~ **REMOVED** —
+  there is no third SPI peripheral for it. See the Status note above.
+- **Milestone:** board mounts LittleFS (custom partition). *(The SD half of
+  this milestone is void — see above.)*
 
 ### Phase 1 — `store` core (headless)
 - NVS monotonic spool-ID counter.
@@ -91,7 +119,7 @@ spool ID).
 - **Milestone:** a low stock item appears on `/reorder`; CSV downloads.
   **Third gap closed.**
 
-### Phase 6 — Backup & restore  *(implemented — pending on-card validation)*
+### Phase 6 — Backup & restore  *(host path implemented and verified; SD path removed)*
 - SD snapshot: stage → CRC-verify → promote by rename → dated history,
   with card-full oldest-first reclaim. — **REMOVED.** The S3 has no third SPI
   peripheral (PN5180 has SPI2, TFT has SPI3), so the card never had a host.
@@ -99,8 +127,8 @@ spool ID).
   (`storeCompact()`), which is what actually bounds storage growth.
 - `GET /export` (host download), `POST /import`, `POST /restore` (SD), plus
   idle auto-snapshot and web controls on `/backup`.
-- **Milestone:** snapshot to SD, wipe LittleFS, restore from SD **and** from
-  a host-uploaded bundle. *(host path verified; SD path awaits a real card.)*
+- **Milestone:** wipe LittleFS, restore from a host-uploaded bundle. *(Verified.
+  The SD half is void.)*
 
 ### Phase 7 — Display & polish
 - Idle screen shows the web-UI address (+ optional QR); local spool ID;
@@ -149,20 +177,19 @@ These resolve the corresponding open questions in `sd-local-ecosystem.md`
 Spoolman, resistive touch, physical keyboard, SMTP, vendor/API ordering,
 FRAM. See `sd-local-ecosystem.md`.
 
-## Backlog — post-bringup (Phases 2–7 done; these come after first flash)
+## Backlog — post-bringup
 
-Not blockers for board bring-up. Ordered by likely value.
+Ordered by likely value. B1 is done; B2 is what is left.
 
-### B1 — Per-spool usage history / analytics view
+### ~~B1~~ — Per-spool usage history / analytics view — **BUILT**
 The append-only event log **already records** the raw data: every weigh
 session appends one `weigh` line (`ts`, `gross_g`, `remaining_g`, `used_g`)
 and it is never overwritten, so the time series accrues automatically from
 first flash. Nothing on the tag is involved — the tag carries only current
 used/remaining; history lives in the log. Missing piece is the **read side**:
-- `GET /spool/<id>` — filtered log view: the weigh series for one spool
-  (was sketched in Phase 4, not yet implemented).
-- CSV export of the series for spreadsheet analytics.
-- Optional: an on-device remaining-over-time sparkline.
+- ✅ `GET /spool?id=<n>` — the weigh series for one spool.
+- ✅ CSV export of the series (`/spool?id=<n>&format=csv`).
+- ✅ Remaining-over-time sparkline, on the spool detail page.
 Build cost is a store query that streams the log filtering by spool/uuid,
 plus a web view. Because the data is already captured, deferring this loses
 no history.
