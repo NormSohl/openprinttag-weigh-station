@@ -835,7 +835,12 @@ static void reconcileIdCounter_() {
     // logs "nvs_open failed: NOT_FOUND" on every fresh device; read-write
     // creates it silently and costs one write, once.
     Preferences p;
-    p.begin("store", false);
+    // begin() returning false means every read below silently yields its
+    // default and every write silently vanishes — which looks exactly like a
+    // counter that will not persist. Unchecked, that is invisible.
+    if (!p.begin("store", false))
+        Serial.println("[store] NVS namespace \"store\" FAILED to open — the "
+                       "spool-ID counter cannot persist this boot");
     // Never go backwards: if NVS is ahead of the log (IDs issued to records
     // since deleted) it stays ahead, so those numbers are not handed out twice.
     const uint32_t cur  = p.getUInt("counter", 1);
@@ -858,6 +863,32 @@ static void reconcileIdCounter_() {
     if (pwant > pcur) { p.putUInt("pcounter", pwant); sNextProdId = pwant; }
     else              { sNextProdId = pcur; }
     p.end();
+
+    // Read the counter back through a FRESH handle.
+    //
+    // The "advanced to #N" line above should appear once and then never again
+    // for an unchanged log — the write is what makes cur == want next boot. It
+    // has been observed on every boot of a device whose log did not change,
+    // which means either the write is not landing or NVS is not holding it.
+    // A fresh handle is required to tell: the open handle caches, so reading
+    // back through `p` would report the value we just set either way.
+    //
+    // Worth knowing rather than tolerating. Today the log always wins, so no
+    // duplicate can be issued — but a counter that resets to 1 while a restored
+    // backup still contains #1 would hand the same number out twice, and the
+    // number IS the lookup key someone shouts across the lab.
+    if (want > cur) {
+        Preferences v;
+        if (v.begin("store", true)) {
+            const uint32_t back = v.getUInt("counter", 0);
+            v.end();
+            if (back != want)
+                Serial.printf("[store] NVS did NOT keep the counter: wrote #%u, "
+                              "reads back #%u\n", (unsigned)want, (unsigned)back);
+        } else {
+            Serial.println("[store] could not reopen \"store\" to verify the counter");
+        }
+    }
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
