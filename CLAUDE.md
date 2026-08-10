@@ -205,25 +205,38 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 ## Pending (requires hardware)
 
-**Bring-up is complete.** Every mechanism in the pipeline has now run on hardware — see *Bring-up status* above for what each one proved.
+**Bring-up is complete** for everything flashed as of `dafb4d5` — see *Bring-up status* above for what each mechanism proved. Everything since is source-only; see *Due on the bench* below.
 
 **Auxiliary write-back is validated** (2026-08-08) — `DUMP TAG` on a part-used spool reported `Aux consumed 186.8 g`, with `remaining = actual - consumed = 813.2 g` matching the display. That was the last thing in the pipeline nothing could observe.
 
 `DUMP TAG` prints the decoded Meta/Main/Aux of whatever nfcTask last read, plus `write_protection` and whether the colour is assigned — none of which appears anywhere else. Note Meta offsets are **payload-relative**: `aux@246` with the payload starting at 42 is absolute 288, i.e. the 24-byte layout.
 
-### Due on the bench (2026-08-08)
+### Due on the bench (2026-08-10)
 
-Three code commits have landed since the last build that was flashed and run (`dafb4d5`, the one that validated Aux write-back). **None of them is compile-verified** — the PlatformIO registry is unreachable from the sandbox, so only a real `pio run` proves them:
+**Nothing since `dafb4d5` has been flashed** — that is the build that validated Aux write-back, and everything after it is source-only. The PlatformIO registry is unreachable from the Claude Code sandbox, so `pio run` is the first real compile. Expect to fix compile errors before any of this runs; that is the expected state, not a surprise.
 
-| commit | touches | what to look for |
-|---|---|---|
-| `be622c4` | `config_store.cpp` | catalog colours load with alpha 255; a 3-element `rgba` no longer reads as unassigned |
-| `b40ccb1` | `nfc_task.cpp`, `opt_tag.*` | normal weighs still write Aux; an old-layout tag now logs `section write REFUSED` instead of half-writing |
-| `ffc5b9f` | `opt_tag.*`, `scale_task.cpp` | `DUMP TAG` shows `lab NOT MEASURED`; everything else on that dump unchanged |
+The exceptions, which *are* compile-verified and tested natively: `opt_tag.cpp` (via `tools/opt/optfuzz`, 412k decodes under ASAN/UBSAN) and the product matcher `normEq_` / `nomEq_` / `findProduct_` (via `tools/store/`, which slices them out of `store.cpp` rather than restating them). The store's JSON codec and both web JSON builders were checked by mirroring them in Python and parsing the output, which catches stray quotes and commas but not compile errors.
 
-**The compaction check is DUE.** `applyInto_` changed twice on 2026-08-08 — the consumption rollup now keys on `abbr` rather than `material`, and `rebuildInventory_` carries `rgba` — so the fold needs re-verifying against the figures below. This is the one check where a silent regression cannot be recovered afterwards: once raw events are folded away, the `Usage` rows are the only evidence left.
+Run in this order — each step's failure mode is cheapest to diagnose before the next one runs.
 
-To re-run the compaction check after touching `applyInto_` or `storeCompact()`: `WIPE` → `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage`, and the two dumps must match (see *Bring-up status* for the expected figures). If the totals move, deltas are being measured against the wrong baseline and the popularity data is being silently corrupted; read *Consumption rollup* before changing anything. **`DUMP prod` must also match across the fold** — products are carried forward, not folded away, so a product that disappears means `storeCompact()` stopped emitting them.
+**1. `WIPE ALL`, then the compaction fold.** `SEED 20 200` → `DUMP usage` → `DUMP prod` → `COMPACT` → `DUMP usage` → `DUMP prod`.
+- Usage must be **identical** across the fold: 4 buckets, 4477.5 g and 995 weighs each, 17910.0 g total.
+- `DUMP prod` must also match. Products are carried forward, not folded away, so a product that vanishes means `storeCompact()` stopped emitting them.
+- **This is the one check where a silent regression cannot be recovered afterwards.** Once raw events are folded away the `Usage` rows are the only evidence left. If the totals move, deltas are being measured against the wrong baseline — read *Consumption rollup* before touching anything.
+
+**2. Foreign-tag adoption converging.** `WIPE ALL`, place the eSun spool, then lift and replace it.
+- First placement: a spool record *and* product #1, marked `[provisional]` in `DUMP prod`.
+- Second placement: **still product #1 with 2 spools** — not #2. A second product here means the matching ladder missed, and `/products` is where it shows.
+
+**3. The onboarding paths.** `/onboard` should offer "another spool of X" with the detail fields hidden. Pick the product → the new spool inherits vendor, filament, colour, tare and nominal, and `DUMP prod` shows the spool count rise with no new product. Then onboard one as "a new product" and confirm the full form still works.
+
+**4. Product edit propagation.** Open `/product?id=1`, change the tare, save.
+- The page must name the spools it will touch *before* you save.
+- After saving: `provisional` is gone, every spool of that product shows the new tare on its detail page, and placing one on the scale rewrites its tag (`DUMP TAG` confirms).
+
+**5. `/reorder`.** Rows should say `product #N` in the "Matched by" column once products exist; the mailto: link should open a mail client with the list intact and no truncation at the first newline.
+
+**6. `STACK`** — last, after all of the above, since the high-water mark only records what has actually run. Under ~512 B free on any task is where to worry. syncTask is the one to watch: adoption added roughly 1.4 kB of frames to its deepest path.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 
