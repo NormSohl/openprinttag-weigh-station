@@ -7,6 +7,8 @@
 #include <vector>
 #include <algorithm>
 #include <string.h>
+#include <stdlib.h>   // strtoull
+#include <ctype.h>    // isalnum, for urlEnc
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
@@ -195,6 +197,24 @@ static String colorJson(const uint8_t rgba[4]) {
     return String(b);
 }
 
+// Percent-encode for a URL query component (the mailto: subject and body).
+//
+// RFC 3986 unreserved set only. Everything else is escaped, including space —
+// as %20, not "+", because "+" only means space in form-encoded bodies and a
+// mail client shows it literally. Newlines matter most here: the reorder body
+// is nothing but newlines, and a raw one truncates the whole URL.
+static String urlEnc(const String& s) {
+    static const char* HEX = "0123456789ABCDEF";
+    String o;
+    o.reserve(s.length() + 16);
+    for (size_t i = 0; i < s.length(); i++) {
+        const unsigned char c = (unsigned char)s[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+        else { o += '%'; o += HEX[c >> 4]; o += HEX[c & 0x0F]; }
+    }
+    return o;
+}
+
 // One "label value" item for a .spec strip.
 static String kv(const char* label, const String& value) {
     return "<span><b>" + String(label) + "</b> " + value + "</span>";
@@ -379,7 +399,9 @@ static void handleProducts(AsyncWebServerRequest* req) {
     ProductRecord q;
     for (size_t i = 0; i < np; i++) {
         if (!storeGetProduct(ids[i], q)) continue;
-        p += "<tr><td>#" + String((unsigned)q.id) + "</td><td>" + swatch(q.rgba)
+        p += "<tr><td><a href='/product?id=" + String((unsigned)q.id)
+           + "' style='color:#8f8'>#" + String((unsigned)q.id) + "</a></td><td>"
+           + swatch(q.rgba)
            + esc(q.material[0] ? q.material : "Unknown")
            + (q.abbr[0] ? " <span class='muted'>" + esc(q.abbr) + "</span>" : String())
            + "</td><td>" + esc(q.vendor)
@@ -400,6 +422,131 @@ static void handleProducts(AsyncWebServerRequest* req) {
              "re-onboarding one assigns it.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
+}
+
+// ── One product: edit, and propagate the edit to its spools ───────────────────
+//
+// This is the page the whole model exists for: correct a wrong tare or a
+// misspelled name once, and every spool of that filament follows — including
+// their physical tags, on next placement.
+static void handleProductDetail(AsyncWebServerRequest* req) {
+    if (!req->hasParam("id")) { req->send(400, "text/plain", "missing id"); return; }
+    uint32_t id = (uint32_t)req->getParam("id")->value().toInt();
+    ProductRecord q;
+    if (!storeGetProduct(id, q)) { req->send(404, "text/plain", "unknown product"); return; }
+
+    // Which spools this edit would reach. Saying so up front is the point: an
+    // edit here is not local, and the page should not pretend it is.
+    std::vector<uint32_t> mine;
+    {
+        SpoolRecord r;
+        for (size_t i = 0; i < storeSpoolCount(); i++)
+            if (storeSpoolAt(i, r) && r.product == id) mine.push_back(r.spool);
+    }
+
+    String p = head("Product", "/products");
+    p += "<div class='card'><div class='big'>" + swatch(q.rgba) + "#"
+       + String((unsigned)id) + " " + esc(q.material[0] ? q.material : "Unknown")
+       + "</div><p class='muted'>" + esc(q.vendor)
+       + (q.abbr[0] ? " &middot; " + esc(q.abbr) : String()) + "</p>";
+    if (q.provisional)
+        p += "<p class='ob'>Provisional &mdash; this was read off a tag and nobody "
+             "has confirmed it. Provisional products are never written back to "
+             "tags. Saving this form confirms it.</p>";
+    String ident;
+    if (q.pkg_uuid[0])   ident += kv("package_uuid",  esc(q.pkg_uuid));
+    if (q.mat_uuid[0])   ident += kv("material_uuid", esc(q.mat_uuid));
+    if (q.brand_uuid[0]) ident += kv("brand_uuid",    esc(q.brand_uuid));
+    if (q.gtin) { char g[24]; snprintf(g, sizeof(g), "%llu", (unsigned long long)q.gtin);
+                  ident += kv("GTIN", String(g)); }
+    if (q.has_lab) ident += kv("L*a*b*", String(q.lab[0], 2) + " / " + String(q.lab[1], 2)
+                                       + " / " + String(q.lab[2], 2));
+    if (ident.length()) p += "<div class='spec'>" + ident + "</div>";
+    p += "</div>";
+
+    char hex[8];
+    snprintf(hex, sizeof(hex), "#%02x%02x%02x", q.rgba[0], q.rgba[1], q.rgba[2]);
+
+    p += "<form method='POST' action='/api/product'>";
+    p += "<input type='hidden' name='id' value='" + String((unsigned)id) + "'>";
+    p += "<label>Vendor</label><input name='vendor' value='" + esc(q.vendor) + "'>";
+    p += "<label>Filament (as shown on tags and in the app)</label>"
+         "<input name='material' value='" + esc(q.material) + "'>";
+    p += "<label>Type abbreviation &mdash; what usage totals group by</label>"
+         "<input name='abbr' maxlength='7' value='" + esc(q.abbr) + "'>";
+    p += "<label>Colour</label><input type='color' name='color' value='"
+       + String(hex) + "'>";
+    p += "<label><input type='checkbox' name='nocolor' style='width:auto' "
+       + String(q.rgba[3] == 0 ? "checked" : "")
+       + "> No colour assigned</label>";
+    p += "<label>Diameter (mm)</label><input type='number' step='0.01' name='dia' value='"
+       + String(q.dia, 2) + "'>";
+    p += "<label>Empty spool tare (g)</label><input type='number' step='0.1' name='empty_g' value='"
+       + String(q.empty_g, 1) + "'>";
+    p += "<label>Nominal full weight (g)</label><input type='number' step='0.1' name='nom_g' value='"
+       + String(q.nom_g, 1) + "'>";
+
+    p += "<div class='card' style='margin-top:14px'>";
+    if (mine.empty()) {
+        p += "<p class='muted'>No spools reference this product yet, so saving "
+             "changes nothing else.</p>";
+    } else {
+        p += "<p>Saving updates <b>" + String((unsigned)mine.size())
+           + " spool(s)</b>: ";
+        for (size_t i = 0; i < mine.size(); i++)
+            p += (i ? ", " : "") + String("<a href='/spool?id=")
+               + String((unsigned)mine[i]) + "' style='color:#8f8'>#"
+               + String((unsigned)mine[i]) + "</a>";
+        p += ".</p><p class='muted'>Their tags are rewritten the next time each "
+             "spool is placed on the scale. A tag marked write-protected by its "
+             "vendor is skipped &mdash; Main is not ours to overwrite.</p>";
+    }
+    p += "</div>";
+    p += "<div><button type='submit'>Save &amp; update spools</button></div>";
+    p += "</form>";
+    p += "<p class='muted'><a href='/products' style='color:#8f8'>&larr; all products</a></p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleApiProduct(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    auto arg = [&](const char* k) -> String {
+        const AsyncWebParameter* pp = req->getParam(k, true);
+        return pp ? pp->value() : String();
+    };
+    uint32_t id = (uint32_t)arg("id").toInt();
+    ProductRecord q;
+    if (!id || !storeGetProduct(id, q)) { req->send(404, "text/plain", "unknown product"); return; }
+
+    strlcpy(q.vendor,   arg("vendor").c_str(),   sizeof(q.vendor));
+    strlcpy(q.material, arg("material").c_str(), sizeof(q.material));
+    strlcpy(q.abbr,     arg("abbr").c_str(),     sizeof(q.abbr));
+    // An unchecked checkbox is simply absent from the POST, which is how
+    // "no colour" is distinguished from a colour that happens to be black.
+    if (arg("nocolor").length()) {
+        memset(q.rgba, 0, 4);            // alpha 0 = unassigned
+    } else {
+        const String c = arg("color");   // "#rrggbb" from <input type=color>
+        long v = strtol(c.c_str() + (c.startsWith("#") ? 1 : 0), nullptr, 16);
+        q.rgba[0] = (uint8_t)(v >> 16); q.rgba[1] = (uint8_t)(v >> 8);
+        q.rgba[2] = (uint8_t)v;          q.rgba[3] = 255;
+    }
+    q.dia     = arg("dia").toFloat();
+    q.empty_g = arg("empty_g").toFloat();
+    q.nom_g   = arg("nom_g").toFloat();
+    // A human just reviewed and saved these values, which is exactly what
+    // "provisional" was waiting for. Confirming it is what re-admits the
+    // product to tag write-back.
+    q.provisional = false;
+
+    if (!storeUpsertProduct(q)) { req->send(500, "text/plain", "write failed"); return; }
+    // Separate call, deliberately: without it every spool of this product keeps
+    // a stale cached copy and a stale tag, and the edit would be invisible
+    // everywhere except this page.
+    storePropagateProduct(id);
+
+    req->redirect("/product?id=" + String((unsigned)id));
 }
 
 static void handleApiProducts(AsyncWebServerRequest* req) {
@@ -574,6 +721,36 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "<form method='POST' action='/api/onboard'>";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
 
+    // ── "Another spool of X" ──────────────────────────────────────────────────
+    // The path that makes this worth building. Nine onboardings out of ten are
+    // a repeat of one already done, and every retype is a fresh chance to pick
+    // the wrong spool profile — which silently biases every later remaining
+    // weight, because remaining is gross minus tare.
+    const size_t np = storeProductCount();
+    if (np) {
+        p += "<label>This spool is&hellip;</label><select name='product' id='prod' "
+             "onchange=\"document.getElementById('newprod').style.display="
+             "this.value=='0'?'block':'none'\">";
+        ProductRecord q;
+        for (size_t i = 0; i < np; i++) {
+            if (!storeProductAt(i, q)) continue;
+            p += "<option value='" + String((unsigned)q.id) + "'>"
+               + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
+               + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
+               + (q.provisional ? " (provisional)" : "")
+               + "</option>";
+        }
+        p += "<option value='0'>&mdash; A new product &mdash;</option>";
+        p += "</select>";
+        // Default to the first existing product, so the common case is one
+        // control and a submit; the detail fields start hidden to match.
+        p += "<div id='newprod' style='display:none'>";
+    } else {
+        // Nothing stocked yet, so there is no "another spool of X" to offer.
+        p += "<input type='hidden' name='product' value='0'>";
+        p += "<div id='newprod'>";
+    }
+
     // Vendor
     p += "<label>Vendor</label><select name='vendor'>";
     char vbuf[64];
@@ -612,6 +789,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "<button type='button' class='sec' onclick=\"fetch('/api/tare',{method:'POST'})"
          ".then(r=>r.json()).then(d=>{document.getElementById('tare').value=d.weight.toFixed(1)})\">"
          "Capture tare from scale</button>";
+    p += "</div>";   // #newprod
 
     p += "<div><button type='submit'>Save &amp; write tag</button></div>";
     p += "</form>";
@@ -642,57 +820,81 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     SpoolRecord rec;
     if (!storeGetSpool(id, rec)) { req->send(404, "text/plain", "unknown spool"); return; }
 
-    String vendor   = arg("vendor");
-    String matName  = arg("material");
-    String colName  = arg("color");
-    String profName = arg("profile");
-    float  tareOvr  = arg("empty_g").toFloat();   // 0 → use profile
+    // Two paths. "Another spool of X" inherits everything from an existing
+    // product and ignores the detail fields entirely — that is the whole point
+    // of it, and it is also what removes the chance to pick the wrong spool
+    // profile on a repeat onboarding.
+    const uint32_t chosen = (uint32_t)arg("product").toInt();
 
-    // Resolve config rows (fall back to sensible defaults when a pick is absent).
+    String  vendor, display, abbr;
+    uint8_t rgba[4] = {};
+    float   nominal = 0, empty = 0, dia = 1.75f;
     CfgMaterial m = {};
-    bool haveMat = cfgMaterialByName(matName.c_str(), m);
-    CfgColor col = {};
-    cfgColorByName(colName.c_str(), col);
-
-    CfgProfile pr = {};
-    bool havePr = false;
-    for (size_t i = 0; i < cfgProfileCount(); i++)
-        if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
-
-    float nominal = havePr ? pr.nominal_full_g : 0.0f;
-    float empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);
-    float dia     = haveMat ? m.dia : 1.75f;
-
-    // OPT key 10 material_name is a DISPLAY string, not a type code. The spec's
-    // own example is "PC Blend Carbon Fiber Black", and it says brand_name and
-    // material_name should be shown together as "Prusament PLA Galaxy Black";
-    // the short code belongs in key 52 material_abbreviation (max 7 chars).
-    //
-    // So the colour name goes here. That is what makes "Summer Grass" a
-    // first-class part of the record: it round-trips on the tag, it is what
-    // every OPT-aware reader will display, and it needs no field the spec does
-    // not already define.
-    String display = matName;
-    if (colName.length()) display += " " + colName;
-
-    // Resolve which product these values describe, creating one if this is a
-    // filament we have never stocked. Not provisional: a person typed this.
-    //
-    // Deliberately does NOT update a product that already matches, even though
-    // a human is the source here and would be entitled to. Product edits are
-    // meant to propagate to every spool of that product (one Reconcile each,
-    // which rewrites their tags on next placement) and that propagation is not
-    // built yet — so an update would change the definition while leaving every
-    // other spool's cached copy and tag stale, which is worse than not editing.
-    // Editing a product belongs on a product page, not on one spool's form.
-    ProductRecord prod;
-    strlcpy(prod.vendor,   vendor.c_str(),  sizeof(prod.vendor));
-    strlcpy(prod.material, display.c_str(), sizeof(prod.material));
-    strlcpy(prod.abbr,     haveMat ? m.abbr : "", sizeof(prod.abbr));
-    memcpy(prod.rgba, col.rgba, 4);
-    prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
+    bool    haveMat = false;
     uint32_t pid = 0;
-    {
+
+    ProductRecord q;
+    if (chosen && storeGetProduct(chosen, q)) {
+        pid     = q.id;
+        vendor  = q.vendor;
+        display = q.material;
+        abbr    = q.abbr;
+        memcpy(rgba, q.rgba, 4);
+        dia = q.dia; empty = q.empty_g; nominal = q.nom_g;
+        // The tag also wants print/bed temps and the material class/type, which
+        // live on the config catalog rather than on the product. Look them up
+        // by abbreviation; if there is no matching row the tag simply keeps the
+        // temps it already had, which is what happens today for a foreign tag.
+        haveMat = cfgMaterialByName(abbr.c_str(), m);
+    } else {
+        String matName  = arg("material");
+        String colName  = arg("color");
+        String profName = arg("profile");
+        float  tareOvr  = arg("empty_g").toFloat();   // 0 → use profile
+
+        vendor  = arg("vendor");
+        haveMat = cfgMaterialByName(matName.c_str(), m);
+        CfgColor col = {};
+        cfgColorByName(colName.c_str(), col);
+        memcpy(rgba, col.rgba, 4);
+
+        CfgProfile pr = {};
+        bool havePr = false;
+        for (size_t i = 0; i < cfgProfileCount(); i++)
+            if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
+
+        nominal = havePr ? pr.nominal_full_g : 0.0f;
+        empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);
+        dia     = haveMat ? m.dia : 1.75f;
+        abbr    = haveMat ? m.abbr : "";
+
+        // OPT key 10 material_name is a DISPLAY string, not a type code. The
+        // spec's own example is "PC Blend Carbon Fiber Black", and it says
+        // brand_name and material_name should be shown together as "Prusament
+        // PLA Galaxy Black"; the short code belongs in key 52
+        // material_abbreviation (max 7 chars).
+        //
+        // So the colour name goes here. That is what makes "Summer Grass" a
+        // first-class part of the record: it round-trips on the tag, it is what
+        // every OPT-aware reader will display, and it needs no field the spec
+        // does not already define.
+        display = matName;
+        if (colName.length()) display += " " + colName;
+
+        // Resolve which product these values describe, creating one if this is
+        // a filament we have never stocked. Not provisional: a person typed it.
+        //
+        // Deliberately does NOT update a product that already matches. An edit
+        // to a product propagates to every spool of it, and this form is about
+        // ONE spool — someone correcting a typo here would silently rewrite a
+        // whole shelf's tags. That edit belongs on /product, which says how
+        // many spools it will touch before you press save.
+        ProductRecord prod;
+        strlcpy(prod.vendor,   vendor.c_str(),  sizeof(prod.vendor));
+        strlcpy(prod.material, display.c_str(), sizeof(prod.material));
+        strlcpy(prod.abbr,     abbr.c_str(),    sizeof(prod.abbr));
+        memcpy(prod.rgba, rgba, 4);
+        prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
         ProductRecord found;
         if (storeFindProduct(prod, found))      pid = found.id;
         else if (storeUpsertProduct(prod))      pid = prod.id;
@@ -704,8 +906,8 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     e.spool = id;
     strlcpy(e.vendor,   vendor.c_str(),  sizeof(e.vendor));
     strlcpy(e.material, display.c_str(), sizeof(e.material));
-    strlcpy(e.abbr,     haveMat ? m.abbr : "", sizeof(e.abbr));
-    memcpy(e.rgba, col.rgba, 4);
+    strlcpy(e.abbr,     abbr.c_str(), sizeof(e.abbr));
+    memcpy(e.rgba, rgba, 4);
     e.dia = dia; e.empty_g = empty; e.nom_g = nominal;
     e.needs_ob = false;
     // Identity events replace the record's whole identity group, so this must
@@ -721,8 +923,8 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         xSemaphoreTake(gTagMutex, portMAX_DELAY);
         strlcpy(gTagMain.brand_name,            vendor.c_str(),  sizeof(gTagMain.brand_name));
         strlcpy(gTagMain.material_name,         display.c_str(), sizeof(gTagMain.material_name));
-        strlcpy(gTagMain.material_abbreviation, haveMat ? m.abbr : "", sizeof(gTagMain.material_abbreviation));
-        memcpy(gTagMain.primary_color_rgba, col.rgba, 4);
+        strlcpy(gTagMain.material_abbreviation, abbr.c_str(), sizeof(gTagMain.material_abbreviation));
+        memcpy(gTagMain.primary_color_rgba, rgba, 4);
         gTagMain.filament_diameter         = dia;
         gTagMain.nominal_netto_full_weight = nominal;
         gTagMain.actual_netto_full_weight  = nominal;   // new spool assumed full
@@ -751,30 +953,52 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
-struct OnHand { uint16_t count; float grams; };
+struct OnHand { uint16_t count; float grams; uint32_t product; };
 
-// Sum active spools that match a stock item's identity. Matching is by vendor +
-// material (exact) — the reliable subset of the design's optional color/diameter
-// keys; a one-off spool not in the catalog never generates reorder noise.
+// Sum the active spools a stock item stands for.
 //
-// Match on the record's ABBREVIATION, not r.material. CfgStock.material is a
-// bare type ("PLA") while r.material carries the OPT display string ("PLA
-// Summer Grass"), so comparing them directly never matches — on-hand would read
-// zero for every stock item and the whole page would claim everything needs
-// reordering. Records with no abbreviation (seeded rows, foreign tags) fall back
-// to r.material, which for those IS the bare type.
+// PREFERRED: resolve the stock item to a product and count spools by product
+// id. That is an exact lookup, and it is colour- and size-specific — "we keep
+// four Prusament PETG Orange 1 kg" stops being answered by a shelf of Prusament
+// PETG in four other colours. The probe composes `material` the same way the
+// onboard form does ("PETG" + " " + "Orange"), because that is what the OPT
+// display string holds and what products are keyed on.
+//
+// FALLBACK, when no product matches: the original vendor + abbreviation match,
+// so stock items that predate products keep working exactly as before rather
+// than silently reading zero on hand and demanding a reorder of everything.
+//
+// The fallback matches on the record's ABBREVIATION, not r.material:
+// CfgStock.material is a bare type ("PLA") while r.material carries the display
+// string ("PLA Summer Grass"), so comparing those directly never matches.
+// Records with no abbreviation (seeded rows, foreign tags) fall back to
+// r.material, which for those IS the bare type.
 static OnHand rollUp(const CfgStock& s) {
-    OnHand oh{0, 0.0f};
+    OnHand oh{0, 0.0f, 0};
+
+    ProductRecord probe, found;
+    strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
+    String disp = s.material;
+    if (s.color[0]) disp += String(" ") + s.color;
+    strlcpy(probe.material, disp.c_str(), sizeof(probe.material));
+    strlcpy(probe.abbr, s.material, sizeof(probe.abbr));
+    probe.nom_g = s.spool_g;
+    if (s.gtin[0]) probe.gtin = strtoull(s.gtin, nullptr, 10);
+    if (storeFindProduct(probe, found)) oh.product = found.id;
+
     size_t n = storeSpoolCount();
     SpoolRecord r;
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
-        const char* mat = r.abbr[0] ? r.abbr : r.material;
-        if (strcmp(r.vendor, s.vendor) == 0 && strcmp(mat, s.material) == 0
-                && r.remaining_g > 1.0f) {
-            oh.count++;
-            oh.grams += r.remaining_g;
+        if (r.remaining_g <= 1.0f) continue;
+        bool hit;
+        if (oh.product) {
+            hit = (r.product == oh.product);
+        } else {
+            const char* mat = r.abbr[0] ? r.abbr : r.material;
+            hit = (strcmp(r.vendor, s.vendor) == 0 && strcmp(mat, s.material) == 0);
         }
+        if (hit) { oh.count++; oh.grams += r.remaining_g; }
     }
     return oh;
 }
@@ -814,27 +1038,67 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
-         "to place the order.</p>";
+         "or e-mail the list to place the order.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
-         "<th>On hand</th><th>Threshold</th></tr>";
+         "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
     CfgStock s;
     int flagged = 0;
+    String body;      // plain-text version, for the mailto: link
+    int    unmatched = 0;
     for (size_t i = 0; i < cfgStockCount(); i++) {
         if (!cfgStockAt(i, s)) continue;
         OnHand oh = rollUp(s);
         if (!belowThreshold(s, oh)) continue;
         flagged++;
+        if (!oh.product) unmatched++;
         String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
                    : s.min_grams  > 0 ? (String(s.min_grams, 0) + " g")
                    : String("empty");
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
            + esc(s.color) + "</td><td>" + String(oh.count) + " spool(s), "
-           + String(oh.grams, 0) + " g</td><td>" + thr + "</td></tr>";
+           + String(oh.grams, 0) + " g</td><td>" + thr + "</td><td>"
+           // Which rule produced this row. A stock item falling back to the name
+           // match is not wrong, but it is coarser — it will count every colour
+           // of that vendor's PLA — and there is no other way to see that.
+           + (oh.product
+                ? "<a href='/product?id=" + String((unsigned)oh.product)
+                  + "' style='color:#8f8'>product #" + String((unsigned)oh.product) + "</a>"
+                : String("<span class='muted'>name (no product)</span>"))
+           + "</td></tr>";
+
+        body += String("- ") + s.vendor + " " + s.material;
+        if (s.color[0]) body += String(" ") + s.color;
+        if (s.sku[0])   body += String(" [SKU ") + s.sku + "]";
+        if (s.pack_qty > 1) body += String(" x") + String(s.pack_qty);
+        body += String("  (on hand: ") + String(oh.count) + " spools, "
+              + String(oh.grams, 0) + " g; keep " + thr + ")\n";
     }
     if (flagged == 0)
-        p += "<tr><td colspan='5' class='muted'>Everything is above threshold "
+        p += "<tr><td colspan='6' class='muted'>Everything is above threshold "
              "(or no stock items configured)</td></tr>";
     p += "</table>";
+
+    if (flagged) {
+        // mailto: rather than SMTP. The station has no mail credentials and no
+        // business holding any — it hands the list to whoever is standing in
+        // front of it, in their own mail client, from their own address.
+        //
+        // Both the subject and body must be percent-encoded: a raw newline or
+        // ampersand truncates the URL, and the body is entirely newlines.
+        p += "<p><a style='display:inline-block;margin-top:4px;"
+             "padding:10px 18px;background:#2a5;color:#000;border-radius:6px;"
+             "text-decoration:none' href='mailto:?subject="
+           + urlEnc("Filament reorder — " + String(flagged) + " item(s)")
+           + "&body="
+           + urlEnc("Below threshold at the weigh station:\n\n" + body
+                    + "\nGenerated by the weigh station.\n")
+           + "'>E-mail this list</a></p>";
+    }
+    if (unmatched)
+        p += "<p class='muted'>" + String(unmatched) + " item(s) matched by name "
+             "rather than to a product, so their on-hand count includes every "
+             "colour of that vendor's material. Onboard a spool of each to make "
+             "the match exact.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -1280,8 +1544,10 @@ void webAppBegin() {
     sServer.on("/spools",      HTTP_GET,  handleSpools);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
-    sServer.on("/products",     HTTP_GET, handleProducts);
-    sServer.on("/api/products", HTTP_GET, handleApiProducts);
+    sServer.on("/products",     HTTP_GET,  handleProducts);
+    sServer.on("/product",      HTTP_GET,  handleProductDetail);
+    sServer.on("/api/products", HTTP_GET,  handleApiProducts);
+    sServer.on("/api/product",  HTTP_POST, handleApiProduct);
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);

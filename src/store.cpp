@@ -713,6 +713,47 @@ bool storeUpsertProduct(ProductRecord& p) {
     return storeAppendEvent(e);            // takes the lock itself
 }
 
+size_t storePropagateProduct(uint32_t id) {
+    ProductRecord p;
+    if (!storeGetProduct(id, p)) return 0;
+
+    // Snapshot the affected spools BEFORE appending anything. storeAppendEvent()
+    // mutates sSpools through the index, so iterating it while appending would
+    // be walking a container that is being rewritten underneath us. Only the
+    // three fields an identity event does not carry are needed.
+    struct Target { char uuid[33]; uint32_t spool; bool needs_ob; };
+    std::vector<Target> targets;
+    {
+        Lock lk;
+        for (const auto& r : sSpools) {
+            if (!r.valid || r.product != id || r.uuid[0] == 0) continue;
+            Target t;
+            strlcpy(t.uuid, r.uuid, sizeof(t.uuid));
+            t.spool = r.spool; t.needs_ob = r.needs_ob;
+            targets.push_back(t);
+        }
+    }
+
+    size_t n = 0;
+    for (const auto& t : targets) {
+        StoreEvent e;
+        e.ev = StoreEv::Reconcile;
+        strlcpy(e.uuid, t.uuid, sizeof(e.uuid));
+        e.spool = t.spool;
+        strlcpy(e.vendor,   p.vendor,   sizeof(e.vendor));
+        strlcpy(e.material, p.material, sizeof(e.material));
+        strlcpy(e.abbr,     p.abbr,     sizeof(e.abbr));
+        memcpy(e.rgba, p.rgba, 4);
+        e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
+        // Carried through, not cleared: whether a spool still needs details
+        // entered is a fact about that spool, not about its product.
+        e.needs_ob = t.needs_ob;
+        e.product  = id;
+        if (storeAppendEvent(e)) n++;
+    }
+    return n;
+}
+
 // Does a tag disagree with the product it matched, on anything a human would
 // want to look at? Identity keys are excluded — a tag matching by name while
 // carrying a UUID we do not have is normal, not a conflict.

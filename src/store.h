@@ -188,6 +188,11 @@ uint32_t storePeekSpoolId();   // next ID without consuming it
 // This is the HUMAN-ORIGINATED path. It is the only thing that may change an
 // existing product, because product edits propagate to every tag of that
 // product — see storeAdoptProduct() for why a tag must never take this path.
+//
+// Changing an existing product does NOT propagate on its own: call
+// storePropagateProduct() after, or every spool of it keeps a stale cached copy
+// and a stale tag. They are separate calls because creating a product has
+// nothing to propagate to, and propagation is the expensive half.
 bool storeUpsertProduct(ProductRecord& p);
 
 // Find the product a tag belongs to, by, in order:
@@ -205,6 +210,22 @@ bool storeFindProduct(const ProductRecord& probe, ProductRecord& out);
 // adjudicate; nothing is written on that path. Returns the product id, or 0 on
 // failure.
 uint32_t storeAdoptProduct(const ProductRecord& fromTag, bool* outDiffers);
+
+// Push a product's current definition down onto every spool of it: one
+// Reconcile event each, updating their cached identity. Their physical tags
+// follow on next placement, because syncTask's reconcile loop already compares
+// the stored record against the tag and rewrites Main when they differ — so
+// "fix it once, every tag updates itself" needs no new mechanism, only this.
+//
+// Returns the number of spools updated. Weights are untouched: a Reconcile
+// carries the identity group only.
+//
+// Cost is one log append per spool of the product, at roughly 50 ms each on
+// LittleFS, and it runs synchronously in the caller. At lab scale — single
+// digits of spools per product — that is a fraction of a second inside the web
+// handler. A product with dozens of spools would want this moved off the
+// request; nothing here does that today.
+size_t storePropagateProduct(uint32_t id);
 
 uint32_t storeNextProductId();
 uint32_t storePeekProductId();

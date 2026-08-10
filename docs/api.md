@@ -20,6 +20,7 @@ work with no configuration.
 | `GET /api/status` | JSON | Everything a dashboard polls: state, spool on the scale, weight, WiFi, storage health |
 | `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag |
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
+| `GET /reorder?format=csv` | CSV | Stock items below threshold |
 | `GET /api/usage` | JSON | Consumption per month per vendor+material |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
@@ -61,9 +62,13 @@ vendor, material, colour, diameter, tare and nominal weight are a resolved
   write-back, so adopting a spool can never make the station rewrite a vendor's
   tag from data it guessed.
 
-Products are created, never auto-updated, by either write path — a product edit
-propagates to every tag of that product, so one odd tag must not be able to
-rewrite a shelf. See `docs/design/product-instance.md`.
+Products are created, never updated, by both onboarding paths and by tag
+adoption — a product edit propagates to every tag of that product, so one odd
+tag must not be able to rewrite a shelf, and neither should a typo corrected on
+one spool's form. The single place an edit is allowed is `POST /api/product`
+(behind the `/product?id=N` page, which names the spools the edit will touch
+before you save). It updates the definition, clears `provisional`, and emits one
+`Reconcile` per spool of the product. See `docs/design/product-instance.md`.
 
 ### `GET /api/status`
 
@@ -102,7 +107,8 @@ These change state and are guarded once an API key is set.
 
 | Endpoint | Effect |
 |---|---|
-| `POST /api/onboard` | Fill in the spool currently on the scale |
+| `POST /api/onboard` | Fill in the spool currently on the scale (or point it at an existing product) |
+| `POST /api/product` | Edit a product **and propagate the edit to every spool of it** |
 | `POST /api/tare` | Tare for onboarding |
 | `POST /api/cal-zero` | Zero the scale |
 | `POST /api/cal` | Calibrate against a known weight |
@@ -114,6 +120,11 @@ These change state and are guarded once an API key is set.
 `/reset` is POST-only by design. As a GET, any page on the network that merely
 linked to the URL could wipe the station's network config just by being loaded
 in someone's browser.
+
+`/api/product` is the widest-reaching write here: it appends one `Reconcile`
+per spool of the product, and each of those spools rewrites its physical tag
+the next time it is placed on the scale. Tags a vendor marked write-protected
+are skipped rather than retried forever.
 
 ---
 

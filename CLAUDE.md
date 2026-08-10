@@ -128,10 +128,11 @@ Full reference: `docs/api.md`. Shape of it:
 - **The web onboard/edit form** resolves or creates a product from what was typed — not provisional, since a person entered it.
 
 - **The Products page** (`/products`, `/api/products`) is the read surface, and specifically **the page that answers "is adoption converging?"** — if the same filament appears twice, the matching ladder missed, and nothing else in the app would show it, because two products with the same name roll up into one inventory row and look correct. The spool detail page names its product for the same reason.
+- **`/onboard` offers "another spool of X" first.** Nine onboardings in ten are a repeat, and every retype is a fresh chance to pick the wrong spool profile — which silently biases every later remaining weight, since remaining is gross minus tare. Picking a product inherits everything and ignores the detail fields.
+- **`/product?id=N` is the ONLY place a product may be edited**, because it is the only page that can honestly say what the edit will touch: it names the spools first, then `storeUpsertProduct()` + `storePropagateProduct()` on save. Propagation is one `Reconcile` per spool; their tags follow on next placement via the existing reconcile loop, so "fix it once, every tag updates itself" needed no new mechanism. Saving also clears `provisional` — a human looked at the values, which is what the flag was waiting for.
+- **Reorder matches stock items to products exactly**, falling back to the old vendor+abbreviation name match when a stock item resolves to no product. The page says which rule produced each row: a name match counts every colour of that vendor's material, which is not wrong but is coarser, and there is no other way to see it.
 
-Still to build: product-aware onboarding UI ("another spool of X" vs "a new product"), propagation of a product edit to its spools, reorder against products, and product editing. `product == 0` stays valid throughout, so each is independently shippable.
-
-**Neither write path updates an existing product**, even the human one. Propagation (one `Reconcile` per spool of the product, which rewrites their tags on next placement) is not built, so an update today would change the definition while leaving every other spool's cached copy and tag stale. Editing a product belongs on a product page, not on one spool's form.
+**A tag may never update a product, and neither may the spool form.** A tag could let one odd or damaged tag rewrite a whole shelf; the spool form is about one spool, so a typo fixed there would silently propagate. Both create only.
 
 Three things are load-bearing:
 

@@ -1,6 +1,6 @@
 # Design: products and instances
 
-Status: **store layer built** (2026-08-09), nothing wired to it yet.
+Status: **built** (2026-08-10) — pending bench verification.
 
 | step | state |
 |---|---|
@@ -9,17 +9,21 @@ Status: **store layer built** (2026-08-09), nothing wired to it yet.
 | Product entity, index, event type, compaction survival, matching | **done** — `ProductRecord`, `StoreEv::Product`, `storeFindProduct()` / `storeAdoptProduct()` |
 | Foreign-tag adoption resolves a product | **done** — `syncTask`, provisional |
 | Web onboard/edit form resolves a product | **done** — not provisional |
-| Products page + `/api/products` | **done** — read-only |
-| Onboarding UI ("another spool of X" vs "a new product") | not started |
-| A product edit propagating to its spools | not started |
-| Reorder against products | not started |
-| Product editing | not started |
+| Products page + `/api/products` | **done** |
+| Onboarding UI ("another spool of X" vs "a new product") | **done** |
+| Product editing + propagation to its spools | **done** — `/product?id=N` |
+| Reorder against products | **done** — exact match, name fallback |
 
-Both write paths **create** products and never **update** them — see *Authority*
-below. Until propagation is built, an update would change the definition while
-leaving every other spool's cached copy and tag stale, so even the human path
-declines it. `product == 0` remains valid throughout, which is what makes each
-remaining step independently shippable.
+**The design is built.** What is left is bench verification, and B2 in
+`implementation-plan.md` (importing a catalog from 3dfilamentprofiles.com),
+which is a separate piece of work.
+
+**Products are created by the two onboarding paths and edited only on
+`/product`.** That page is the one place an update is allowed, because it is
+the only one that can honestly say what the edit will touch — it names the
+spools first, then propagates on save. Neither the spool form nor a tag may
+update a product; see *Authority* below. `product == 0` stays valid, so records
+that predate products keep working untouched.
 
 ## The problem
 
@@ -290,7 +294,15 @@ direction impossible rather than merely unlikely.
 
 `write_protection` (key 13) is already honoured — `optMainWritable()` gates the
 Main write-back — so a protected vendor tag will not be rewritten even when a
-product edit says it should be. Aux still records, per spec.
+product edit says it should be. Aux still records, per spec. `/product` says so
+before you save, rather than letting a skipped tag look like a failed edit.
+
+**Built as:** `/product?id=N`. It names the spools the edit will touch before
+you press save, then `storeUpsertProduct()` + `storePropagateProduct()` — one
+`Reconcile` per spool, which updates their cached copies and leaves the existing
+reconcile loop to rewrite their tags on next placement. Saving also clears
+`provisional`, which is precisely what that flag was waiting for: a human
+looked at the values.
 
 ## Migration
 
