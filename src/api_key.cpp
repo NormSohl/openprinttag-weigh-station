@@ -11,7 +11,14 @@ void apiKeyBegin() {
     // which reads as a fault on an otherwise clean log.
     Preferences p;
     p.begin("api", false);
-    sKey = p.getString("key", "");
+    // isKey() first. getString() on a missing key logs
+    //   [E][Preferences.cpp:483] getString(): nvs_get_str len fail: key NOT_FOUND
+    // and then returns the default anyway — so the common case, a station with
+    // no API key set, printed an ESP_LOGE on every single boot for a condition
+    // that is entirely normal. Same shape as LittleFS.exists() logging the
+    // error it was meant to prevent: ask whether the thing is there before
+    // reading it, where the API lets you.
+    sKey = p.isKey("key") ? p.getString("key", "") : String("");
     p.end();
 }
 
