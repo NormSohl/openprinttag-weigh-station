@@ -1,0 +1,100 @@
+// Host shim implementation. See README.md.
+#include "Arduino.h"
+#include "LittleFS.h"
+#include "Preferences.h"
+#include <chrono>
+#include <map>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
+#include <dirent.h>
+
+SerialShim   Serial;
+LittleFSShim LittleFS;
+
+static std::string root() {
+    const char* r = getenv("STORE_TEST_ROOT");
+    return r ? r : "fsroot";
+}
+std::string fsPath(const char* p) { return root() + (p[0] == '/' ? "" : "/") + p; }
+
+uint32_t millis() {
+    using namespace std::chrono;
+    static const auto t0 = steady_clock::now();
+    return (uint32_t)duration_cast<milliseconds>(steady_clock::now() - t0).count();
+}
+
+// ── LittleFS ──────────────────────────────────────────────────────────────────
+static void mkdirp(const std::string& d) {
+    std::string cur;
+    for (size_t i = 0; i <= d.size(); i++) {
+        if (i == d.size() || d[i] == '/') { if (!cur.empty()) ::mkdir(cur.c_str(), 0755); }
+        if (i < d.size()) cur += d[i];
+    }
+}
+bool LittleFSShim::begin(bool) { mkdirp(root()); return true; }
+bool LittleFSShim::exists(const char* p) {
+    struct stat st; return ::stat(fsPath(p).c_str(), &st) == 0;
+}
+File LittleFSShim::open(const char* p, const char* mode) {
+    const std::string full = fsPath(p);
+    // Create the parent directory the way mkdir() would have on the device.
+    size_t slash = full.find_last_of('/');
+    if (slash != std::string::npos) mkdirp(full.substr(0, slash));
+    FILE* f = fopen(full.c_str(), mode);
+    if (!f) return File();
+    long sz = 0;
+    struct stat st;
+    if (::stat(full.c_str(), &st) == 0) sz = (long)st.st_size;
+    return File(f, sz);
+}
+bool LittleFSShim::remove(const char* p) { return ::remove(fsPath(p).c_str()) == 0; }
+bool LittleFSShim::rename(const char* a, const char* b) {
+    return ::rename(fsPath(a).c_str(), fsPath(b).c_str()) == 0;
+}
+bool LittleFSShim::mkdir(const char* p) { mkdirp(fsPath(p)); return true; }
+size_t LittleFSShim::usedBytes() {
+    size_t n = 0;
+    std::string logdir = root() + "/log";
+    if (DIR* d = opendir(logdir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            struct stat st;
+            if (::stat((logdir + "/" + e->d_name).c_str(), &st) == 0 && S_ISREG(st.st_mode))
+                n += (size_t)st.st_size;
+        }
+        closedir(d);
+    }
+    return n;
+}
+
+// ── Preferences ───────────────────────────────────────────────────────────────
+// One file per namespace, "key=value" lines. Persists across runs, like NVS
+// across power cycles — which is exactly the divergence reconcileIdCounter_()
+// exists to repair, so it must not be faked away.
+static std::string nvsPath(const std::string& ns) { return root() + "/nvs." + ns; }
+
+bool Preferences::begin(const char* ns, bool) { ns_ = ns; mkdirp(root()); return true; }
+void Preferences::end() { ns_.clear(); }
+
+static std::map<std::string, uint32_t> nvsLoad(const std::string& ns) {
+    std::map<std::string, uint32_t> m;
+    std::ifstream in(nvsPath(ns));
+    std::string line;
+    while (std::getline(in, line)) {
+        size_t eq = line.find('=');
+        if (eq != std::string::npos)
+            m[line.substr(0, eq)] = (uint32_t)strtoul(line.c_str() + eq + 1, nullptr, 10);
+    }
+    return m;
+}
+uint32_t Preferences::getUInt(const char* key, uint32_t def) {
+    auto m = nvsLoad(ns_);
+    auto it = m.find(key);
+    return it == m.end() ? def : it->second;
+}
+void Preferences::putUInt(const char* key, uint32_t v) {
+    auto m = nvsLoad(ns_);
+    m[key] = v;
+    std::ofstream out(nvsPath(ns_), std::ios::trunc);
+    for (auto& kv : m) out << kv.first << "=" << kv.second << "\n";
+}

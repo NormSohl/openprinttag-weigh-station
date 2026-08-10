@@ -1,4 +1,46 @@
-# tools/store — native test for the product matcher
+# tools/store — `store.cpp`, compiled and run on the host
+
+`./run.sh` builds and runs everything here. It needs ArduinoJson:
+
+```
+git clone --depth 1 https://github.com/bblanchon/ArduinoJson ../../.deps/ArduinoJson
+./run.sh
+```
+
+## Why this exists
+
+The PlatformIO **registry** is unreachable from the Claude Code sandbox, so
+firmware changes made there get no compiler at all — only a real `pio run`
+proves them. But the registry is the only thing blocked; GitHub is reachable,
+and `store.cpp`'s dependencies are small enough to shim. `shim/` supplies just
+enough `Arduino.h` / `LittleFS.h` / `Preferences.h` / FreeRTOS for the real
+`src/store.cpp` to compile and **run**, with LittleFS over a scratch directory
+and NVS over a flat file — so the counters diverge across a simulated reboot
+the way the real partitions do, which is the exact condition
+`reconcileIdCounter_()` exists to repair.
+
+That buys two things the sandbox otherwise cannot have:
+
+1. **`store.cpp` is compile-verified.** It is the largest and most-changed file
+   in the project.
+2. **The compaction fold is verifiable without hardware.** `run.sh` runs
+   `SEED 20 200` → `DUMP usage` → `COMPACT` → `DUMP usage` and diffs the two,
+   which is the one check whose regression cannot be recovered afterwards: once
+   raw events are folded away, the `Usage` rows are the only evidence left. The
+   figures match the 2026-08-08 hardware run exactly — 4 buckets, 4477.5 g and
+   995 weighs each, 17910.0 g total.
+
+`--products` covers what no serial command reaches: adoption converging on one
+product rather than one per spool, a disagreeing tag being reported without
+updating anything, an edit propagating to its spools, and products surviving a
+fold. It found a real bug on its first run — `productDiffers_()` was not
+comparing the tare, the field where a silent disagreement does the most damage,
+since remaining weight is gross minus tare.
+
+**This does not replace `pio run`.** Everything outside `store.cpp` — the tasks,
+the web app, the display — still has no compiler here.
+
+## The matcher slice
 
 `storeFindProduct()` decides whether the tag on the scale is *another spool of
 something we already stock* or *a new product*. Both wrong answers are silent:
@@ -13,10 +55,7 @@ something we already stock* or *a new product*. Both wrong answers are silent:
 Neither shows up as an error, on the bench or in service — which is why this is
 tested off the board.
 
-## Why extraction, not a copy
-
-The PlatformIO registry is blocked from the Claude Code sandbox, so `src/` is
-not compile-verified there. `extract_match.py` slices `ProductRecord`,
+`extract_match.py` slices `ProductRecord`,
 `normEq_`, `nomEq_` and `findProduct_` **verbatim** out of `src/store.h` and
 `src/store.cpp` into a generated header. The test therefore exercises the
 shipping bytes, and it cannot drift the way a transcribed copy would. If a

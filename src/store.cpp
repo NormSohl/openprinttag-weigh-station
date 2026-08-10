@@ -762,6 +762,13 @@ static bool productDiffers_(const ProductRecord& have, const ProductRecord& tag)
     if (tag.vendor[0]   && !normEq_(have.vendor,   tag.vendor))   return true;
     if (tag.abbr[0]     && !normEq_(have.abbr,     tag.abbr))     return true;
     if (tag.nom_g > 0   && !nomEq_(have.nom_g,     tag.nom_g))    return true;
+    // Tare is the one that matters most and was missed here at first: remaining
+    // weight is gross MINUS tare, so a product and a tag that disagree about it
+    // silently bias every reading taken against whichever one wins. It has to be
+    // flagged for a human, not quietly resolved in the product's favour.
+    // Guarded on the tag carrying a value at all, same as the fields above —
+    // absent is not a disagreement.
+    if (tag.empty_g > 0 && fabsf(have.empty_g - tag.empty_g) > 0.5f) return true;
     if (tag.dia   > 0   && fabsf(have.dia - tag.dia) > 0.01f)     return true;
     if (tag.rgba[3] && have.rgba[3] && memcmp(have.rgba, tag.rgba, 3)) return true;
     return false;

@@ -140,7 +140,7 @@ Three things are load-bearing:
 - A tag may **create** a product but must never **update** one — product edits propagate to tags, so one odd or damaged tag would otherwise rewrite a whole shelf. `storeAdoptProduct()` reports the disagreement via `outDiffers` and writes nothing; tag-derived products are flagged `provisional` and excluded from write-back until a human confirms them.
 - **A decode case without a matching encode is now worse than not modelling the field at all.** Since `optDecode()` began preserving unrecognised keys verbatim, claiming a key removes it from the passthrough — so half-modelling it silently drops the vendor's value on the next rewrite. `src/opt_tag.cpp`'s decode switch carries that warning; `tools/opt/optfuzz` asserts the modelled identity keys leave `extra` rather than being written twice.
 
-`tools/store/` tests the matching ladder natively by **slicing the real functions out of `src/store.cpp`** rather than restating them, so the test cannot drift from the code — and it is the only compile verification anything in `src/` gets while the PlatformIO registry is blocked.
+`tools/store/run.sh` **compiles and runs the real `src/store.cpp` on the host**, over a shim of `Arduino.h` / `LittleFS.h` / `Preferences.h` / FreeRTOS. Only the PlatformIO *registry* is blocked from the sandbox — GitHub is reachable, so ArduinoJson clones and the rest is small enough to shim. That makes `store.cpp` compile-verified, and makes **the compaction fold checkable without hardware**: the run reproduces the 2026-08-08 bench figures exactly (4 buckets, 4477.5 g and 995 weighs each, 17910.0 g total, unchanged across `COMPACT`). It also covers what no serial command reaches — adoption converging, a disagreeing tag being reported without updating anything, edits propagating, products surviving a fold — and found a real bug doing so: `productDiffers_()` was not comparing tare, the field where a silent disagreement does the most damage. The matcher is additionally **sliced verbatim out of `store.cpp`** rather than restated, so that test cannot drift from the code. None of this replaces `pio run`: everything outside `store.cpp` still has no compiler here.
 
 ## Device State Machine
 
@@ -218,7 +218,9 @@ Timings from that run, for scale: seeding 4000 events took 210 s (~52 ms per app
 
 **Nothing since `dafb4d5` has been flashed** — that is the build that validated Aux write-back, and everything after it is source-only. The PlatformIO registry is unreachable from the Claude Code sandbox, so `pio run` is the first real compile. Expect to fix compile errors before any of this runs; that is the expected state, not a surprise.
 
-The exceptions, which *are* compile-verified and tested natively: `opt_tag.cpp` (via `tools/opt/optfuzz`, 412k decodes under ASAN/UBSAN) and the product matcher `normEq_` / `nomEq_` / `findProduct_` (via `tools/store/`, which slices them out of `store.cpp` rather than restating them). The store's JSON codec and both web JSON builders were checked by mirroring them in Python and parsing the output, which catches stray quotes and commas but not compile errors.
+The exceptions, which *are* compile-verified and tested natively: **`store.cpp` in full** (via `tools/store/run.sh`, which compiles and runs it over a host shim under ASAN/UBSAN) and `opt_tag.cpp` (via `tools/opt/optfuzz`, 412k decodes). Both web JSON builders were checked by mirroring them in Python and parsing the output, which catches stray quotes and commas but not compile errors.
+
+**Step 1 below has already passed natively** — the fold reproduces the bench figures exactly, and products survive it. Re-run it on hardware anyway (LittleFS and NVS are shimmed, not real), but treat a failure there as a *platform* difference rather than a logic regression, and check `tools/store/run.sh` still passes before touching `applyInto_`.
 
 Run in this order — each step's failure mode is cheapest to diagnose before the next one runs.
 

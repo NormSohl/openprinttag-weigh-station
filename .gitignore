@@ -11,3 +11,6 @@
 # Native test harnesses clone their upstream library beside the sources.
 tools/qr/QRCode/
 tools/opt/tinycbor/
+
+# Native test dependencies, cloned on demand (see tools/store/README.md)
+.deps/
