@@ -51,9 +51,15 @@ static void bzTone(uint32_t hz, uint32_t ms) {
 static void buzz(DeviceState prev, DeviceState curr) {
     switch (curr) {
     case DeviceState::Idle:
-        // Boot-ready chime only on the WiFi-provisioning → Idle transition.
-        // Spool-removed returns to Idle silently (no sound on every removal).
-        if (prev == DeviceState::WiFiSetupMode) {
+        // Boot-ready chime only on the way in from bring-up — from Boot on an
+        // ordinary start, or from the portal when one had to be run. Spool-
+        // removed returns to Idle silently (no sound on every removal).
+        //
+        // Boot is in this list because a successful join no longer passes
+        // through WiFiSetupMode: that state now means "the portal is actually
+        // up", so the common path is Boot -> Idle and would otherwise have gone
+        // quiet.
+        if (prev == DeviceState::WiFiSetupMode || prev == DeviceState::Boot) {
             bzTone(523, 80); bzTone(659, 80); bzTone(784, 120);  // C5-E5-G5
         }
         break;

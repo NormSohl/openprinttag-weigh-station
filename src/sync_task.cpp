@@ -225,9 +225,20 @@ static bool runConfigPortal(WiFiManager& wm) {
 // ── Task ──────────────────────────────────────────────────────────────────────
 
 void syncTask(void* param) {
-    // Set WiFiSetupMode before the portal runs so displayTask can show the
-    // captive-portal SSID while we wait for provisioning.
-    setState(DeviceState::WiFiSetupMode);
+    // NOT WiFiSetupMode here. That screen says "Join network: WeighStation-Setup",
+    // and setting it before autoConnect() made every ordinary boot flash that
+    // instruction for the half-second the join took — naming an access point
+    // that does not exist yet, on a device that is about to connect fine.
+    //
+    // It cost a field trip. Debugging a station that had come up in the lab, the
+    // half-second flash read as "the setup screen appeared and vanished", which
+    // pointed at a portal that had opened and timed out. It had done no such
+    // thing: it joined a network immediately, and the only real evidence — the
+    // GREEN "Seattle Makers" idle screen rather than the orange "Weigh Station /
+    // Join WiFi" one — was buried under a screen that was lying.
+    //
+    // The state is now set where it is true: after autoConnect() has actually
+    // raised the portal. The boot screen covers the join attempt.
     WiFiManager wm;
     // Drive the portal ourselves rather than letting WiFiManager block: its
     // built-in timeout either cuts off someone mid-password (what happened on
@@ -267,7 +278,11 @@ void syncTask(void* param) {
     // never allocated — which is exactly what happens on a boot that connects
     // straight to a saved AP.
     const bool portalRan = !joined;
-    if (portalRan) joined = runConfigPortal(wm);
+    if (portalRan) {
+        // Only now is "Join WeighStation-Setup" a true statement.
+        setState(DeviceState::WiFiSetupMode);
+        joined = runConfigPortal(wm);
+    }
 
     // Release WiFiManager's portal web server before our own tries to bind :80.
     // Blocking autoConnect() does this internally on the way out; the
