@@ -655,11 +655,35 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     // ── Write tag bytes ───────────────────────────────────────────────────────
     memset(outBuf, 0, tagSize);
 
-    // Capability Container
-    outBuf[0] = 0xE1;         // NDEF magic
-    outBuf[1] = 0x40;         // version 1.0, read/write access
-    outBuf[2] = numBlocks;
-    outBuf[3] = 0x01;         // block size / 8 → 4-byte blocks
+    // ── Capability Container (NFC Forum Type 5 Tag, 4-byte form) ─────────────
+    //
+    // Byte 2 is MLEN: the memory size in BYTES divided by 8. It is NOT the
+    // block count, which is what this wrote until 2026-08-10 — 80 on an 80x4
+    // tag instead of 320/8 = 40. That declares a data area of 80*8 = 640 bytes,
+    // twice the physical tag.
+    //
+    // Our own reader never noticed, and could not: nfcTask dumps exactly
+    // numBlocks blocks and optDecode() parses the TLV out of that buffer
+    // directly, so nothing here ever consults MLEN. A standards-compliant
+    // reader does consult it, and one that walks the declared data area runs
+    // off the end of the tag — an ISO15693 tag answers out-of-range reads with
+    // an error, which surfaces as "cannot read this tag" on someone's phone
+    // while the station reads it perfectly. Interop with other OPT-aware
+    // readers is the whole point of being spec-compliant, so this is exactly
+    // the class of bug that only shows up somewhere we cannot see it.
+    //
+    // Integer division rounds DOWN, which is the safe direction: understating
+    // the data area means a reader stops early, overstating means it reads off
+    // the end. It matters on the 79-block layout the block-79 workaround
+    // produces (316 bytes, not a multiple of 8), where 39 is the honest answer.
+    if (tagSize / 8 > 255) return SIZE_MAX;   // needs the 8-byte (0xE2) CC form
+    outBuf[0] = 0xE1;                         // magic, 4-byte CC
+    outBuf[1] = 0x40;                         // version 1.0, read/write, no restrictions
+    outBuf[2] = (uint8_t)(tagSize / 8);       // MLEN
+    // Capability flags, tag-specific. Bit 0 = MBREAD ("Read Multiple Blocks"),
+    // which the SLIX2 supports. Bit 1 would be IPREAD ("Inventory Page Read"),
+    // which it does not — matching the reference implementation's comment.
+    outBuf[3] = 0x01;
 
     // NDEF TLV
     size_t p = OPT_CC_SIZE;
