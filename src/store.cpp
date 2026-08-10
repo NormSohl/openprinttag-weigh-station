@@ -8,6 +8,8 @@
 #include <strings.h>   // strcasecmp
 #include <ctype.h>
 #include <math.h>
+
+extern volatile bool gClockSet;
 #include <vector>
 #include <unordered_map>
 #include <string>
@@ -286,8 +288,23 @@ static int findByUuid_(const char* uuid) {
 // "2026-08-07T01:14:09Z" -> "2026-08". Anything unparseable buckets together
 // rather than being dropped — an unattributed gram still happened.
 static void periodOf_(const char* ts, char* out, size_t n) {
-    if (ts && strlen(ts) >= 7 && ts[4] == '-') snprintf(out, n, "%.7s", ts);
-    else                                       strlcpy(out, "unknown", n);
+    if (ts && strlen(ts) >= 7 && ts[4] == '-') {
+        // An event stamped before the clock was set is NOT January 1970 — it is
+        // a month we do not know. The ESP32 has no battery-backed RTC, so every
+        // power-up reads 1970 until SNTP answers, and anything weighed in that
+        // window would otherwise pile into a "1970-01" row that looks like real
+        // data and sorts first.
+        //
+        // Bucketing it as "unknown" instead keeps the grams — an unattributed
+        // gram still happened, which is why this never discards — while saying
+        // plainly that the month is not known. A station that can never reach
+        // an NTP server ends up with one honest "unknown" row rather than a
+        // fabricated one.
+        if (strncmp(ts, "20", 2) != 0) { strlcpy(out, "unknown", n); return; }
+        snprintf(out, n, "%.7s", ts);
+    } else {
+        strlcpy(out, "unknown", n);
+    }
 }
 
 // Merge grams/weighs into the (period, vendor, material) bucket. The table is
@@ -1286,6 +1303,9 @@ bool storeSerialCommand(const String& lineIn) {
                       (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10),
                       storeCompactNeeded() ? "  [compaction due]" : "",
                       storeWriteFailed()   ? "  [WRITES FAILING]" : "");
+        Serial.printf("[store] clock: %s\n", gClockSet
+                      ? "set — usage buckets by real month"
+                      : "NOT SET — usage is filing as \"unknown\" until NTP answers");
         Serial.printf("[store] usage: %u buckets, products: %u (next #%u)\n",
                       (unsigned)storeUsageCount(), (unsigned)storeProductCount(),
                       (unsigned)storePeekProductId());

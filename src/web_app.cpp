@@ -32,6 +32,7 @@ extern volatile float       gCalSetGrams;
 // SoftAP SSID when the station fell back to its own AP; empty in station
 // mode. Reported by /api/status.
 extern char                 gApSsid[24];
+extern volatile bool        gClockSet;
 
 static AsyncWebServer sServer(80);
 
@@ -1274,6 +1275,9 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
     j += ",\"write_failed\":";          j += storeWriteFailed() ? "true" : "false";
     j += "}";
 
+    // Absent means "we do not know what month anything happened in", which a
+    // dashboard needs to be able to say out loud rather than plotting 1970.
+    j += ",\"clock_set\":"; j += gClockSet ? "true" : "false";
     j += ",\"auth\":{\"required\":"; j += apiKeyIsSet() ? "true" : "false";
     j += "}}";
     req->send(200, "application/json", j);

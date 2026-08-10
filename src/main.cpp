@@ -68,6 +68,13 @@ char gApSsid[24]  = {};
 // displayTask.
 volatile int gPortalSecsLeft = -1;
 
+// True once SNTP has given us a real date. Until then every event is stamped
+// 1970 and its consumption is filed as "unknown" rather than as January 1970 —
+// see periodOf_() in store.cpp. Surfaced on /api/status and LOGSTATS so
+// "the clock never set" is a visible condition rather than a puzzle found in
+// the Usage page a month later.
+volatile bool gClockSet = false;
+
 // Task handles, kept so the STACK serial command can report each task's
 // high-water mark. Stack overflow has been this project's characteristic
 // failure — scaleTask blew its canary on the first SEED, and the symptom is a

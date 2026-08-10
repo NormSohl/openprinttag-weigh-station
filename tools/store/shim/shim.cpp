@@ -12,6 +12,10 @@
 SerialShim   Serial;
 LittleFSShim LittleFS;
 
+// Defined in main.cpp on the device; store.cpp reads it for LOGSTATS.
+// False here, which is the honest default: a host run has no NTP either.
+volatile bool gClockSet = false;
+
 static std::string root() {
     const char* r = getenv("STORE_TEST_ROOT");
     return r ? r : "fsroot";

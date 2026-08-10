@@ -3,6 +3,7 @@
 #include <WiFiManager.h>
 #include <esp_random.h>
 #include <string.h>
+#include <time.h>
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
@@ -24,6 +25,7 @@ extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
 extern volatile int         gPortalSecsLeft;
+extern volatile bool        gClockSet;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -316,6 +318,15 @@ void syncTask(void* param) {
         // PN5180's RF field, while an unreachable web app is the whole product.
         WiFi.setSleep(false);
         WiFi.setAutoReconnect(true);
+        // Start the clock. Asynchronous — this returns immediately and SNTP
+        // answers a second or two later, so anything weighed in that window is
+        // still stamped 1970 and files as "unknown". That is correct: those
+        // grams genuinely have no known month.
+        //
+        // (0, 0, ...) is UTC with no DST. storeNowIso() formats with gmtime_r
+        // and writes a trailing "Z", so an offset here would produce timestamps
+        // that contradict their own zone marker.
+        configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
         // Show the IP rather than the mDNS name: .local depends on the *client*
         // resolving it (Windows in particular is unreliable), while the IP works
         // from anything on the network. mDNS still runs, so weighstation.local
@@ -347,6 +358,18 @@ void syncTask(void* param) {
 
     for (;;) {
         DeviceState state = getState();
+
+        // Say when the clock lands. SNTP is asynchronous and silent, and the
+        // difference between "no usage data yet" and "usage data filed under
+        // unknown because the clock never set" is otherwise invisible until
+        // someone reads the Usage page a month later and finds one row.
+        if (!gClockSet && time(nullptr) > 1700000000L) {   // ~2023-11, i.e. real
+            gClockSet = true;
+            char iso[25];
+            storeNowIso(iso, sizeof(iso));
+            Serial.printf("[time] clock set from NTP: %s — usage now buckets by "
+                          "real month\n", iso);
+        }
 
         if (!gApSsid[0]) {                       // station mode only
             const bool up = (WiFi.status() == WL_CONNECTED);

@@ -90,6 +90,20 @@
 #define STORE_LOG_KEEP_EVENTS         2000       // recent events kept verbatim
 #define STORE_FREE_WARN_BYTES    (128UL * 1024)  // warn below this much free space
 
+// ── Clock ─────────────────────────────────────────────────────────────────────
+// The ESP32-S3 has no battery-backed RTC, so the clock reads 1970 on every
+// power-up until SNTP answers. That matters more than it looks: the consumption
+// rollup buckets by CALENDAR MONTH, and grams weighed before the first sync
+// cannot be attributed to one (periodOf_ files them as "unknown" rather than
+// inventing a 1970-01 row).
+//
+// UTC, deliberately — storeNowIso() formats with gmtime_r and writes a trailing
+// "Z", so a local-time offset here would produce timestamps that lie about
+// their own zone. Two servers because a station in a cabinet gets no second
+// chance to be babysat.
+#define NTP_SERVER_1  "pool.ntp.org"
+#define NTP_SERVER_2  "time.nist.gov"
+
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing
