@@ -860,14 +860,24 @@ static void reconcileIdCounter_() {
                        "spool-ID counter cannot persist this boot");
     // Never go backwards: if NVS is ahead of the log (IDs issued to records
     // since deleted) it stays ahead, so those numbers are not handed out twice.
+    //
+    // isKey() separates the two ways cur can read 1, which need different
+    // fixes and are indistinguishable from the value alone: the key is ABSENT
+    // (so getUInt returned its default and the write is not surviving the power
+    // cycle at all) versus the key is PRESENT holding 1 (so something is
+    // actively writing it back down). The read-back below already proved NVS
+    // accepts and returns the write within a single boot, so one of these two
+    // is happening between boots.
+    const bool     had  = p.isKey("counter");
     const uint32_t cur  = p.getUInt("counter", 1);
     const uint32_t want = maxId + 1;
     if (want > cur) {
         p.putUInt("counter", want);
         sNextId = want;
-        Serial.printf("[store] id counter was #%u but the log goes to #%u — "
-                      "advanced to #%u (NVS and the log had diverged)\n",
-                      (unsigned)cur, (unsigned)maxId, (unsigned)want);
+        Serial.printf("[store] id counter was #%u (key %s) but the log goes to "
+                      "#%u — advanced to #%u\n",
+                      (unsigned)cur, had ? "present" : "ABSENT",
+                      (unsigned)maxId, (unsigned)want);
     } else {
         sNextId = cur;
     }

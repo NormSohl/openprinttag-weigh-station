@@ -6,6 +6,7 @@ class Preferences {
 public:
     bool     begin(const char* ns, bool readOnly = false);
     void     end();
+    bool     isKey(const char* key);
     uint32_t getUInt(const char* key, uint32_t def = 0);
     void     putUInt(const char* key, uint32_t v);
 private:

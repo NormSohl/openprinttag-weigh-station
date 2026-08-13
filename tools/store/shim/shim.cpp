@@ -91,6 +91,10 @@ static std::map<std::string, uint32_t> nvsLoad(const std::string& ns) {
     }
     return m;
 }
+bool Preferences::isKey(const char* key) {
+    auto m = nvsLoad(ns_);
+    return m.find(key) != m.end();
+}
 uint32_t Preferences::getUInt(const char* key, uint32_t def) {
     auto m = nvsLoad(ns_);
     auto it = m.find(key);
