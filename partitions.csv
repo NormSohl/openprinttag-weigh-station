@@ -7,15 +7,41 @@
 # finds it by default. See docs/design/implementation-plan.md.
 #
 # Layout (offsets/sizes in bytes):
-#   nvs        28 KB   config/counters (Preferences: "store", "scale", …)
+#   nvs        20 KB   config/counters (Preferences: "store", "scale", …)
+#   (gap)       8 KB   0xE000-0xFFFF — DO NOT ALLOCATE. See below.
 #   factory  1.875 MB  firmware (build is ~1.17 MB — ~60% headroom)
 #   spiffs      2 MB   LittleFS: /log, /index, /config
 #   coredump   64 KB   crash dumps
 #   -------------------------------------------------------------
 #   total       4 MB   (ends exactly at 0x400000)
 #
+# ── The 0xE000 gap is not spare space ────────────────────────────────────────
+# The Arduino/PlatformIO build flashes boot_app0.bin at 0xE000 on EVERY upload,
+# unconditionally, whether or not the partition table declares an otadata
+# partition and whether or not the firmware uses OTA. The upload log says so
+# plainly:
+#
+#   Flash will be erased from 0x0000e000 to 0x0000ffff...
+#   Wrote 8192 bytes (47 compressed) at 0x0000e000
+#
+# nvs used to be 0x7000, running 0x9000-0xFFFF, so that write landed in its
+# last two 4 KB pages and erased them on every flash. NVS spreads entries over
+# its pages, so the damage was arbitrary: the "scale" namespace, written once
+# long ago, lived low and survived everything, while the spool-ID counter
+# — rewritten at boot — landed high and vanished on every upload. The symptom
+# was a counter that committed, read back correctly through a fresh handle, and
+# was then simply ABSENT on the next boot, which looks like nothing in the
+# Preferences API can explain, because nothing in it was wrong.
+#
+# 0x5000 keeps nvs entirely below 0xE000, which is where the stock ESP-IDF
+# layout puts it and why that layout leaves this hole. The 8 KB is deliberately
+# left UNALLOCATED rather than declared as otadata: nothing then reads what the
+# toolchain writes there, and the bootloader — finding no otadata partition —
+# boots `factory` unconditionally, which is what a single-app device wants.
+#
 # Name,     Type, SubType,  Offset,    Size,      Flags
-nvs,        data, nvs,      0x9000,    0x7000,
+nvs,        data, nvs,      0x9000,    0x5000,
+# 0xE000-0xFFFF intentionally unallocated — boot_app0.bin lands here.
 factory,    app,  factory,  0x10000,   0x1E0000,
 spiffs,     data, spiffs,   0x1F0000,  0x200000,
 coredump,   data, coredump, 0x3F0000,  0x10000,
