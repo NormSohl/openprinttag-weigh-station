@@ -7,6 +7,7 @@
 #include "store.h"          // local-storage core (redesign Phase 1)
 #include "config_store.h"   // config catalog (redesign Phase 3)
 #include "api_key.h"        // shared secret for mutating HTTP endpoints
+#include "controller.h"     // single owner of the WiFi/idle gState group
 
 // ── Shared state ──────────────────────────────────────────────
 // Tasks read/write gState under gStateMutex.
@@ -81,7 +82,8 @@ volatile bool gClockSet = false;
 // reboot loop with no useful backtrace — so "how much headroom is left" needs
 // to be an answerable question rather than something guessed at after the fact.
 TaskHandle_t gNfcTask = nullptr, gScaleTask = nullptr,
-             gDisplayTask = nullptr, gSyncTask = nullptr;
+             gDisplayTask = nullptr, gSyncTask = nullptr,
+             gControllerTask = nullptr;
 
 // ── Task forward declarations (defined in their own .cpp files) ──
 void nfcTask(void* param);
@@ -128,6 +130,8 @@ void setup() {
     gWeightMutex = xSemaphoreCreateMutex();
     gTagMutex = xSemaphoreCreateMutex();
     gSpiMutex = xSemaphoreCreateMutex();
+    // Must exist before nfcTask/syncTask start posting WiFi/idle events to it.
+    gCtrlQueue = xQueueCreate(8, sizeof(CtrlEvent));
 
     // Local-storage core (LittleFS log + indices + NVS counter). Headless in
     // Phase 1 — driven via the serial harness (EV / DUMP / REBUILD / …).
@@ -188,6 +192,11 @@ void setup() {
     // that used to do nothing deeper than fillRect. scaleTask already cost us
     // one canary panic for exactly this kind of hidden depth.
     xTaskCreatePinnedToCore(displayTask, "display", 6144, nullptr, 1, &gDisplayTask, 0);
+    // Single owner of the WiFi/idle gState group. Priority 2 (above display/sync)
+    // so an event turns into a state change promptly. No store or SPI — a small
+    // stack is enough for setState + the optional trace printf.
+    bootMark("starting controllerTask (owns WiFi/idle state)");
+    xTaskCreatePinnedToCore(controllerTask, "ctrl", 3072, nullptr, 2, &gControllerTask, 0);
     bootMark("starting syncTask (WiFi + web)");
     xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, &gSyncTask, 0);
 

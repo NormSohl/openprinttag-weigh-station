@@ -80,14 +80,19 @@ worker, one event queue for WiFi. `gState` is written in exactly one place.
 Each phase compiles, flashes, and is bench-tested before the next. Serial tooling:
 `DUMP TAG` prints live `gState`; the `STATE_TRACE` compile flag logs every `old -> new`.
 
-- **Phase 1 — observability & plan of record (this doc).** Update `device-states.mermaid`
-  to real transitions incl. ownership; land the `setState old->new` trace behind
-  `STATE_TRACE` (off by default). No behavior change. **← current**
-- **Phase 2 — WiFi/idle group → controller.** syncTask posts WiFi events; nfcTask posts
-  `TagGone`; controller owns `WiFiSetupMode`/`Idle`/`IdleNoWiFi` and picks the idle variant.
-  *This phase alone removes the bug class we hit.*
+- **Phase 1 — observability & plan of record (this doc). DONE.** `device-states.mermaid`
+  redrawn to real transitions incl. ownership; `setState old->new` trace behind
+  `STATE_TRACE` (off by default). No behavior change.
+- **Phase 2 — WiFi/idle group → controller. DONE, validated on hardware 2026-08-13.**
+  A `controllerTask` (its own file) is the sole writer of `WiFiSetupMode`/`Idle`/
+  `IdleNoWiFi`. syncTask posts `WifiPortalUp`/`WifiJoined`/`WifiSoftAP`; nfcTask posts
+  `ReturnToIdle` (replacing `idleState()`), and the controller picks `Idle` vs
+  `IdleNoWiFi` from the WiFi mode it tracks. Verified with `STATE_TRACE`: `[ctrl] boot
+  -> idle` on join; placing a spool → `present` with the display updating; removing →
+  `[ctrl] -> idle`. The idle/WiFi trio now has exactly one writer. (`Present` is still
+  written by both nfc and sync — pre-existing, addressed in Phase 4/5.)
 - **Phase 3 — detection group → controller** (`TagDetecting`/`*TagFound`/`TagReadError`/
-  `BlankTagFound`/`AwaitingFormatConfirm`/`FormattingAndRegistering`).
+  `BlankTagFound`/`AwaitingFormatConfirm`/`FormattingAndRegistering`). **← next**
 - **Phase 4 — weigh/reconcile group → controller** (store + weigh-append + reconcile move in).
 - **Phase 5 — physical writes**: replace `gWrite*Pending` flags with `WRITE_*` commands +
   `WriteResult` replies; NFC becomes fully command-driven.

@@ -9,6 +9,7 @@
 #include "opt_tag.h"
 #include "store.h"
 #include "web_app.h"
+#include "controller.h"   // WiFi/idle state is now owned by controllerTask
 
 // ── Shared globals ────────────────────────────────────────────────────────────
 extern volatile DeviceState gState;
@@ -32,8 +33,9 @@ extern volatile bool        gClockSet;
 static void setState(DeviceState s) {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
 #ifdef STATE_TRACE
-    // gState has two writers today (nfcTask, syncTask); this trace makes the
-    // handoffs visible. See docs/design/state-machine-ownership.md.
+    // gState still has more than one writer during the phased refactor (the
+    // controller owns the WiFi/idle group; nfcTask/syncTask own the tag states);
+    // this trace makes the handoffs visible. See docs/design/state-machine-ownership.md.
     if (gState != s)
         Serial.printf("[sync] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
 #endif
@@ -288,7 +290,7 @@ void syncTask(void* param) {
     const bool portalRan = !joined;
     if (portalRan) {
         // Only now is "Join WeighStation-Setup" a true statement.
-        setState(DeviceState::WiFiSetupMode);
+        ctrlPost(CtrlEvent::WifiPortalUp);
         joined = runConfigPortal(wm);
     }
 
@@ -307,7 +309,7 @@ void syncTask(void* param) {
         WiFi.softAP("WeighStation");
         strlcpy(gApSsid, "WeighStation", sizeof(gApSsid));
         WiFi.softAPIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
-        setState(DeviceState::IdleNoWiFi);
+        ctrlPost(CtrlEvent::WifiSoftAP);
         Serial.printf("[wifi] SoftAP '%s' — web app at http://%s\n",
                       gApSsid, gWebAddr);
     } else {
@@ -338,7 +340,7 @@ void syncTask(void* param) {
         // from anything on the network. mDNS still runs, so weighstation.local
         // keeps working for clients that can resolve it.
         WiFi.localIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
-        setState(DeviceState::Idle);
+        ctrlPost(CtrlEvent::WifiJoined);
         Serial.printf("[wifi] joined '%s' — web app at http://%s  (or http://%s.local)\n",
                       WiFi.SSID().c_str(), gWebAddr, DEVICE_HOSTNAME);
     }
@@ -428,7 +430,7 @@ void syncTask(void* param) {
                     // time, so which one you saw depended on whether WiFi was
                     // up at boot — an accident, not a decision.
                     WiFi.localIP().toString().toCharArray(gWebAddr, sizeof(gWebAddr));
-                    setState(DeviceState::Idle);
+                    ctrlPost(CtrlEvent::WifiJoined);
                 }
                 // Event-log compaction, only while nothing is on the scale:
                 // it rewrites the whole log and holds the store lock for the

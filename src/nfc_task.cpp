@@ -6,6 +6,7 @@
 #include "spi_bus.h"
 #include "device_state.h"
 #include "opt_tag.h"
+#include "controller.h"   // idle-return is now a ReturnToIdle event to the controller
 
 // ── Shared globals (defined in main.cpp) ─────────────────────────────────────
 extern volatile DeviceState gState;
@@ -24,10 +25,6 @@ extern SemaphoreHandle_t    gSpiMutex;
 // present, regardless of how it currently classifies. The escape hatch for a
 // tag left half-written by a failed format.
 extern volatile bool        gTagForceFormat;
-// Non-empty only in SoftAP fallback (set by syncTask). Its emptiness is how any
-// task tells "joined a network" from "serving our own AP" without touching the
-// WiFi stack — see idleState().
-extern char                 gApSsid[24];
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
@@ -42,8 +39,9 @@ static size_t  sPayloadLen    = 0;         // ...and how many bytes of it are fo
 static void setState(DeviceState s) {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
 #ifdef STATE_TRACE
-    // gState has two writers today (nfcTask, syncTask); this trace makes the
-    // handoffs visible. See docs/design/state-machine-ownership.md.
+    // gState still has more than one writer during the phased refactor (the
+    // controller owns the WiFi/idle group; nfcTask/syncTask own the tag states);
+    // this trace makes the handoffs visible. See docs/design/state-machine-ownership.md.
     if (gState != s)
         Serial.printf("[nfc] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
 #endif
@@ -56,16 +54,6 @@ static DeviceState getState() {
     DeviceState s = gState;
     xSemaphoreGive(gStateMutex);
     return s;
-}
-
-// The resting screen to fall back to when no tag is present. It depends on WiFi:
-// green "Seattle Makers" Idle when joined, orange "Weigh Station / Join WiFi"
-// IdleNoWiFi when on our own SoftAP. nfcTask must NOT hardcode Idle for this —
-// a tag removal, or even a stray PN5180 RF false-trigger, would otherwise stomp
-// the IdleNoWiFi that syncTask set and paint a "joined" screen on a station that
-// never joined. syncTask owns which of the two is correct via gApSsid.
-static DeviceState idleState() {
-    return gApSsid[0] ? DeviceState::IdleNoWiFi : DeviceState::Idle;
 }
 
 // Human-readable ISO15693 status. The distinction matters for diagnosis:
@@ -353,7 +341,7 @@ void nfcTask(void* param) {
         // ── Debounce ──────────────────────────────────────────────────────────
         if (state == DeviceState::TagDetecting) {
             if (!tagPresent || memcmp(detectedUid, uid, 8) != 0) {
-                setState(idleState());  // false trigger or UID changed
+                ctrlPost(CtrlEvent::ReturnToIdle);  // false trigger or UID changed
                 debounceHits = 0;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
@@ -444,7 +432,7 @@ void nfcTask(void* param) {
 
         if (state == DeviceState::AwaitingFormatConfirm) {
             if (!tagPresent) {
-                setState(idleState());  // removed during countdown — cancelled
+                ctrlPost(CtrlEvent::ReturnToIdle);  // removed during countdown — cancelled
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -586,7 +574,7 @@ void nfcTask(void* param) {
 
         // ── Tag read error — wait for removal ─────────────────────────────────
         if (state == DeviceState::TagReadError) {
-            if (!tagPresent) setState(idleState());
+            if (!tagPresent) ctrlPost(CtrlEvent::ReturnToIdle);
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -597,7 +585,7 @@ void nfcTask(void* param) {
         if (state == DeviceState::ForeignTagFound
             || state == DeviceState::RegisteringForeignTag
             || state == DeviceState::ValidTagFound) {
-            if (!tagPresent) setState(idleState());
+            if (!tagPresent) ctrlPost(CtrlEvent::ReturnToIdle);
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -624,7 +612,7 @@ void nfcTask(void* param) {
                 sRawLen = 0;
                 sPayloadOffset = SIZE_MAX;
                 sPayloadLen    = 0;
-                setState(idleState());
+                ctrlPost(CtrlEvent::ReturnToIdle);
             }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
