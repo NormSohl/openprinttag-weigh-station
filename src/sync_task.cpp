@@ -16,6 +16,7 @@ extern volatile DeviceState gState;
 extern SemaphoreHandle_t    gStateMutex;
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
+extern OptMeta              gTagMeta;
 extern OptMain              gTagMain;
 extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
@@ -346,6 +347,13 @@ void syncTask(void* param) {
     // Per-tag state, valid while a spool is on the scale.
     int     sSpoolId  = -1;
     OptMain sSnapshot = {};
+    // True while the spool on the scale is a FOREIGN tag (valid OPT, adopted from
+    // its own data, not one we formatted). Such a tag carries another writer's
+    // layout — writing our Main/Aux encoding onto it corrupts it (observed: a
+    // Prusa tag stopped reading after we "adopted" it, its UUID rewritten). A
+    // foreign tag is therefore READ-ONLY: we record it and its weighs in our log,
+    // and never write back to it. See "Valid tags not yet in the store" in CLAUDE.md.
+    bool    sForeign  = false;
 
     // Link watch. A station-mode drop is otherwise completely silent: the
     // display keeps showing the address it had at boot, the QR keeps encoding
@@ -423,6 +431,7 @@ void syncTask(void* param) {
                 sSpoolId = -1; sSnapshot = {};
                 gSpoolId = -1; gSpoolNeedsOnboarding = false;
                 sphase = SyncPhase::Idle;   // tag gone (or never arrived)
+                sForeign = false;
                 // If station WiFi comes up later, upgrade to Idle and switch the
                 // shown address from the SoftAP IP to the mDNS hostname.
                 if (state == DeviceState::IdleNoWiFi && WiFi.status() == WL_CONNECTED) {
@@ -486,7 +495,17 @@ void syncTask(void* param) {
         if (sphase == SyncPhase::Resolving) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
+            const uint16_t mainOff = gTagMeta.main_region_offset;
             xSemaphoreGive(gTagMutex);
+
+            // Writable only if the tag carries OUR layout. Our formatted tags put
+            // a Meta section first, so Main sits at a non-zero offset; a foreign
+            // writer (e.g. the Prusa app) puts Main at offset 0 with no Meta. Using
+            // the layout — not "is it in the store yet" — keeps a foreign tag
+            // read-only on EVERY placement, including after we have adopted it and
+            // it now takes the known path below, so a later record edit can never
+            // rewrite another vendor's tag.
+            sForeign = (mainOff == 0);
 
             if (isNilUUID(main.instance_uuid)) {
                 // Blank tag just formatted by nfcTask — mint an identity and a
@@ -508,14 +527,16 @@ void syncTask(void* param) {
                 gSpoolId = sSpoolId;
                 gSpoolNeedsOnboarding = true;
 
-                // Stamp the new UUID (and the stub identity) onto the tag.
+                // Stamp the new UUID (and the stub identity) onto the tag — but
+                // only if it is ours to write (our layout). A nil-UUID tag with a
+                // foreign layout is left untouched.
                 SpoolRecord r;
                 storeFindByUuid(hex, r);
                 overlayRecordOntoMain(r, main);
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
                 gTagMain = main;
                 xSemaphoreGive(gTagMutex);
-                gWriteMainPending = true;
+                if (!sForeign) gWriteMainPending = true;
 
                 sSnapshot = main;
                 ctrlPost(CtrlEvent::StubReady);
@@ -532,7 +553,10 @@ void syncTask(void* param) {
 
                     OptMain updated = main;
                     overlayRecordOntoMain(r, updated);
-                    if (recordDiffersFromMain(r, main)) {
+                    // Known, but if it is a foreign-layout tag we adopted earlier,
+                    // never push edits down to it — that would rewrite another
+                    // vendor's Main in our encoding.
+                    if (!sForeign && recordDiffersFromMain(r, main)) {
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         gTagMain = updated;
                         xSemaphoreGive(gTagMutex);
@@ -563,7 +587,8 @@ void syncTask(void* param) {
             OptMain main = gTagMain;
             xSemaphoreGive(gTagMutex);
 
-            if (isNilUUID(main.instance_uuid)) generateUUIDv4(main.instance_uuid);
+            const bool wasNil = isNilUUID(main.instance_uuid);
+            if (wasNil) generateUUIDv4(main.instance_uuid);
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
             // Resolve the product this spool is an instance of, creating one
@@ -597,11 +622,19 @@ void syncTask(void* param) {
             gSpoolId = sSpoolId;
             gSpoolNeedsOnboarding = false;
 
-            // Ensure the (possibly newly minted) UUID is written to the tag.
-            xSemaphoreTake(gTagMutex, portMAX_DELAY);
-            memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
-            xSemaphoreGive(gTagMutex);
-            gWriteMainPending = true;
+            // Write the minted UUID back ONLY if the tag arrived with a nil UUID
+            // AND carries our layout (!sForeign) — a tag with no identity of its
+            // own that is safe for us to stamp, e.g. one of ours after a store
+            // wipe. A genuine foreign tag has its own UUID and its own layout;
+            // rewriting its Main in our encoding corrupts it (this is what
+            // destroyed a Prusa tag during debugging). Such a tag stays read-only:
+            // adopted into the store, never written back.
+            if (wasNil && !sForeign) {
+                xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
+                xSemaphoreGive(gTagMutex);
+                gWriteMainPending = true;
+            }
 
             sSnapshot = main;
             ctrlPost(CtrlEvent::BeginWeigh);
@@ -636,7 +669,10 @@ void syncTask(void* param) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             gTagAux.consumed_weight = used;
             xSemaphoreGive(gTagMutex);
-            gWriteAuxPending = true;
+            // A foreign tag is read-only: the weigh below still records in our log
+            // (the source of truth), but we do NOT write consumed_weight back onto
+            // another vendor's tag — its Aux layout is not ours to assume.
+            if (!sForeign) gWriteAuxPending = true;
 
             StoreEvent w; w.ev = StoreEv::Weigh;
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
@@ -674,7 +710,9 @@ void syncTask(void* param) {
                 SpoolRecord r;
                 if (storeFindByUuid(hex, r)) {
                     gSpoolNeedsOnboarding = r.needs_ob;
-                    if (recordDiffersFromMain(r, sSnapshot)) {
+                    // Never reconcile-write a foreign tag: a web-side edit to its
+                    // record must not rewrite another vendor's Main in our layout.
+                    if (!sForeign && recordDiffersFromMain(r, sSnapshot)) {
                         OptMain updated;
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         updated = gTagMain;
