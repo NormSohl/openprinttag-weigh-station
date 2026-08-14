@@ -41,6 +41,12 @@ static size_t  sPayloadLen    = 0;         // ...and how many bytes of it are fo
 
 static void setState(DeviceState s) {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
+#ifdef STATE_TRACE
+    // gState has two writers today (nfcTask, syncTask); this trace makes the
+    // handoffs visible. See docs/design/state-machine-ownership.md.
+    if (gState != s)
+        Serial.printf("[nfc] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
+#endif
     gState = s;
     xSemaphoreGive(gStateMutex);
 }
