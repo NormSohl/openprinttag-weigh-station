@@ -250,20 +250,21 @@ void nfcTask(void* param) {
     // These three MUST hold the bus. displayBegin() has already run and left
     // GPIO 11/12 routed to the display's peripheral (SPI3); spiBusTakeNfc()
     // points them back at the PN5180's (SPI2). Without it the reader never
-    // sees a clock edge and reset() spins forever. See spi_bus.h.
+    // sees a clock edge and reset() waits on a chip that cannot answer. See
+    // spi_bus.h.
     //
-    // Tradeoff: reset() waits on the chip with an unbounded loop, so a reader
-    // that never answers now holds the bus and stalls displayTask too. Before
-    // the handoff the display stayed alive because reset() ran unlocked — but
-    // it also ran without the pins, which is precisely why it hung. A dead
-    // reader has to be visible somewhere; the boot log names the call.
+    // That wait used to be UNBOUNDED — a reader that never answered held the bus
+    // and stalled displayTask with it. The vendored PN5180-Library now bounds
+    // every spin-wait (PN5180_BUSY_TIMEOUT_MS), so a dead or hung reader times
+    // out and releases the bus instead of freezing the display. A dead reader is
+    // still worth seeing, so the boot log names each call as it runs.
     Serial.println("[nfc] begin()…");
     spiBusTakeNfc();
     nfc.begin();
     spiBusGive();
     Serial.println("[nfc] begin() ok");
 
-    Serial.println("[nfc] reset()… (spins forever if the chip never answers)");
+    Serial.println("[nfc] reset()… (bounded — times out if the chip never answers)");
     spiBusTakeNfc();
     nfc.reset();
     spiBusGive();
