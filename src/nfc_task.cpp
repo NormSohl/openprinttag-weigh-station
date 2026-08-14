@@ -46,6 +46,28 @@ static DeviceState getState() {
     return s;
 }
 
+// Dump the raw ISO15693 block bytes of the tag last read, as hex with byte
+// offsets — for interop debugging. The decoded view (DUMP TAG) can look fine
+// while the CC / NDEF-TLV / CBOR FRAMING differs in a way a strict reader (a
+// phone) rejects. Block 0 is the Capability Container: E1 magic, byte 2 = MLEN
+// (data area in bytes/8). sRawBuf is stable while a tag sits on the scale
+// (re-read only happens on a fresh placement), so reading it from the serial
+// task is safe enough for a debug dump. Called by "DUMP RAW".
+void nfcDumpRaw() {
+    if (sRawLen == 0) {
+        Serial.println("[raw] nothing read yet — place a tag first");
+        return;
+    }
+    Serial.printf("[raw] %u bytes; payload@%u len %u\n", (unsigned)sRawLen,
+                  (unsigned)sPayloadOffset, (unsigned)sPayloadLen);
+    for (size_t i = 0; i < sRawLen; i += 16) {
+        Serial.printf("[raw] %04x:", (unsigned)i);
+        for (size_t j = 0; j < 16 && i + j < sRawLen; j++)
+            Serial.printf(" %02x", sRawBuf[i + j]);
+        Serial.println();
+    }
+}
+
 // Phase 3 of the state-machine refactor (docs/design/state-machine-ownership.md):
 // nfcTask drives its own tag lifecycle off this LOCAL phase instead of reading
 // gState, and reports facts to the controller (ctrlPost), which is the single

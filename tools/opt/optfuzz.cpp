@@ -44,19 +44,23 @@ static bool checkLayout(uint8_t numBlocks, uint8_t blockSize) {
     bool   fits     = auxLen <= meta.aux_region_size && endByte < buf.size();
     bool   clearsEnd = lastBlk < (size_t)numBlocks - 1;   // never needs the final block
 
-    // Capability Container. MLEN (byte 2) is the tag size in BYTES over 8, and
-    // must never OVERSTATE the tag: a compliant reader walks the declared data
-    // area, and running off the end of an ISO15693 tag returns an error, which
-    // presents as "cannot read this tag" on a phone while our own reader — which
-    // never consults MLEN — is perfectly happy. This wrote numBlocks until
-    // 2026-08-10, declaring exactly double on every 4-byte-block geometry.
+    // Capability Container. MLEN (byte 2) is the T5T Area — the memory AFTER the
+    // 4-byte CC — in BYTES over 8, so MLEN*8 must fit in (tag - CC) and never
+    // OVERSTATE it: a compliant reader walks the declared data area, and running
+    // off the end of an ISO15693 tag returns an error, which presents as "cannot
+    // read this tag" / "unknown error" on a phone while our own reader — which
+    // never consults MLEN — is perfectly happy. This wrote the block count until
+    // 2026-08-10 (declaring ~double), then tag/8 (counting the CC as data, a unit
+    // over on an 80x4); it now writes (tag-CC)/8, matching what the Prusa app
+    // writes for the same spool (0x27 = 39 on a 320 B tag).
     const size_t mlen   = buf[2] * 8u;
+    const size_t t5t    = buf.size() - 4;   // T5T Area = tag minus the 4-byte CC
     const bool   ccOk   = buf[0] == 0xE1 && buf[1] == 0x40 && buf[3] == 0x01
-                          && mlen <= buf.size() && mlen > buf.size() - 8;
-    std::printf("  %ux%u: CC E1 %02X %02X %02X -> MLEN %u = %zu B for a %zu B tag -> %s\n",
+                          && mlen <= t5t && mlen > t5t - 8;
+    std::printf("  %ux%u: CC E1 %02X %02X %02X -> MLEN %u = %zu B for a %zu B T5T area (%zu B tag) -> %s\n",
                 numBlocks, blockSize, buf[1], buf[2], buf[3],
-                buf[2], mlen, buf.size(),
-                ccOk ? "ok" : (mlen > buf.size() ? "OVERSTATES THE TAG" : "understates badly"));
+                buf[2], mlen, t5t, buf.size(),
+                ccOk ? "ok" : (mlen > t5t ? "OVERSTATES THE AREA" : "understates badly"));
 
     std::printf("  %ux%u: tag %zu B, aux@%zu region %u B, write needs %zu B "
                 "ending in block %zu (last is %u) -> %s%s\n",

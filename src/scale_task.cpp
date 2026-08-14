@@ -19,6 +19,7 @@ static bool sNauPresent = false;
 
 extern volatile DeviceState gState;
 extern SemaphoreHandle_t    gStateMutex;
+extern void nfcDumpRaw();   // raw block hex of the last-read tag (DUMP RAW)
 extern OptMain              gTagMain;
 extern OptAuxiliary         gTagAux;
 extern OptMeta              gTagMeta;
@@ -209,6 +210,10 @@ static void dispatchCommand(const String& cmd, NAU7802& nau) {
         // Ahead of the storeSerialCommand fallback, which owns DUMP / DUMP usage
         // but cannot see the tag globals.
         dumpTag();
+    } else if (cmd.equalsIgnoreCase("DUMP RAW")) {
+        // Raw block bytes of the last-read tag — for interop debugging (comparing
+        // our CC/NDEF/CBOR framing against another writer's byte for byte).
+        nfcDumpRaw();
     } else if (cmd.equalsIgnoreCase("TAGFORMAT")) {
         gTagForceFormat = true;
         Serial.println("[nfc] TAGFORMAT armed — place the tag (or leave it in "
