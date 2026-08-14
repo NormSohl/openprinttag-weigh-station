@@ -288,6 +288,18 @@ void nfcTask(void* param) {
     for (;;) {
         DeviceState state = getState();
 
+        // Don't touch the reader while WiFi is still being set up. There is no
+        // tag to act on during Boot or the captive portal, and polling the
+        // PN5180 continuously while the SoftAP radio is transmitting has hung the
+        // reader mid-transaction with the SPI bus HELD — which starves
+        // displayTask (the "[spi] tft has waited 5 s" storm) and freezes the very
+        // "WiFi Setup" screen someone is standing there trying to read. syncTask
+        // owns these states; leave the bus alone until a tag can actually matter.
+        if (state == DeviceState::Boot || state == DeviceState::WiFiSetupMode) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
         // ── Poll for tag presence ─────────────────────────────────────────────
         uint8_t  detectedUid[8] = {};
         uint8_t  detectedNumBlocks, detectedBlockSize;
