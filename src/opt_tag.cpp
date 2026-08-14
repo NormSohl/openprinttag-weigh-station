@@ -126,6 +126,47 @@ static bool cborAppendRaw(CborEncoder* enc, const uint8_t* data, size_t len) {
     return true;
 }
 
+// Count the top-level key/value pairs of the map at the start of `data`. Parses
+// our OWN just-encoded, valid CBOR, so cbor_value_advance()'s preconditions hold
+// (the tinycbor-abort trap is for untrusted input). Returns -1 if not a map.
+static int cborCountMapPairs(const uint8_t* data, size_t len) {
+    CborParser p; CborValue it, map;
+    if (cbor_parser_init(data, len, 0, &p, &it) != CborNoError) return -1;
+    if (!cbor_value_is_map(&it)) return -1;
+    if (cbor_value_enter_container(&it, &map) != CborNoError) return -1;
+    int n = 0;
+    while (!cbor_value_at_end(&map)) {
+        if (cbor_value_advance(&map) != CborNoError) return -1;   // key
+        if (cbor_value_at_end(&map)) return -1;                   // dangling key
+        if (cbor_value_advance(&map) != CborNoError) return -1;   // value (skips nesting)
+        n++;
+    }
+    return n;
+}
+
+// Rewrite an INDEFINITE-length map (0xBF … 0xFF) in `buf` to a DEFINITE-length
+// one, in place. We encode indefinite so cborAppendRaw() can splice raw extra[]
+// pairs, but the Prusa app's CBOR reader rejects indefinite-length containers, so
+// every map we WRITE to a tag must be definite. For <=23 pairs the header is one
+// byte (0xa0|n) — same size as 0xBF — so we just replace byte 0 and drop the
+// trailing break; for 24..255 the header is two bytes (0xB8 n), net size
+// unchanged (the dropped break pays for it). Returns the new length, or 0 on error.
+static size_t cborMapToDefinite(uint8_t* buf, size_t len) {
+    if (len < 2 || buf[0] != 0xBF || buf[len - 1] != 0xFF) return 0;
+    int n = cborCountMapPairs(buf, len);
+    if (n < 0) return 0;
+    if (n <= 23) {
+        buf[0] = (uint8_t)(0xA0 + n);   // definite header, 1 byte
+        return len - 1;                 // drop the 0xFF break
+    }
+    if (n <= 255) {
+        memmove(buf + 2, buf + 1, len - 2);   // shift pairs past the 2-byte header
+        buf[0] = 0xB8; buf[1] = (uint8_t)n;
+        return len;                            // 2 + (len-2) == len
+    }
+    return 0;   // > 255 pairs is impossible for an OPT section
+}
+
 // The reference implementation (fields.py CompactFloat) may encode floats as
 // int (whole numbers), CBOR float16, float32, or float64.  Read whichever type
 // is present and return it as float.
@@ -291,6 +332,7 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
     if (!cbor_value_is_map(&it)) return false;
 
     uint16_t mainOffset = 0, auxOffset = 0;
+    bool sawMainOffset = false;
     if (cbor_value_enter_container(&it, &map) == CborNoError) {
         while (!cbor_value_at_end(&map)) {
             int64_t key;
@@ -301,6 +343,7 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                 case META_KEY_MAIN_REGION_OFFSET:
                     if (cborTakeInt(&map, &v)) {
                         mainOffset = (uint16_t)v;
+                        sawMainOffset = true;
                         if (meta) meta->main_region_offset = mainOffset;
                     }
                     break;
@@ -320,6 +363,15 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
             if (!cborStep(&map)) break;
         }
         cborLeave(&it, &map);
+    }
+
+    // Per the OPT reference, main_region_offset DEFAULTS to the meta section size
+    // (Main sits immediately after the Meta) when the key is absent — which is how
+    // the Prusa app writes it. Without this default we would decode Main at offset
+    // 0 (the Meta itself) and read a nil UUID. `it` points just past the Meta.
+    if (!sawMainOffset) {
+        mainOffset = (uint16_t)(cbor_value_get_next_byte(&it) - payload);
+        if (meta) meta->main_region_offset = mainOffset;
     }
 
     // ── Decode Main region ────────────────────────────────────────────────────
@@ -553,7 +605,8 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     if (!cborAppendRaw(&map, m.extra, m.extra_len)) return 0;
 
     cbor_encoder_close_container(&enc, &map);
-    return cbor_encoder_get_buffer_size(&enc, buf);
+    // Emit a DEFINITE-length map — the Prusa app rejects indefinite CBOR.
+    return cborMapToDefinite(buf, cbor_encoder_get_buffer_size(&enc, buf));
 }
 
 size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
@@ -565,7 +618,7 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
     cbor_encode_float(&map, aux.consumed_weight);
 
     cbor_encoder_close_container(&enc, &map);
-    return cbor_encoder_get_buffer_size(&enc, buf);
+    return cborMapToDefinite(buf, cbor_encoder_get_buffer_size(&enc, buf));
 }
 
 size_t optPayloadOffset(const uint8_t* tagBytes, size_t len) {
@@ -590,11 +643,15 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     const size_t tagSize = (size_t)numBlocks * blockSize;
     if (!outBuf || tagSize > outBufLen || numBlocks < 2) return SIZE_MAX;
 
-    // 16 bytes reserved for Meta CBOR at the start of the OPT payload.
-    // Meta CBOR with 4 integer keys encodes in ≤13 bytes; 16 gives comfortable headroom.
+    // Meta is now a MINIMAL definite map {aux_region_offset: X} (~4 bytes), and
+    // Main sits IMMEDIATELY after it (mainOff = metaLen below) — matching the OPT
+    // reference, whose blank tag writes exactly this and defaults main_region_offset
+    // to the meta size. MAIN_REGION_OFFSET / EMPTY_MAP_SIZE are no longer used to
+    // PLACE anything; they survive only as a conservative floor in the room checks
+    // (reserve ≥16+2 bytes before Aux — far more than the ~5 the real Main needs).
     static const size_t META_SECTION_SIZE  = 16;
-    static const size_t MAIN_REGION_OFFSET = META_SECTION_SIZE;  // = 16
-    static const size_t EMPTY_MAP_SIZE     = 2;   // 0xBF 0xFF
+    static const size_t MAIN_REGION_OFFSET = META_SECTION_SIZE;  // room-check floor only
+    static const size_t EMPTY_MAP_SIZE     = 2;   // room-check floor only
 
     // Bytes reserved for the Auxiliary region.
     //
@@ -657,29 +714,28 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
 
     // ── Capability Container (NFC Forum Type 5 Tag, 4-byte form) ─────────────
     //
-    // Byte 2 is MLEN: the size of the T5T Area — the memory available for NDEF
-    // data — in BYTES divided by 8. The T5T Area starts AFTER the 4-byte CC, so
-    // MLEN = (tagSize - CC) / 8, NOT tagSize / 8 and NOT the block count.
+    // Byte 2 is MLEN. Match the OPT reference EXACTLY: nfc_initialize.py writes
+    // `capability_container[2] = args.size // 8`, where args.size is the WHOLE
+    // formatted tag size — CC included (its `full_data` = CC + TLV + NDEF +
+    // terminator is asserted == args.size). So MLEN = tagSize / 8, NOT
+    // (tagSize - CC) / 8 and NOT the block count.
     //
     // History of getting this wrong, each caught somewhere we could not see:
     //   - until 2026-08-10 this wrote the BLOCK COUNT (79/80), declaring ~4-8x
     //     the physical tag;
-    //   - then tagSize / 8, which drops the block-count bug but still counts the
-    //     CC as data — 320/8 = 40 on an 80x4 tag, declaring 40*8 = 320 bytes of
-    //     T5T Area which, after the 4-byte CC, needs 324 bytes on a 320-byte tag.
-    // Both OVERSTATE the area, and a standards-compliant reader walks off the end:
-    // an ISO15693 tag answers out-of-range reads with an error, surfacing as
-    // "cannot read this tag" / "unknown error" on a phone while the station reads
-    // it perfectly (our reader dumps exactly numBlocks blocks and never consults
-    // MLEN). Cross-checked against a tag written by the Prusa app for the same
-    // spool: it writes 0x27 = 39 = (320 - 4) / 8, floored — which is what this now
-    // computes. Integer division rounds DOWN, the safe direction (a reader stops
-    // early rather than reading past the end).
-    const size_t t5tArea = (tagSize > OPT_CC_SIZE) ? (tagSize - OPT_CC_SIZE) : 0;
-    if (t5tArea / 8 > 255) return SIZE_MAX;   // needs the 8-byte (0xE2) CC form
+    //   - then (tagSize - CC) / 8, on the theory that MLEN counts only the T5T
+    //     Area after the CC. It was "confirmed" against a Prusa-app tag reading
+    //     0x27 — but that tag was 312 bytes (312/8 = 39 = 0x27), and ours was
+    //     320; the two formulas happened to agree only because the sizes differed.
+    //     On a 320-byte tag the reference writes 40 = 0x28 and this wrote 39.
+    // Overstating by the 4-byte CC is harmless in practice: no reader walks to
+    // MLEN*8 — the reference reader (record.py) loops TLVs to the 0xFE terminator
+    // and never bounds by cc_capacity. Matching Prusa is the point, so use its
+    // formula. Integer division rounds DOWN.
+    if (tagSize / 8 > 255) return SIZE_MAX;   // needs the 8-byte (0xE2) CC form
     outBuf[0] = 0xE1;                         // magic, 4-byte CC
     outBuf[1] = 0x40;                         // version 1.0, read/write, no restrictions
-    outBuf[2] = (uint8_t)(t5tArea / 8);       // MLEN = T5T Area (after CC) / 8
+    outBuf[2] = (uint8_t)(tagSize / 8);       // MLEN = whole tag size / 8 (per reference)
     // Capability flags, tag-specific. Bit 0 = MBREAD ("Read Multiple Blocks"),
     // which the SLIX2 supports. Bit 1 would be IPREAD ("Inventory Page Read"),
     // which it does not — matching the reference implementation's comment.
@@ -716,28 +772,32 @@ size_t optBuildBlankTag(uint8_t numBlocks, uint8_t blockSize,
     CborEncoder enc, map;
     cbor_encoder_init(&enc, metaBuf, sizeof(metaBuf), 0);
     cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
-    cbor_encode_int(&map, META_KEY_MAIN_REGION_OFFSET); cbor_encode_int(&map, (int64_t)MAIN_REGION_OFFSET);
-    cbor_encode_int(&map, META_KEY_MAIN_REGION_SIZE);   cbor_encode_int(&map, 0);
+    // Match the Prusa app's MINIMAL Meta: only aux_region_offset. We omit
+    // main_region_offset (it defaults to the meta size — Main immediately follows),
+    // main_region_size, and aux_region_size. A main_region_size of 0, which we used
+    // to write, reads as "Main is empty" to the app and made it reject our tags.
     cbor_encode_int(&map, META_KEY_AUX_REGION_OFFSET);  cbor_encode_int(&map, (int64_t)auxOffset);
-    cbor_encode_int(&map, META_KEY_AUX_REGION_SIZE);    cbor_encode_int(&map, (int64_t)AUX_REGION_SIZE);
     cbor_encoder_close_container(&enc, &map);
-    size_t metaLen = cbor_encoder_get_buffer_size(&enc, metaBuf);
-    if (metaLen > META_SECTION_SIZE) return SIZE_MAX;
+    // DEFINITE-length Meta — the Prusa app rejects indefinite CBOR.
+    size_t metaLen = cborMapToDefinite(metaBuf, cbor_encoder_get_buffer_size(&enc, metaBuf));
+    if (metaLen == 0 || metaLen > META_SECTION_SIZE) return SIZE_MAX;
     memcpy(outBuf + p, metaBuf, metaLen);
+    // Main sits immediately after the Meta (no padding), like Prusa's tags — and
+    // the decoder's default for an absent main_region_offset is this same meta size.
+    const size_t mainOff = metaLen;
 
-    // Empty Main CBOR (at payload offset MAIN_REGION_OFFSET)
-    outBuf[p + MAIN_REGION_OFFSET]     = 0xBF;
-    outBuf[p + MAIN_REGION_OFFSET + 1] = 0xFF;
+    // Empty Main CBOR (right after the Meta). 0xA0 is a DEFINITE-length empty map —
+    // NOT 0xBF 0xFF (indefinite), which the app rejects.
+    outBuf[p + mainOff] = 0xA0;
 
-    // Empty Aux CBOR (block-aligned at auxAbsStart)
-    outBuf[auxAbsStart]     = 0xBF;
-    outBuf[auxAbsStart + 1] = 0xFF;
+    // Empty Aux CBOR (block-aligned at auxAbsStart), likewise definite.
+    outBuf[auxAbsStart] = 0xA0;
 
     // TLV terminator
     outBuf[terminatorPos] = 0xFE;
 
     if (outMeta) {
-        outMeta->main_region_offset = (uint16_t)MAIN_REGION_OFFSET;
+        outMeta->main_region_offset = (uint16_t)mainOff;
         outMeta->main_region_size   = 0;
         outMeta->aux_region_offset  = (uint16_t)auxOffset;
         outMeta->aux_region_size    = (uint16_t)AUX_REGION_SIZE;

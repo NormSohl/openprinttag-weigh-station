@@ -498,13 +498,21 @@ void syncTask(void* param) {
             const uint16_t mainOff = gTagMeta.main_region_offset;
             xSemaphoreGive(gTagMutex);
 
-            // Writable only if the tag carries OUR layout. Our formatted tags put
-            // a Meta section first, so Main sits at a non-zero offset; a foreign
-            // writer (e.g. the Prusa app) puts Main at offset 0 with no Meta. Using
-            // the layout — not "is it in the store yet" — keeps a foreign tag
-            // read-only on EVERY placement, including after we have adopted it and
-            // it now takes the known path below, so a later record edit can never
-            // rewrite another vendor's tag.
+            // XXX BROKEN SIGNAL — needs a redesign (see below). This once assumed
+            // "a foreign writer (Prusa app) puts Main at offset 0 with no Meta,
+            // ours puts a Meta first so Main is at a non-zero offset." The OPT
+            // reference (utils/nfc_initialize.py + record.py) proves that false:
+            // Prusa ALSO writes a Meta first (just {aux_region_offset}) with Main
+            // defaulting to the meta size (~4) — and as of 2026-08-14 we match that
+            // layout byte-for-byte on purpose. So mainOff is ~4 for BOTH, this is
+            // essentially always false now, and there is no longer any byte-level
+            // way to tell our tag from a genuine vendor tag.
+            //
+            // Consequence until redesigned: foreign tags are NO LONGER protected —
+            // placing a genuine Prusa spool whose Main differs from our adopted
+            // record will rewrite its Main. The real signal has to be ownership
+            // (did WE mint this UUID / did a human adopt it), tracked on the record,
+            // not the tag bytes. Do not place a vendor tag you care about until then.
             sForeign = (mainOff == 0);
 
             if (isNilUUID(main.instance_uuid)) {
