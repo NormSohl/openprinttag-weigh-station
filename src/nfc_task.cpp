@@ -24,6 +24,10 @@ extern SemaphoreHandle_t    gSpiMutex;
 // present, regardless of how it currently classifies. The escape hatch for a
 // tag left half-written by a failed format.
 extern volatile bool        gTagForceFormat;
+// Non-empty only in SoftAP fallback (set by syncTask). Its emptiness is how any
+// task tells "joined a network" from "serving our own AP" without touching the
+// WiFi stack — see idleState().
+extern char                 gApSsid[24];
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
@@ -46,6 +50,16 @@ static DeviceState getState() {
     DeviceState s = gState;
     xSemaphoreGive(gStateMutex);
     return s;
+}
+
+// The resting screen to fall back to when no tag is present. It depends on WiFi:
+// green "Seattle Makers" Idle when joined, orange "Weigh Station / Join WiFi"
+// IdleNoWiFi when on our own SoftAP. nfcTask must NOT hardcode Idle for this —
+// a tag removal, or even a stray PN5180 RF false-trigger, would otherwise stomp
+// the IdleNoWiFi that syncTask set and paint a "joined" screen on a station that
+// never joined. syncTask owns which of the two is correct via gApSsid.
+static DeviceState idleState() {
+    return gApSsid[0] ? DeviceState::IdleNoWiFi : DeviceState::Idle;
 }
 
 // Human-readable ISO15693 status. The distinction matters for diagnosis:
@@ -321,7 +335,7 @@ void nfcTask(void* param) {
         // ── Debounce ──────────────────────────────────────────────────────────
         if (state == DeviceState::TagDetecting) {
             if (!tagPresent || memcmp(detectedUid, uid, 8) != 0) {
-                setState(DeviceState::Idle);  // false trigger or UID changed
+                setState(idleState());  // false trigger or UID changed
                 debounceHits = 0;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
@@ -412,7 +426,7 @@ void nfcTask(void* param) {
 
         if (state == DeviceState::AwaitingFormatConfirm) {
             if (!tagPresent) {
-                setState(DeviceState::Idle);  // removed during countdown — cancelled
+                setState(idleState());  // removed during countdown — cancelled
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -554,7 +568,7 @@ void nfcTask(void* param) {
 
         // ── Tag read error — wait for removal ─────────────────────────────────
         if (state == DeviceState::TagReadError) {
-            if (!tagPresent) setState(DeviceState::Idle);
+            if (!tagPresent) setState(idleState());
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -565,19 +579,34 @@ void nfcTask(void* param) {
         if (state == DeviceState::ForeignTagFound
             || state == DeviceState::RegisteringForeignTag
             || state == DeviceState::ValidTagFound) {
-            if (!tagPresent) setState(DeviceState::Idle);
+            if (!tagPresent) setState(idleState());
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
 
         // ── Present / WeighingAndSync / Reconciling ───────────────────────────
+        // Everything past here belongs to the states where a tag has been
+        // classified and is being weighed or reconciled. Guard on the STATE, not
+        // just tag-presence: the block below drives itself to idle when no tag is
+        // present, and Boot / WiFiSetupMode also have no tag — so without this
+        // guard they fall through into it, and nfcTask stomps the portal screen
+        // syncTask just raised back to idle roughly twice a second. That is the
+        // whole reason the "WiFi Setup" screen never appeared. nfcTask does not
+        // own Boot or WiFiSetupMode; leave whatever syncTask set intact.
+        if (state != DeviceState::Present
+            && state != DeviceState::WeighingAndSync
+            && state != DeviceState::ReconcilingMainSection) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         if (!tagPresent) {
             if (++missCount >= 2) {
                 missCount = 0;
                 sRawLen = 0;
                 sPayloadOffset = SIZE_MAX;
                 sPayloadLen    = 0;
-                setState(DeviceState::Idle);
+                setState(idleState());
             }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
