@@ -102,9 +102,25 @@ Each phase compiles, flashes, and is bench-tested before the next. Serial toolin
   UUID minted + stub #9 created). The `Boot`/`WiFiSetupMode` no-poll gate still reads `gState`
   (read-only). **Remaining nfc `gState` write:** the `ReconcilingMainSection → Present` line —
   a weigh state, deliberately left for Phase 4.
-- **Phase 4 — weigh/reconcile group → controller** (`WeighingAndSync`/`Present`/
-  `ReconcilingMainSection`/`ForeignTagFound`/`RegisteringForeignTag`). Fixes the last
-  double-write (`Present`, by syncTask and nfcTask). **← next**
+- **Phase 4 — weigh/reconcile group → controller. DONE, validated on hardware 2026-08-13.**
+  syncTask now drives a local `SyncPhase` machine (`Resolving`/`Foreign`/`Registering`/
+  `Weighing`/`Holding`/`Reconciling`) and posts facts — `StubReady`/`BeginWeigh`/
+  `SpoolForeign`/`ForeignRegistering`/`Weighed`/`NeedsReconcile` — plus nfcTask posts
+  `ReconcileDone`. The controller writes every weigh state. **The local phase was
+  load-bearing, not cosmetic:** the old blocks ran back-to-back with no delay and relied
+  on synchronous `setState` to advance; posting events while keying on `gState` would let
+  syncTask re-enter the weigh block on gState lag and append a DUPLICATE weigh — corrupting
+  the consumption rollup (primary data). Advancing `sphase` synchronously prevents it.
+  Verified on hardware: a foreign adopt + weigh wrote exactly 3 log lines (one Weigh) and
+  the count stayed stable while the spool sat — no re-weighing.
+
+  **`gState` now has exactly one writer: the controller.** nfcTask and syncTask only post
+  events and read `gState`; both their `setState()` helpers are deleted. The two-writer
+  seam that motivated this whole refactor is closed.
+- **Phase 5 — command-driven NFC (optional).** Fold the PN5180 I/O behind the controller's
+  own cmd/reply queues with bounded waits, so a hung reader times out instead of holding
+  the bus. This is the piece that also addresses the PN5180-hang-freezes-display quirk;
+  it is a further cleanup, not required for single-writer (already achieved). **← next**
 - **Phase 4 — weigh/reconcile group → controller** (store + weigh-append + reconcile move in).
 - **Phase 5 — physical writes**: replace `gWrite*Pending` flags with `WRITE_*` commands +
   `WriteResult` replies; NFC becomes fully command-driven.

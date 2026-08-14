@@ -29,19 +29,9 @@ extern volatile int         gPortalSecsLeft;
 extern volatile bool        gClockSet;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
-
-static void setState(DeviceState s) {
-    xSemaphoreTake(gStateMutex, portMAX_DELAY);
-#ifdef STATE_TRACE
-    // gState still has more than one writer during the phased refactor (the
-    // controller owns the WiFi/idle group; nfcTask/syncTask own the tag states);
-    // this trace makes the handoffs visible. See docs/design/state-machine-ownership.md.
-    if (gState != s)
-        Serial.printf("[sync] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
-#endif
-    gState = s;
-    xSemaphoreGive(gStateMutex);
-}
+// syncTask no longer WRITES gState (phase 4): it drives its own SyncPhase and
+// posts events to the controller, the single writer. It still reads gState to
+// detect entry into / exit from the weigh flow.
 
 static DeviceState getState() {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
@@ -364,6 +354,19 @@ void syncTask(void* param) {
     // from stale to wrong.
     bool wasUp = (WiFi.status() == WL_CONNECTED);
 
+    // Phase 4: syncTask drives the weigh/reconcile flow off this LOCAL phase and
+    // posts events; the controller writes the weigh states. Advancing the phase
+    // synchronously — unlike gState, which the controller updates a beat later —
+    // is what stops syncTask re-entering the Weighing block and appending a
+    // DUPLICATE weigh, which would corrupt the consumption rollup (primary data).
+    // Mapping: Resolving = ValidTagFound handling, Foreign = ForeignTagFound,
+    // Registering = RegisteringForeignTag, Weighing = WeighingAndSync,
+    // Holding = Present, Reconciling = ReconcilingMainSection. Idle = nothing on
+    // the scale (the switch below resets to it whenever gState reads idle).
+    enum class SyncPhase { Idle, Resolving, Foreign, Registering, Weighing,
+                           Holding, Reconciling };
+    SyncPhase sphase = SyncPhase::Idle;
+
     for (;;) {
         DeviceState state = getState();
 
@@ -419,6 +422,7 @@ void syncTask(void* param) {
             case DeviceState::IdleNoWiFi:
                 sSpoolId = -1; sSnapshot = {};
                 gSpoolId = -1; gSpoolNeedsOnboarding = false;
+                sphase = SyncPhase::Idle;   // tag gone (or never arrived)
                 // If station WiFi comes up later, upgrade to Idle and switch the
                 // shown address from the SoftAP IP to the mDNS hostname.
                 if (state == DeviceState::IdleNoWiFi && WiFi.status() == WL_CONNECTED) {
@@ -471,10 +475,15 @@ void syncTask(void* param) {
                 break;
         }
 
-        // ── ValidTagFound ─────────────────────────────────────────────────────
+        // Reaching past the switch means gState is a weigh state (default case).
+        // Enter the local flow on the first one; from here sphase advances
+        // synchronously and syncTask no longer keys the flow on gState.
+        if (sphase == SyncPhase::Idle) sphase = SyncPhase::Resolving;
+
+        // ── Resolving (controller shows ValidTagFound) ────────────────────────
         // nfcTask confirmed an OPT tag. gTagMain is populated from the NFC read
         // (nil UUID = freshly formatted blank; real UUID = known or foreign spool).
-        if (state == DeviceState::ValidTagFound) {
+        if (sphase == SyncPhase::Resolving) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
             xSemaphoreGive(gTagMutex);
@@ -509,7 +518,8 @@ void syncTask(void* param) {
                 gWriteMainPending = true;
 
                 sSnapshot = main;
-                setState(DeviceState::Present);
+                ctrlPost(CtrlEvent::StubReady);
+                sphase = SyncPhase::Holding;
 
             } else {
                 char hex[33]; uuidToHex32(main.instance_uuid, hex);
@@ -529,23 +539,26 @@ void syncTask(void* param) {
                         gWriteMainPending = true;
                     }
                     sSnapshot = updated;
-                    setState(DeviceState::WeighingAndSync);
+                    ctrlPost(CtrlEvent::BeginWeigh);
+                    sphase = SyncPhase::Weighing;
                 } else {
-                    setState(DeviceState::ForeignTagFound);
+                    ctrlPost(CtrlEvent::SpoolForeign);
+                    sphase = SyncPhase::Foreign;
                 }
             }
             continue;
         }
 
-        // ── ForeignTagFound → RegisteringForeignTag ───────────────────────────
-        if (state == DeviceState::ForeignTagFound) {
-            setState(DeviceState::RegisteringForeignTag);
+        // ── Foreign → Registering (controller shows ForeignTagFound) ──────────
+        if (sphase == SyncPhase::Foreign) {
+            ctrlPost(CtrlEvent::ForeignRegistering);
+            sphase = SyncPhase::Registering;
             continue;
         }
 
         // A well-formed tag we've never seen (genuine Prusament, another maker's
         // tooling). Decode its own Main data and create a local record from it.
-        if (state == DeviceState::RegisteringForeignTag) {
+        if (sphase == SyncPhase::Registering) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
             xSemaphoreGive(gTagMutex);
@@ -591,13 +604,17 @@ void syncTask(void* param) {
             gWriteMainPending = true;
 
             sSnapshot = main;
-            setState(DeviceState::WeighingAndSync);
+            ctrlPost(CtrlEvent::BeginWeigh);
+            sphase = SyncPhase::Weighing;
             continue;
         }
 
-        // ── WeighingAndSync ───────────────────────────────────────────────────
-        // Weigh once; write remaining/used to both the tag Aux and the log.
-        if (state == DeviceState::WeighingAndSync) {
+        // ── Weighing (controller shows WeighingAndSync) ───────────────────────
+        // Weigh ONCE; write remaining/used to both the tag Aux and the log. sphase
+        // advances to Holding synchronously below, so this block cannot re-run for
+        // the same placement even while gState still reads WeighingAndSync — which
+        // is exactly the duplicate-weigh the local phase exists to prevent.
+        if (sphase == SyncPhase::Weighing) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
             xSemaphoreGive(gTagMutex);
@@ -630,21 +647,24 @@ void syncTask(void* param) {
             w.used_g      = used;
             storeAppendEvent(w);
 
-            setState(DeviceState::Present);
+            ctrlPost(CtrlEvent::Weighed);
+            sphase = SyncPhase::Holding;
             continue;
         }
 
-        // ── ReconcilingMainSection ────────────────────────────────────────────
-        // nfcTask owns the physical write and returns to Present when done.
-        if (state == DeviceState::ReconcilingMainSection) {
+        // ── Reconciling (controller shows ReconcilingMainSection) ─────────────
+        // nfcTask does the physical Main write and posts ReconcileDone; the
+        // controller then shows Present again. Watch for that and resume Holding.
+        if (sphase == SyncPhase::Reconciling) {
+            if (state == DeviceState::Present) sphase = SyncPhase::Holding;
             vTaskDelay(pdMS_TO_TICKS(RECONCILE_POLL_MS));
             continue;
         }
 
-        // ── Present ───────────────────────────────────────────────────────────
+        // ── Holding (controller shows Present) ────────────────────────────────
         // Steady state: poll the local store (cheap) and, if a web-side edit has
         // changed this spool's identity since placement, rewrite the tag's Main.
-        if (state == DeviceState::Present) {
+        if (sphase == SyncPhase::Holding) {
             if (sSpoolId > 0) {
                 char hex[33];
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
@@ -663,7 +683,8 @@ void syncTask(void* param) {
                         xSemaphoreGive(gTagMutex);
                         gWriteMainPending = true;
                         sSnapshot = updated;
-                        setState(DeviceState::ReconcilingMainSection);
+                        ctrlPost(CtrlEvent::NeedsReconcile);
+                        sphase = SyncPhase::Reconciling;
                     }
                 }
             }

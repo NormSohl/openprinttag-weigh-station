@@ -65,6 +65,22 @@ void controllerTask(void* param) {
                 setState(DeviceState::ValidTagFound);           break;
             case CtrlEvent::TagReadErr:
                 setState(DeviceState::TagReadError);            break;
+
+            // Weigh/reconcile facts from syncTask -> the matching gState.
+            case CtrlEvent::StubReady:
+                setState(DeviceState::Present);                 break;
+            case CtrlEvent::BeginWeigh:
+                setState(DeviceState::WeighingAndSync);         break;
+            case CtrlEvent::SpoolForeign:
+                setState(DeviceState::ForeignTagFound);         break;
+            case CtrlEvent::ForeignRegistering:
+                setState(DeviceState::RegisteringForeignTag);   break;
+            case CtrlEvent::Weighed:
+                setState(DeviceState::Present);                 break;
+            case CtrlEvent::NeedsReconcile:
+                setState(DeviceState::ReconcilingMainSection);  break;
+            case CtrlEvent::ReconcileDone:
+                setState(DeviceState::Present);                 break;
         }
     }
 }

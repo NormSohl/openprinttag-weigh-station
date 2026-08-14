@@ -35,19 +35,9 @@ static size_t  sPayloadOffset = SIZE_MAX;  // byte offset of NDEF payload in sRa
 static size_t  sPayloadLen    = 0;         // ...and how many bytes of it are formatted
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-static void setState(DeviceState s) {
-    xSemaphoreTake(gStateMutex, portMAX_DELAY);
-#ifdef STATE_TRACE
-    // gState still has more than one writer during the phased refactor (the
-    // controller owns the WiFi/idle group; nfcTask/syncTask own the tag states);
-    // this trace makes the handoffs visible. See docs/design/state-machine-ownership.md.
-    if (gState != s)
-        Serial.printf("[nfc] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
-#endif
-    gState = s;
-    xSemaphoreGive(gStateMutex);
-}
+// nfcTask no longer WRITES gState (phase 4): it drives its own NfcPhase and posts
+// events to the controller, the single writer. It still reads gState — the
+// Boot/WiFiSetupMode no-poll gate, and the ReconcilingMainSection check.
 
 static DeviceState getState() {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
@@ -706,7 +696,7 @@ void nfcTask(void* param) {
             // never match, so staying in ReconcilingMainSection would pin the
             // display on "Updating tag..." for as long as the spool sat there.
             if (getState() == DeviceState::ReconcilingMainSection)
-                setState(DeviceState::Present);
+                ctrlPost(CtrlEvent::ReconcileDone);
         }
 
         vTaskDelay(pdMS_TO_TICKS(200));

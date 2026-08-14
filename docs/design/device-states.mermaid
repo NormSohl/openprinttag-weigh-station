@@ -1,61 +1,61 @@
 stateDiagram-v2
-    %% Ownership after refactor phases 1-3 (docs/design/state-machine-ownership.md).
-    %% Transition labels are tagged with the task that WRITES the target state:
-    %%   [ctrl] = controllerTask, the single writer of the WiFi/idle group AND the
-    %%            tag-detection states. It writes them in response to events:
-    %%            syncTask posts WiFi events; nfcTask posts tag-fact events
-    %%            (TagDetecting/TagBlank/AwaitConfirm/FormatConfirmed/TagValid/
-    %%            TagReadErr/ReturnToIdle) from its own local NfcPhase machine.
-    %%   [sync] = syncTask writes directly — the weigh states (phase 4 will move these).
-    %%   [nfc]  = nfcTask writes directly — ONLY ReconcilingMainSection->Present now
-    %%            (phase 4 will move it; it is the last state written by two tasks).
+    %% Ownership after refactor phases 1-4 (docs/design/state-machine-ownership.md).
+    %% controllerTask is the SINGLE writer of gState. Every transition below is
+    %% written by it, in response to an event posted by another task:
+    %%   - syncTask posts WiFi events (WifiPortalUp/Joined/SoftAP) and weigh/
+    %%     reconcile events (StubReady/BeginWeigh/SpoolForeign/ForeignRegistering/
+    %%     Weighed/NeedsReconcile), driven off its own local SyncPhase.
+    %%   - nfcTask posts tag-detection events (TagDetecting/TagBlank/AwaitConfirm/
+    %%     FormatConfirmed/TagValid/TagReadErr/ReconcileDone) and ReturnToIdle,
+    %%     driven off its own local NfcPhase.
+    %% nfcTask and syncTask no longer write gState at all. Labels show the trigger;
     %% "idle*" = the controller picks Idle (joined) vs IdleNoWiFi (SoftAP).
 
     [*] --> Boot
 
-    Boot --> WiFiSetupMode: [ctrl] no saved creds -> portal opens
-    Boot --> Idle: [ctrl] saved creds join immediately
+    Boot --> WiFiSetupMode: no saved creds -> portal opens (WifiPortalUp)
+    Boot --> Idle: saved creds join immediately (WifiJoined)
     note right of Boot
         nfcTask does NOT poll the reader in Boot or
         WiFiSetupMode (the SoftAP-RF bus-hang fix,
         9280424); it holds local phase Waiting there.
     end note
 
-    WiFiSetupMode --> Idle: [ctrl] credentials accepted, joined
-    WiFiSetupMode --> IdleNoWiFi: [ctrl] portal timeout -> SoftAP fallback
+    WiFiSetupMode --> Idle: credentials accepted (WifiJoined)
+    WiFiSetupMode --> IdleNoWiFi: portal timeout -> SoftAP (WifiSoftAP)
 
-    Idle --> TagDetecting: [ctrl] nfc reports a tag (1st read)
-    IdleNoWiFi --> TagDetecting: [ctrl] nfc reports a tag (1st read)
-    IdleNoWiFi --> Idle: [ctrl] station WiFi comes up later
+    Idle --> TagDetecting: nfc reports a tag (TagDetecting)
+    IdleNoWiFi --> TagDetecting: nfc reports a tag (TagDetecting)
+    IdleNoWiFi --> Idle: station WiFi comes up later (WifiJoined)
 
-    TagDetecting --> Idle: [ctrl] false trigger (idle*)
-    TagDetecting --> TagReadError: [ctrl] 3 reads, inconsistent/corrupt
-    TagDetecting --> BlankTagFound: [ctrl] 3 reads confirm, unformatted
-    TagDetecting --> ValidTagFound: [ctrl] 3 reads confirm, valid OPT
+    TagDetecting --> Idle: false trigger (ReturnToIdle, idle*)
+    TagDetecting --> TagReadError: inconsistent/corrupt (TagReadErr)
+    TagDetecting --> BlankTagFound: 3 reads confirm, unformatted (TagBlank)
+    TagDetecting --> ValidTagFound: 3 reads confirm, valid OPT (TagValid)
 
-    TagReadError --> Idle: [ctrl] tag removed (idle*)
+    TagReadError --> Idle: tag removed (ReturnToIdle, idle*)
 
-    BlankTagFound --> AwaitingFormatConfirm: [ctrl] prompt + 5s countdown
+    BlankTagFound --> AwaitingFormatConfirm: prompt + 5s countdown (AwaitConfirm)
     note right of AwaitingFormatConfirm
         Confirm-by-inaction: live 5..4..3..2..1 countdown,
         LED blinks accelerating. Remove to cancel; leave
         in place to 0 to confirm. nfcTask times it locally.
     end note
-    AwaitingFormatConfirm --> FormattingAndRegistering: [ctrl] countdown 0, tag present
-    AwaitingFormatConfirm --> Idle: [ctrl] removed during countdown (idle*)
-    FormattingAndRegistering --> ValidTagFound: [ctrl] formatted (blank, nil UUID)
+    AwaitingFormatConfirm --> FormattingAndRegistering: countdown 0 (FormatConfirmed)
+    AwaitingFormatConfirm --> Idle: removed during countdown (ReturnToIdle, idle*)
+    FormattingAndRegistering --> ValidTagFound: formatted, nil UUID (TagValid)
 
-    ValidTagFound --> Present: [sync] blank -> mint UUID + stub record (needs onboarding)
-    ValidTagFound --> ForeignTagFound: [sync] uuid not in local store (valid, unregistered)
-    ValidTagFound --> WeighingAndSync: [sync] uuid matches a known spool
+    ValidTagFound --> Present: blank -> mint UUID + stub record (StubReady)
+    ValidTagFound --> ForeignTagFound: uuid not in local store (SpoolForeign)
+    ValidTagFound --> WeighingAndSync: uuid matches a known spool (BeginWeigh)
 
-    ForeignTagFound --> RegisteringForeignTag: [sync] adopt product + create record from tag's Main
-    RegisteringForeignTag --> WeighingAndSync: [sync] local record created
-    ForeignTagFound --> Idle: [ctrl] tag removed (nfc Held -> ReturnToIdle, idle*)
-    RegisteringForeignTag --> Idle: [ctrl] tag removed mid-registration (idle*)
+    ForeignTagFound --> RegisteringForeignTag: adopt product + create record (ForeignRegistering)
+    RegisteringForeignTag --> WeighingAndSync: local record created (BeginWeigh)
+    ForeignTagFound --> Idle: tag removed (ReturnToIdle, idle*)
+    RegisteringForeignTag --> Idle: tag removed mid-registration (ReturnToIdle, idle*)
 
-    WeighingAndSync --> Present: [sync] weigh once; write tag Aux; append weigh event
+    WeighingAndSync --> Present: weigh once; write Aux; append weigh event (Weighed)
 
-    Present --> ReconcilingMainSection: [sync] 1s poll detects a local-store edit
-    ReconcilingMainSection --> Present: [nfc] tag Main rewritten, snapshot updated
-    Present --> Idle: [ctrl] tag removed, 2 misses (nfc Held -> ReturnToIdle, idle*)
+    Present --> ReconcilingMainSection: 1s poll detects a local-store edit (NeedsReconcile)
+    ReconcilingMainSection --> Present: nfc rewrote tag Main (ReconcileDone)
+    Present --> Idle: tag removed, 2 misses (ReturnToIdle, idle*)

@@ -23,6 +23,17 @@ enum class CtrlEvent : uint8_t {
     FormatConfirmed,// countdown elapsed / forced format  -> FormattingAndRegistering
     TagValid,       // decoded OK (or just formatted)     -> ValidTagFound
     TagReadErr,     // unreadable / undecodable           -> TagReadError
+
+    // Phase 4: syncTask reports weigh/reconcile facts; the controller writes the
+    // matching gState. syncTask drives its own SyncPhase synchronously so it
+    // never double-processes on gState lag.
+    StubReady,      // blank onboarded, stub record made  -> Present
+    BeginWeigh,     // resolved to a known/registered spool-> WeighingAndSync
+    SpoolForeign,   // valid tag, not in the store        -> ForeignTagFound
+    ForeignRegistering, // adopting the foreign tag       -> RegisteringForeignTag
+    Weighed,        // weighed once, Aux + log written    -> Present
+    NeedsReconcile, // a web-side edit diverged from tag  -> ReconcilingMainSection
+    ReconcileDone,  // nfcTask finished the Main write     -> Present
 };
 
 extern QueueHandle_t gCtrlQueue;
