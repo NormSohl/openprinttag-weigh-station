@@ -29,10 +29,17 @@ uint32_t millis() {
 }
 
 // ── LittleFS ──────────────────────────────────────────────────────────────────
+// mingw's mkdir() takes only the path (no mode); POSIX takes (path, mode).
+#ifdef _WIN32
+static inline int shimMkdir(const char* p) { return ::mkdir(p); }
+#else
+static inline int shimMkdir(const char* p) { return ::mkdir(p, 0755); }
+#endif
+
 static void mkdirp(const std::string& d) {
     std::string cur;
     for (size_t i = 0; i <= d.size(); i++) {
-        if (i == d.size() || d[i] == '/') { if (!cur.empty()) ::mkdir(cur.c_str(), 0755); }
+        if (i == d.size() || d[i] == '/') { if (!cur.empty()) shimMkdir(cur.c_str()); }
         if (i < d.size()) cur += d[i];
     }
 }

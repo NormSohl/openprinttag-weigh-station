@@ -8,9 +8,16 @@
 #include <cstdint>
 #include <string>
 
-// strlcpy/strlcat are BSD; glibc only gained them in 2.38. Define our own
-// unconditionally under a different name would change src/, so guard instead.
-#if !defined(__GLIBC__) || !__GLIBC_PREREQ(2, 38)
+// strlcpy/strlcat are BSD; glibc only gained them in 2.38. Provide our own
+// everywhere they are missing (older glibc, mingw, macOS). The __GLIBC_PREREQ
+// test must be nested inside defined(__GLIBC__) — on mingw that macro does not
+// exist, and referencing it in the #if is a hard preprocessor error.
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#  if __GLIBC_PREREQ(2, 38)
+#    define OPT_SHIM_HAVE_STRLCPY 1
+#  endif
+#endif
+#ifndef OPT_SHIM_HAVE_STRLCPY
 static inline size_t strlcpy(char* d, const char* s, size_t n) {
     size_t sl = strlen(s);
     if (n) { size_t c = (sl >= n) ? n - 1 : sl; memcpy(d, s, c); d[c] = 0; }
@@ -22,6 +29,15 @@ static inline size_t strlcat(char* d, const char* s, size_t n) {
     if (sl < n - dl) { memcpy(d + dl, s, sl + 1); }
     else { memcpy(d + dl, s, n - dl - 1); d[n - 1] = 0; }
     return dl + sl;
+}
+#endif
+
+// mingw has no gmtime_r (store.cpp uses it); it does have the C11 gmtime_s,
+// whose argument order is the reverse. Bridge it so src/ stays unchanged.
+#ifdef _WIN32
+#include <ctime>
+static inline struct tm* gmtime_r(const time_t* t, struct tm* out) {
+    return gmtime_s(out, t) == 0 ? out : nullptr;
 }
 #endif
 
