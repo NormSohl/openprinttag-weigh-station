@@ -44,6 +44,17 @@ Steps 1-5 of the checklist below all passed. What each one proved:
 - **`STACK` was not captured** — the monitor was reconnected, which rebooted the board and reset every high-water mark. Run it after normal use, not after a fresh boot. Note it reports only the four project tasks: **the web handlers run on ESPAsyncWebServer's own `async_tcp` task, which `STACK` does not measure**, so a stack problem in `/reorder` or `/products` would surface as a crash rather than a number.
 - **The clock is never set, so every event is stamped 1970.** See *The clock* in `CLAUDE.md`.
 
+### Verified on hardware (2026-08-13, current `main` incl. `b98cd1a`)
+
+Flashed current `main` — **compiled clean**, the first real compile since the sandbox lost the PlatformIO registry, so the source-only worry below is now partly retired for everything built into this image.
+
+- **NVS spool-ID counter survives a reflash (`b98cd1a`).** The decisive test, because the old bug only bit across an upload (`boot_app0.bin` at `0xE000` erased the counter's high NVS pages). `WIPE ALL` → `SEED 5 5` advanced the counter to `#6`; then a plain `pio run -t upload` (no erase — the log survives) and reboot. The boot log read `[store] ready: 5 spools, 30 log lines, next id #6` with **no** `id counter was #1 (key ABSENT) … advanced to #6` line. That line is the tell: under the old table it fired on every reflash; its absence means the counter now lives entirely below `0xE000` and the toolchain write no longer touches it. `LOGSTATS` confirmed `next id #6`. **The value alone is not proof** — `reconcileIdCounter_()` rebuilds it from the log regardless — so the check is always the *absence of the advance line*, not the number.
+- **Still cosmetic, not fixed:** `[E][Preferences.cpp:50] begin(): nvs_open failed: NOT_FOUND` still prints once at boot — a read-only probe of a namespace that does not exist yet. Harmless; guard the offending `begin()` with `isKey()`/read-write-create if it ever gets annoying.
+
+**Not yet validated this session:** the NTP clock (`bc9b307`) — the board was on SoftAP fallback (no WiFi saved), where SNTP cannot reach a server, so `clock: NOT SET`. Needs the station joined to a real 2.4 GHz network via the captive portal first, then: watch for `[time] clock set from NTP`, `LOGSTATS` → `clock: set`, `/api/status` → `"clock_set":true`, and a post-sync weigh bucketing under the real month in `DUMP usage` rather than `unknown`.
+
+**Driving it from the host:** the board's native USB is a COM port (COM5 here). PlatformIO builds/flashes over it, and a `System.IO.Ports.SerialPort` at 115200 sends serial commands and reads boot logs without the interactive monitor. Reset **into run mode** by pulsing RTS (EN) low→high while keeping DTR (GPIO0) high — toggling *both* drops the S3 into download mode (`waiting for download`).
+
 ### Due on the bench (2026-08-10)
 
 **Nothing since `dafb4d5` has been flashed** — that is the build that validated Aux write-back, and everything after it is source-only. The PlatformIO registry is unreachable from the Claude Code sandbox, so `pio run` is the first real compile. Expect to fix compile errors before any of this runs; that is the expected state, not a surprise.
