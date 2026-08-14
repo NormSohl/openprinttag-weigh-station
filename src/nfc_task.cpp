@@ -56,6 +56,21 @@ static DeviceState getState() {
     return s;
 }
 
+// Phase 3 of the state-machine refactor (docs/design/state-machine-ownership.md):
+// nfcTask drives its own tag lifecycle off this LOCAL phase instead of reading
+// gState, and reports facts to the controller (ctrlPost), which is the single
+// writer of the detection states. Mapping to gState:
+//   Waiting        = Idle / IdleNoWiFi        (owned by the controller)
+//   Debouncing     = TagDetecting
+//   BlankDetected  = BlankTagFound            (one tick, then AwaitingFormatConfirm)
+//   AwaitingConfirm= AwaitingFormatConfirm
+//   Formatting     = FormattingAndRegistering
+//   Held           = ValidTagFound + the syncTask-owned weigh states; nfcTask here
+//                    only services Aux/Main write-backs and watches for removal
+//   ErrorHeld      = TagReadError
+enum class NfcPhase { Waiting, Debouncing, BlankDetected, AwaitingConfirm,
+                      Formatting, Held, ErrorHeld };
+
 // Human-readable ISO15693 status. The distinction matters for diagnosis:
 //   NO_CARD              -> the tag never answered. RF energy, not logic. A write
 //                           needs far more field strength than a read, so a tag
@@ -278,6 +293,7 @@ void nfcTask(void* param) {
     uint8_t debounceHits = 0;
     uint8_t missCount    = 0;
     TickType_t confirmStart = 0;
+    NfcPhase phase       = NfcPhase::Waiting;
 
     for (;;) {
         DeviceState state = getState();
@@ -290,6 +306,7 @@ void nfcTask(void* param) {
         // "WiFi Setup" screen someone is standing there trying to read. syncTask
         // owns these states; leave the bus alone until a tag can actually matter.
         if (state == DeviceState::Boot || state == DeviceState::WiFiSetupMode) {
+            phase = NfcPhase::Waiting;
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -325,23 +342,25 @@ void nfcTask(void* param) {
         }
         spiBusGive();
 
-        // ── States where we're waiting for a tag ──────────────────────────────
-        if (state == DeviceState::Idle || state == DeviceState::IdleNoWiFi) {
+        // ── Waiting for a tag (controller shows Idle / IdleNoWiFi) ────────────
+        if (phase == NfcPhase::Waiting) {
             if (tagPresent) {
                 memcpy(uid, detectedUid, 8);
                 numBlocks    = detectedNumBlocks;
                 blockSize    = detectedBlockSize;
                 debounceHits = 1;
-                setState(DeviceState::TagDetecting);
+                phase = NfcPhase::Debouncing;
+                ctrlPost(CtrlEvent::TagDetecting);
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        // ── Debounce ──────────────────────────────────────────────────────────
-        if (state == DeviceState::TagDetecting) {
+        // ── Debounce (controller shows TagDetecting) ──────────────────────────
+        if (phase == NfcPhase::Debouncing) {
             if (!tagPresent || memcmp(detectedUid, uid, 8) != 0) {
                 ctrlPost(CtrlEvent::ReturnToIdle);  // false trigger or UID changed
+                phase = NfcPhase::Waiting;
                 debounceHits = 0;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
@@ -359,7 +378,8 @@ void nfcTask(void* param) {
                 Serial.printf("[nfc] could not read the tag (%u blocks x %u B). "
                               "RF/coupling, or the tag moved mid-read.\n",
                               (unsigned)numBlocks, (unsigned)blockSize);
-                setState(DeviceState::TagReadError);
+                ctrlPost(CtrlEvent::TagReadErr);
+                phase = NfcPhase::ErrorHeld;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -369,13 +389,15 @@ void nfcTask(void* param) {
             if (gTagForceFormat) {
                 gTagForceFormat = false;
                 Serial.println("[nfc] TAGFORMAT: forcing a reformat of this tag");
-                setState(DeviceState::FormattingAndRegistering);
+                ctrlPost(CtrlEvent::FormatConfirmed);
+                phase = NfcPhase::Formatting;
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
 
             if (optIsBlank(sRawBuf, sRawLen)) {
-                setState(DeviceState::BlankTagFound);
+                ctrlPost(CtrlEvent::TagBlank);
+                phase = NfcPhase::BlankDetected;
             } else {
                 OptMeta  meta = {};
                 OptMain  main = {};
@@ -402,7 +424,8 @@ void nfcTask(void* param) {
                                       ? "starts 0xE1 — NDEF-formatted, so probably a "
                                         "PARTIAL format. Send TAGFORMAT to rewrite it."
                                       : "no NDEF magic — foreign or corrupt content.");
-                    setState(DeviceState::TagReadError);
+                    ctrlPost(CtrlEvent::TagReadErr);
+                    phase = NfcPhase::ErrorHeld;
                 } else {
                     if (!optPayloadExtent(sRawBuf, sRawLen, &sPayloadOffset, &sPayloadLen)) {
                         sPayloadOffset = SIZE_MAX;
@@ -416,34 +439,40 @@ void nfcTask(void* param) {
                     xSemaphoreGive(gTagMutex);
                     // syncTask resolves instance_uuid against the local store and
                     // transitions to WeighingAndSync (known) or ForeignTagFound (new)
-                    setState(DeviceState::ValidTagFound);
+                    ctrlPost(CtrlEvent::TagValid);
+                    phase = NfcPhase::Held;
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        // ── Blank tag countdown ───────────────────────────────────────────────
-        if (state == DeviceState::BlankTagFound) {
+        // ── Blank tag: BlankTagFound for one tick, then the countdown ─────────
+        if (phase == NfcPhase::BlankDetected) {
             confirmStart = xTaskGetTickCount();
-            setState(DeviceState::AwaitingFormatConfirm);
+            ctrlPost(CtrlEvent::AwaitConfirm);
+            phase = NfcPhase::AwaitingConfirm;
             continue;
         }
 
-        if (state == DeviceState::AwaitingFormatConfirm) {
+        // ── Countdown (controller shows AwaitingFormatConfirm) ────────────────
+        if (phase == NfcPhase::AwaitingConfirm) {
             if (!tagPresent) {
                 ctrlPost(CtrlEvent::ReturnToIdle);  // removed during countdown — cancelled
+                phase = NfcPhase::Waiting;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
             if (xTaskGetTickCount() - confirmStart >= pdMS_TO_TICKS(BLANK_TAG_CONFIRM_SEC * 1000UL)) {
-                setState(DeviceState::FormattingAndRegistering);
+                ctrlPost(CtrlEvent::FormatConfirmed);
+                phase = NfcPhase::Formatting;
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        if (state == DeviceState::FormattingAndRegistering) {
+        // ── Formatting (controller shows FormattingAndRegistering) ────────────
+        if (phase == NfcPhase::Formatting) {
             uint8_t  initBuf[512] = {};
             OptMeta  initMeta     = {};
 
@@ -541,7 +570,8 @@ void nfcTask(void* param) {
             }
 
             if (!writeOk) {
-                setState(DeviceState::TagReadError);
+                ctrlPost(CtrlEvent::TagReadErr);
+                phase = NfcPhase::ErrorHeld;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -567,41 +597,30 @@ void nfcTask(void* param) {
 
             // syncTask sees the nil UUID, mints a local stub record, and
             // transitions on once the record exists.
-            setState(DeviceState::ValidTagFound);
+            ctrlPost(CtrlEvent::TagValid);
+            phase = NfcPhase::Held;
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        // ── Tag read error — wait for removal ─────────────────────────────────
-        if (state == DeviceState::TagReadError) {
-            if (!tagPresent) ctrlPost(CtrlEvent::ReturnToIdle);
+        // ── Tag read error: wait for removal (controller shows TagReadError) ──
+        if (phase == NfcPhase::ErrorHeld) {
+            if (!tagPresent) { ctrlPost(CtrlEvent::ReturnToIdle); phase = NfcPhase::Waiting; }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
 
-        // ── ForeignTagFound / RegisteringForeignTag / ValidTagFound ───────────
-        // syncTask owns the store/record side of these transitions.
-        // If the tag is removed before syncTask finishes, abandon and go idle.
-        if (state == DeviceState::ForeignTagFound
-            || state == DeviceState::RegisteringForeignTag
-            || state == DeviceState::ValidTagFound) {
-            if (!tagPresent) ctrlPost(CtrlEvent::ReturnToIdle);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            continue;
-        }
-
-        // ── Present / WeighingAndSync / Reconciling ───────────────────────────
-        // Everything past here belongs to the states where a tag has been
-        // classified and is being weighed or reconciled. Guard on the STATE, not
-        // just tag-presence: the block below drives itself to idle when no tag is
-        // present, and Boot / WiFiSetupMode also have no tag — so without this
-        // guard they fall through into it, and nfcTask stomps the portal screen
-        // syncTask just raised back to idle roughly twice a second. That is the
-        // whole reason the "WiFi Setup" screen never appeared. nfcTask does not
-        // own Boot or WiFiSetupMode; leave whatever syncTask set intact.
-        if (state != DeviceState::Present
-            && state != DeviceState::WeighingAndSync
-            && state != DeviceState::ReconcilingMainSection) {
+        // ── Held: a classified tag is on the scale ────────────────────────────
+        // syncTask owns the weigh states it shows (ValidTagFound ->
+        // ForeignTagFound / RegisteringForeignTag / WeighingAndSync / Present /
+        // ReconcilingMainSection); nfcTask only services the Aux/Main write-backs
+        // below and watches for removal. This single removal check replaces the
+        // four gState-keyed ones the loop used to carry. Every other phase has
+        // continued above, so reaching here means Held — but guard defensively so
+        // an unexpected phase can never fall into the weigh tail. (That fall-
+        // through was the Phase-2 bug: an unguarded !tagPresent branch drove
+        // Boot/WiFiSetupMode to idle ~2x/sec. Those are now gated at the loop top.)
+        if (phase != NfcPhase::Held) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -613,6 +632,7 @@ void nfcTask(void* param) {
                 sPayloadOffset = SIZE_MAX;
                 sPayloadLen    = 0;
                 ctrlPost(CtrlEvent::ReturnToIdle);
+                phase = NfcPhase::Waiting;
             }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;

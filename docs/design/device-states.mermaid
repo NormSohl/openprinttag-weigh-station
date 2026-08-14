@@ -1,45 +1,49 @@
 stateDiagram-v2
-    %% Transition labels are tagged with the task that WRITES the state today:
-    %%   [nfc]  = nfcTask (src/nfc_task.cpp)   — detect / read / classify / physical writes
-    %%   [sync] = syncTask (src/sync_task.cpp) — WiFi / store / weigh / reconcile
-    %% This split ownership of one gState global is the subject of
-    %% state-machine-ownership.md: two writers, no arbiter. "idle*" below means
-    %% idleState() picks Idle (joined) vs IdleNoWiFi (SoftAP) from gApSsid.
+    %% Ownership after refactor phases 1-3 (docs/design/state-machine-ownership.md).
+    %% Transition labels are tagged with the task that WRITES the target state:
+    %%   [ctrl] = controllerTask, the single writer of the WiFi/idle group AND the
+    %%            tag-detection states. It writes them in response to events:
+    %%            syncTask posts WiFi events; nfcTask posts tag-fact events
+    %%            (TagDetecting/TagBlank/AwaitConfirm/FormatConfirmed/TagValid/
+    %%            TagReadErr/ReturnToIdle) from its own local NfcPhase machine.
+    %%   [sync] = syncTask writes directly — the weigh states (phase 4 will move these).
+    %%   [nfc]  = nfcTask writes directly — ONLY ReconcilingMainSection->Present now
+    %%            (phase 4 will move it; it is the last state written by two tasks).
+    %% "idle*" = the controller picks Idle (joined) vs IdleNoWiFi (SoftAP).
 
     [*] --> Boot
 
-    Boot --> WiFiSetupMode: [sync] no saved creds -> portal opens
-    Boot --> Idle: [sync] saved creds join immediately
+    Boot --> WiFiSetupMode: [ctrl] no saved creds -> portal opens
+    Boot --> Idle: [ctrl] saved creds join immediately
     note right of Boot
         nfcTask does NOT poll the reader in Boot or
-        WiFiSetupMode: polling the PN5180 while the
-        SoftAP radio transmits hung it with the SPI
-        bus held and froze the display (fix 9280424).
+        WiFiSetupMode (the SoftAP-RF bus-hang fix,
+        9280424); it holds local phase Waiting there.
     end note
 
-    WiFiSetupMode --> Idle: [sync] credentials accepted, joined
-    WiFiSetupMode --> IdleNoWiFi: [sync] portal timeout -> SoftAP fallback
+    WiFiSetupMode --> Idle: [ctrl] credentials accepted, joined
+    WiFiSetupMode --> IdleNoWiFi: [ctrl] portal timeout -> SoftAP fallback
 
-    Idle --> TagDetecting: [nfc] tag presence (1st read)
-    IdleNoWiFi --> TagDetecting: [nfc] tag presence (1st read)
-    IdleNoWiFi --> Idle: [sync] station WiFi comes up later
+    Idle --> TagDetecting: [ctrl] nfc reports a tag (1st read)
+    IdleNoWiFi --> TagDetecting: [ctrl] nfc reports a tag (1st read)
+    IdleNoWiFi --> Idle: [ctrl] station WiFi comes up later
 
-    TagDetecting --> Idle: [nfc] false trigger (idle*)
-    TagDetecting --> TagReadError: [nfc] 3 reads, inconsistent/corrupt
-    TagDetecting --> BlankTagFound: [nfc] 3 reads confirm, unformatted
-    TagDetecting --> ValidTagFound: [nfc] 3 reads confirm, valid OPT
+    TagDetecting --> Idle: [ctrl] false trigger (idle*)
+    TagDetecting --> TagReadError: [ctrl] 3 reads, inconsistent/corrupt
+    TagDetecting --> BlankTagFound: [ctrl] 3 reads confirm, unformatted
+    TagDetecting --> ValidTagFound: [ctrl] 3 reads confirm, valid OPT
 
-    TagReadError --> Idle: [nfc] tag removed (idle*)
+    TagReadError --> Idle: [ctrl] tag removed (idle*)
 
-    BlankTagFound --> AwaitingFormatConfirm: [nfc] prompt + 5s countdown
+    BlankTagFound --> AwaitingFormatConfirm: [ctrl] prompt + 5s countdown
     note right of AwaitingFormatConfirm
         Confirm-by-inaction: live 5..4..3..2..1 countdown,
         LED blinks accelerating. Remove to cancel; leave
-        in place to 0 to confirm.
+        in place to 0 to confirm. nfcTask times it locally.
     end note
-    AwaitingFormatConfirm --> FormattingAndRegistering: [nfc] countdown 0, tag present
-    AwaitingFormatConfirm --> Idle: [nfc] removed during countdown (idle*)
-    FormattingAndRegistering --> ValidTagFound: [nfc] formatted (blank, nil UUID)
+    AwaitingFormatConfirm --> FormattingAndRegistering: [ctrl] countdown 0, tag present
+    AwaitingFormatConfirm --> Idle: [ctrl] removed during countdown (idle*)
+    FormattingAndRegistering --> ValidTagFound: [ctrl] formatted (blank, nil UUID)
 
     ValidTagFound --> Present: [sync] blank -> mint UUID + stub record (needs onboarding)
     ValidTagFound --> ForeignTagFound: [sync] uuid not in local store (valid, unregistered)
@@ -47,11 +51,11 @@ stateDiagram-v2
 
     ForeignTagFound --> RegisteringForeignTag: [sync] adopt product + create record from tag's Main
     RegisteringForeignTag --> WeighingAndSync: [sync] local record created
-    ForeignTagFound --> Idle: [nfc] tag removed (idle*)
-    RegisteringForeignTag --> Idle: [nfc] tag removed mid-registration (idle*)
+    ForeignTagFound --> Idle: [ctrl] tag removed (nfc Held -> ReturnToIdle, idle*)
+    RegisteringForeignTag --> Idle: [ctrl] tag removed mid-registration (idle*)
 
     WeighingAndSync --> Present: [sync] weigh once; write tag Aux; append weigh event
 
     Present --> ReconcilingMainSection: [sync] 1s poll detects a local-store edit
     ReconcilingMainSection --> Present: [nfc] tag Main rewritten, snapshot updated
-    Present --> Idle: [nfc] tag removed, 2 misses (idle*)
+    Present --> Idle: [ctrl] tag removed, 2 misses (nfc Held -> ReturnToIdle, idle*)

@@ -14,6 +14,15 @@ enum class CtrlEvent : uint8_t {
     WifiSoftAP,     // SoftAP fallback is serving      -> IdleNoWiFi
     ReturnToIdle,   // a tag flow ended; controller picks Idle vs IdleNoWiFi from
                     // the WiFi mode it has been tracking (was nfcTask::idleState)
+
+    // Phase 3: nfcTask reports tag-detection facts; the controller writes the
+    // matching gState. nfcTask no longer writes these itself.
+    TagDetecting,   // a tag appeared, debouncing        -> TagDetecting
+    TagBlank,       // confirmed blank/unformatted        -> BlankTagFound
+    AwaitConfirm,   // blank countdown started            -> AwaitingFormatConfirm
+    FormatConfirmed,// countdown elapsed / forced format  -> FormattingAndRegistering
+    TagValid,       // decoded OK (or just formatted)     -> ValidTagFound
+    TagReadErr,     // unreadable / undecodable           -> TagReadError
 };
 
 extern QueueHandle_t gCtrlQueue;

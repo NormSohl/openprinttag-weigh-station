@@ -51,6 +51,20 @@ void controllerTask(void* param) {
                 else if (wifiMode == WM_SOFTAP) setState(DeviceState::IdleNoWiFi);
                 // WM_PORTAL: ignore — no tag flow runs while the portal is up.
                 break;
+
+            // Tag-detection facts from nfcTask -> the matching gState.
+            case CtrlEvent::TagDetecting:
+                setState(DeviceState::TagDetecting);            break;
+            case CtrlEvent::TagBlank:
+                setState(DeviceState::BlankTagFound);           break;
+            case CtrlEvent::AwaitConfirm:
+                setState(DeviceState::AwaitingFormatConfirm);   break;
+            case CtrlEvent::FormatConfirmed:
+                setState(DeviceState::FormattingAndRegistering);break;
+            case CtrlEvent::TagValid:
+                setState(DeviceState::ValidTagFound);           break;
+            case CtrlEvent::TagReadErr:
+                setState(DeviceState::TagReadError);            break;
         }
     }
 }

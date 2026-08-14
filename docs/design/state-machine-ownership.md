@@ -91,8 +91,20 @@ Each phase compiles, flashes, and is bench-tested before the next. Serial toolin
   -> idle` on join; placing a spool → `present` with the display updating; removing →
   `[ctrl] -> idle`. The idle/WiFi trio now has exactly one writer. (`Present` is still
   written by both nfc and sync — pre-existing, addressed in Phase 4/5.)
-- **Phase 3 — detection group → controller** (`TagDetecting`/`*TagFound`/`TagReadError`/
-  `BlankTagFound`/`AwaitingFormatConfirm`/`FormattingAndRegistering`). **← next**
+- **Phase 3 — detection group → controller. DONE, validated on hardware 2026-08-13.**
+  nfcTask no longer reads `gState` for the tag lifecycle: it runs a local `NfcPhase`
+  machine (`Waiting`/`Debouncing`/`BlankDetected`/`AwaitingConfirm`/`Formatting`/`Held`/
+  `ErrorHeld`) and reports facts — `TagDetecting`/`TagBlank`/`AwaitConfirm`/
+  `FormatConfirmed`/`TagValid`/`TagReadErr` — which the controller turns into the matching
+  gState. The old four `gState`-keyed removal checks collapsed into one `Held`-phase check.
+  Validated: known-spool weigh (`Debouncing → TagValid → Held → present → ReturnToIdle`);
+  blank onboarding (`BlankDetected → AwaitingConfirm` 5 s countdown `→ Formatting → TagValid`,
+  UUID minted + stub #9 created). The `Boot`/`WiFiSetupMode` no-poll gate still reads `gState`
+  (read-only). **Remaining nfc `gState` write:** the `ReconcilingMainSection → Present` line —
+  a weigh state, deliberately left for Phase 4.
+- **Phase 4 — weigh/reconcile group → controller** (`WeighingAndSync`/`Present`/
+  `ReconcilingMainSection`/`ForeignTagFound`/`RegisteringForeignTag`). Fixes the last
+  double-write (`Present`, by syncTask and nfcTask). **← next**
 - **Phase 4 — weigh/reconcile group → controller** (store + weigh-append + reconcile move in).
 - **Phase 5 — physical writes**: replace `gWrite*Pending` flags with `WRITE_*` commands +
   `WriteResult` replies; NFC becomes fully command-driven.
