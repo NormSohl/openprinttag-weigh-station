@@ -417,6 +417,13 @@ void displayTask(void* param) {
                 row(3, "WeighStation-Setup", TFT_CYAN);
                 row(5, "Then open browser to", TFT_DARKGREY);
                 row(6, "192.168.4.1", TFT_DARKGREY);
+                // Scan-to-join. A phone camera reads the WIFI: URI and offers to
+                // join the open setup AP directly, so nobody has to type the SSID.
+                // A web-URL QR would be useless on THIS screen — 192.168.4.1 is
+                // unreachable until you are already on the AP, which is the whole
+                // point of the QR. SSID matches wm.autoConnect() in sync_task; the
+                // AP is passwordless, hence T:nopass.
+                drawQr("WIFI:S:WeighStation-Setup;T:nopass;;", QR_X, QR_Y, QR_BOX);
                 // Row 8 carries the countdown, written by the dynamic block
                 // below — this screen is a window that closes, and until it
                 // said so the only cue was the screen changing on its own.
@@ -466,11 +473,14 @@ void displayTask(void* param) {
                     // AP in a space whose WiFi it was carried there to join.
                     row(7, "Change network:", TFT_DARKGREY);
                     rowf(8, TFT_CYAN, "%s/reset", gWebAddr);
-                    // Only useful after joining the AP, but that is exactly when
-                    // someone is standing here squinting at an IP address.
-                    char url[64];
-                    snprintf(url, sizeof(url), "http://%s/", gWebAddr);
-                    drawQr(url, QR_X, QR_Y, QR_BOX);
+                    // Scan-to-join the station's own AP. Joining is the friction
+                    // here — the URL above is printed as text and is unreachable
+                    // until you are on the AP anyway, so a join QR beats a web-URL
+                    // one. The AP is passwordless (WiFi.softAP with no key), hence
+                    // T:nopass; gApSsid holds its SSID.
+                    char join[48];
+                    snprintf(join, sizeof(join), "WIFI:S:%s;T:nopass;;", gApSsid);
+                    drawQr(join, QR_X, QR_Y, QR_BOX);
                 }
                 pixelColor = pixel.Color(40, 15, 0);
                 break;
