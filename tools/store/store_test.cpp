@@ -35,7 +35,8 @@ static ProductRecord tag(const char* vendor, const char* material, const char* a
     return p;
 }
 
-static void spoolFor(const char* uuid, uint32_t product, const ProductRecord& p) {
+static void spoolFor(const char* uuid, uint32_t product, const ProductRecord& p,
+                     bool foreign = false) {
     StoreEvent e;
     e.ev = StoreEv::Onboard;
     strlcpy(e.uuid, uuid, sizeof(e.uuid));
@@ -46,6 +47,7 @@ static void spoolFor(const char* uuid, uint32_t product, const ProductRecord& p)
     memcpy(e.rgba, p.rgba, 4);
     e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
     e.product = product;
+    e.foreign = foreign;
     e.spool = storeNextSpoolId();
     storeAppendEvent(e);
 }
@@ -124,9 +126,64 @@ static void products() {
                                       "products survive compaction)");
 }
 
+// Build a spool we MINTED (foreign=false, ours to write) and a spool ADOPTED
+// from a genuine vendor tag (foreign=true, read-only for life), then confirm and
+// EDIT the vendor product so its edit propagates down as a Reconcile — the case
+// that must not clear foreign. Left on disk so a fresh process can replay it.
+static const char* kMintedUuid = "bbbb0000000000000000000000000001";
+static const char* kVendorUuid = "cccc0000000000000000000000000001";
+
+static void foreignSetup() {
+    run("WIPE ALL");
+    bool differs = false;
+
+    ProductRecord mine = tag("Generic", "PLA", "PLA", 1000, 200);
+    uint32_t pm = storeAdoptProduct(mine, &differs);
+    spoolFor(kMintedUuid, pm, mine, /*foreign=*/false);
+
+    ProductRecord vend = tag("Prusa", "PLA Galaxy Black", "PLA", 1000, 201, "pkgPrusa");
+    uint32_t pv = storeAdoptProduct(vend, &differs);
+    spoolFor(kVendorUuid, pv, vend, /*foreign=*/true);
+
+    // A human confirms and edits the vendor product; the edit propagates to its
+    // spool as a Reconcile. foreign MUST survive that — a propagated edit carries
+    // foreign=false, and clearing it here would silently make the tag writable.
+    ProductRecord pe;
+    storeGetProduct(pv, pe);
+    pe.empty_g = 210.0f; pe.provisional = false;
+    storeUpsertProduct(pe);
+    storePropagateProduct(pv);
+}
+
+static void foreignTest() {
+    foreignSetup();
+
+    SpoolRecord s;
+    CHECK(storeFindByUuid(kMintedUuid, s) && !s.foreign,
+          "a spool we minted was marked foreign — it would wrongly be read-only");
+    CHECK(storeFindByUuid(kVendorUuid, s) && s.foreign,
+          "an adopted vendor spool was NOT marked foreign — its tag would be writable");
+    CHECK(s.empty_g == 210.0f,
+          "the product edit did not reach the adopted spool (tare %.0f)", s.empty_g);
+
+    // Survives compaction: the Checkpoint must carry foreign, or a folded store
+    // silently makes every adopted vendor tag writable again.
+    run("SEED 12 200");   // > STORE_LOG_KEEP_EVENTS, so the fold actually runs
+    run("COMPACT");
+    CHECK(storeFindByUuid(kVendorUuid, s) && s.foreign,
+          "adopted spool lost foreign across the compaction fold");
+    CHECK(storeFindByUuid(kMintedUuid, s) && !s.foreign,
+          "minted spool GAINED foreign across the fold");
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: foreign flag (set at creation, sticky "
+                                      "through propagation, survives compaction)");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
-    if (argc > 1 && !strcmp(argv[1], "--products")) { products(); return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--products"))      { products();     return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--foreign"))       { foreignTest();  return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--foreign-setup")) { foreignSetup(); return 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;
 }

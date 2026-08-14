@@ -16,7 +16,6 @@ extern volatile DeviceState gState;
 extern SemaphoreHandle_t    gStateMutex;
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
-extern OptMeta              gTagMeta;
 extern OptMain              gTagMain;
 extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
@@ -495,27 +494,20 @@ void syncTask(void* param) {
         if (sphase == SyncPhase::Resolving) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
-            const uint16_t mainOff = gTagMeta.main_region_offset;
             xSemaphoreGive(gTagMutex);
 
-            // XXX BROKEN SIGNAL — needs a redesign (see below). This once assumed
-            // "a foreign writer (Prusa app) puts Main at offset 0 with no Meta,
-            // ours puts a Meta first so Main is at a non-zero offset." The OPT
-            // reference (utils/nfc_initialize.py + record.py) proves that false:
-            // Prusa ALSO writes a Meta first (just {aux_region_offset}) with Main
-            // defaulting to the meta size (~4) — and as of 2026-08-14 we match that
-            // layout byte-for-byte on purpose. So mainOff is ~4 for BOTH, this is
-            // essentially always false now, and there is no longer any byte-level
-            // way to tell our tag from a genuine vendor tag.
-            //
-            // Consequence until redesigned: foreign tags are NO LONGER protected —
-            // placing a genuine Prusa spool whose Main differs from our adopted
-            // record will rewrite its Main. The real signal has to be ownership
-            // (did WE mint this UUID / did a human adopt it), tracked on the record,
-            // not the tag bytes. Do not place a vendor tag you care about until then.
-            sForeign = (mainOff == 0);
+            // "Foreign" (read-only) is an OWNERSHIP fact, decided when the record
+            // was created and carried on the record — NOT inferred from tag bytes.
+            // It has to be: since our tags now match the OPT reference layout
+            // byte-for-byte (2026-08-14), a genuine vendor tag is indistinguishable
+            // from ours at the byte level. sForeign is therefore set per branch
+            // below: false when we mint a blank, r.foreign for a known spool, and
+            // true for a freshly adopted foreign tag (set in Registering).
+            sForeign = false;
 
             if (isNilUUID(main.instance_uuid)) {
+                // A blank we are about to format and mint — ours to write.
+                sForeign = false;
                 // Blank tag just formatted by nfcTask — mint an identity and a
                 // local stub record. A person completes the details later in the
                 // web form (Phase 4); the reconcile loop writes them back to the
@@ -528,6 +520,7 @@ void syncTask(void* param) {
                 strlcpy(e.vendor,   "Unknown", sizeof(e.vendor));
                 strlcpy(e.material, "Unknown", sizeof(e.material));
                 e.needs_ob = true;
+                e.foreign  = false;   // we minted this tag — ours to write
                 e.spool = storeNextSpoolId();
                 storeAppendEvent(e);
 
@@ -558,12 +551,14 @@ void syncTask(void* param) {
                     sSpoolId = (int)r.spool;
                     gSpoolId = sSpoolId;
                     gSpoolNeedsOnboarding = r.needs_ob;
+                    // Ownership comes from the record, set when it was created.
+                    sForeign = r.foreign;
 
                     OptMain updated = main;
                     overlayRecordOntoMain(r, updated);
-                    // Known, but if it is a foreign-layout tag we adopted earlier,
-                    // never push edits down to it — that would rewrite another
-                    // vendor's Main in our encoding.
+                    // Known, but if it is a foreign tag we adopted earlier
+                    // (r.foreign), never push edits down to it — that would rewrite
+                    // another vendor's Main in our encoding.
                     if (!sForeign && recordDiffersFromMain(r, main)) {
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         gTagMain = updated;
@@ -599,6 +594,12 @@ void syncTask(void* param) {
             if (wasNil) generateUUIDv4(main.instance_uuid);
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
+            // A tag reaching adoption with a real UUID is a genuine foreign spool:
+            // read-only for life. Only the (defensive) nil-UUID case — one of ours
+            // after a store wipe, safe to stamp — is ours to write. This is the
+            // same wasNil the write-back guard below already keys on.
+            sForeign = !wasNil;
+
             // Resolve the product this spool is an instance of, creating one
             // (provisional) if we have never seen this filament. This is what
             // makes an inventory of four genuine Prusament spools roll up as one
@@ -622,6 +623,7 @@ void syncTask(void* param) {
             strlcpy(e.uuid, hex, sizeof(e.uuid));
             identityFromMain(main, e);
             e.needs_ob = false;
+            e.foreign  = sForeign;   // adopted from a vendor tag → read-only for life
             e.product  = pid;
             e.spool = storeNextSpoolId();
             storeAppendEvent(e);
@@ -631,12 +633,11 @@ void syncTask(void* param) {
             gSpoolNeedsOnboarding = false;
 
             // Write the minted UUID back ONLY if the tag arrived with a nil UUID
-            // AND carries our layout (!sForeign) — a tag with no identity of its
-            // own that is safe for us to stamp, e.g. one of ours after a store
-            // wipe. A genuine foreign tag has its own UUID and its own layout;
-            // rewriting its Main in our encoding corrupts it (this is what
-            // destroyed a Prusa tag during debugging). Such a tag stays read-only:
-            // adopted into the store, never written back.
+            // (equivalently !sForeign here) — a tag with no identity of its own
+            // that is safe for us to stamp, e.g. one of ours after a store wipe.
+            // A genuine foreign tag has its own UUID; rewriting its Main in our
+            // encoding corrupts it (this is what destroyed a Prusa tag during
+            // debugging). Such a tag stays read-only: adopted, never written back.
             if (wasNil && !sForeign) {
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
                 memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);

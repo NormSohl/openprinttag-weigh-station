@@ -59,6 +59,10 @@ struct StoreEvent {
     uint8_t  rgba[4] = {};
     float    dia = 0, empty_g = 0, nom_g = 0;
     bool     needs_ob = false;
+    // Read-only ownership marker (Onboard/Checkpoint). See SpoolRecord::foreign.
+    // Established on the creating Onboard; a Reconcile leaves the record's value
+    // untouched, so it need not be set on propagated Reconcile events.
+    bool     foreign = false;
 
     // Usage rollup (Usage). `ts` holds the period as "YYYY-MM" rather than a
     // timestamp; vendor + material are the grouping key.
@@ -94,6 +98,14 @@ struct SpoolRecord {
     float    dia = 0, empty_g = 0, nom_g = 0;
     float    remaining_g = 0, used_g = 0;
     bool     needs_ob = false;
+    // True iff this record was ADOPTED from a foreign tag (a genuine vendor spool
+    // we did not format). Such a tag is read-only for life: we record weighs in
+    // our own log but never write its Main or Aux — its layout is not ours to
+    // assume, and a product edit propagating down must not rewrite another
+    // vendor's tag. Set once at creation, sticky across reconciles. Since our
+    // tags now match the OPT reference layout byte-for-byte, this ownership fact
+    // can no longer be inferred from tag bytes — it must be carried on the record.
+    bool     foreign = false;
     char     last_ts[25] = {};
     bool     valid = false;
 

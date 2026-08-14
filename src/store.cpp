@@ -155,6 +155,7 @@ static String encodeBody(const StoreEvent& e) {
     }
     if (ident) {
         b += "\"needs_ob\":"; b += (e.needs_ob ? "true" : "false"); b += ",";
+        b += "\"fgn\":"; b += (e.foreign ? "true" : "false"); b += ",";
     }
     if (e.ev == StoreEv::Product) {
         b += "\"puuid\":\""; b += jsonEsc(e.pkg_uuid);   b += "\",";
@@ -227,6 +228,10 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.product  = doc["prod"]    | 0u;
     }
     if (ident) e.needs_ob = doc["needs_ob"] | false;
+    // Absent on every line written before this field existed → false, i.e. "ours
+    // to write". Option A migration: pre-existing adopted-foreign records lose
+    // read-only protection until re-adopted (see the commit that added this).
+    if (ident) e.foreign = doc["fgn"] | false;
     if (e.ev == StoreEv::Product) {
         strlcpy(e.pkg_uuid,   doc["puuid"] | "", sizeof(e.pkg_uuid));
         strlcpy(e.mat_uuid,   doc["muuid"] | "", sizeof(e.mat_uuid));
@@ -430,6 +435,13 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             r.dia = e.dia; r.empty_g = e.empty_g; r.nom_g = e.nom_g;
             r.needs_ob = e.needs_ob;
             r.product  = e.product;
+            // Ownership is established at creation and STICKY: an Onboard sets it,
+            // a Checkpoint (folded state, built from the live record) preserves it,
+            // but a Reconcile must NOT touch it — a propagated product edit carries
+            // foreign=false and would otherwise clear a read-only adopted tag. The
+            // creating Onboard always precedes any Reconcile in the log, so the
+            // value is set before it is ever skipped.
+            if (e.ev != StoreEv::Reconcile) r.foreign = e.foreign;
             break;
         case StoreEv::Weigh:
             r.remaining_g = e.remaining_g;
@@ -1145,6 +1157,7 @@ bool storeCompact() {
         memcpy(c.rgba, r.rgba, 4);
         c.dia = r.dia; c.empty_g = r.empty_g; c.nom_g = r.nom_g;
         c.needs_ob = r.needs_ob;
+        c.foreign  = r.foreign;   // carry ownership through the fold
         c.product  = r.product;
         if (!emit(encodeLine(c))) { ok = false; break; }
     }
@@ -1293,9 +1306,10 @@ bool storeSerialCommand(const String& lineIn) {
             SpoolRecord r;
             for (size_t i = 0; i < storeSpoolCount(); i++)
                 if (storeSpoolAt(i, r))
-                    Serial.printf("  #%-4u %-10s %-8s rem %8.1f g %s uuid %s\n",
+                    Serial.printf("  #%-4u %-10s %-8s rem %8.1f g %s%s uuid %s\n",
                                   (unsigned)r.spool, r.vendor, r.material, r.remaining_g,
-                                  r.needs_ob ? "[needs-ob]" : "", r.uuid);
+                                  r.needs_ob ? "[needs-ob]" : "",
+                                  r.foreign  ? "[foreign]" : "", r.uuid);
         }
         return true;
     }
