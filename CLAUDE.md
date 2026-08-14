@@ -201,16 +201,15 @@ syncTask also watches the link: a station-mode drop is otherwise silent, and DHC
 
 Hardware bring-up status, the validated-on-hardware log, and the ordered bench-test checklist have moved to the **`bench-bringup` skill** (`.claude/skills/bench-bringup/SKILL.md`) to keep them out of always-loaded context. Invoke it when doing bench or hardware validation.
 
-### The clock — nothing sets it, and the rollup depends on it
+### The clock — synced from NTP on join, `unknown` until it lands
 
-There is no `configTime()`, no SNTP, nowhere in `src/`. `storeNowIso()` formats whatever `time(nullptr)` returns, which on a fresh boot is seconds since the epoch — so every log line is stamped `1970-01-01T00:xx:xxZ` and `periodOf_()` buckets all consumption into a single permanent `1970-01` row.
+`storeNowIso()` formats whatever `time(nullptr)` returns. The ESP32-S3 has no battery-backed RTC, so at boot that is seconds since the epoch until something sets it. `syncTask` calls `configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2)` (`pool.ntp.org` / `time.nist.gov`) right after a successful station-mode join — UTC with no offset, because `storeNowIso()` formats with `gmtime_r` and writes a trailing `Z`, so a local offset would contradict its own zone marker. **Validated on hardware 2026-08-13** (`bc9b307`): SNTP answered within seconds of joining and `LOGSTATS` flipped to `clock: set`.
 
-That defeats a first-class requirement: grams per **month** per vendor+material. The totals are right and the fold preserves them exactly; only the period is wrong, and it is wrong for every row equally.
+This feeds a first-class requirement — grams per **calendar month** per vendor+material — and the two hard constraints that shaped the design still govern it:
 
-Two things to settle before fixing it, because neither is obvious:
-
-- **The lab network may not route to an NTP server.** The device needs no internet for anything else, so a fix that only works with outbound UDP 123 leaves the requirement half-met. Whatever is chosen has to degrade honestly — an event stamped with a clock that was never set must be distinguishable from one that was.
-- **Existing 1970 rows cannot be repaired.** They were never attributable to a real month. Whatever lands should leave them alone rather than silently relabelling them.
+- **SNTP is asynchronous, and the network may not route to it at all.** `configTime()` returns immediately; the clock lands a second or two later, or never (SoftAP fallback, or a venue with no outbound UDP 123). So the state must be *visible*, never inferred from odd-looking data a month later: `syncTask` sets `gClockSet` once `time()` crosses ~2023 and prints a one-shot `[time] clock set from NTP`, surfaced on `/api/status` (`clock_set`) and `LOGSTATS` (`clock:`).
+- **An unset clock degrades honestly.** `periodOf_()` buckets anything not stamped `20xx` as **`unknown`**, not a fabricated `1970-01`. It still *counts* those grams — an unattributed gram happened — but never invents a month, so a station that can never reach NTP ends with one honest `unknown` row instead of a plausible-looking wrong one.
+- **Pre-existing 1970 rows are left alone.** They were never attributable to a real month; nothing relabels them.
 
 ### The Auxiliary region — sized to be writable (tag layout changed 2026-08-08)
 
