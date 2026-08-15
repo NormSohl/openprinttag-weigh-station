@@ -501,7 +501,7 @@ static String head(const char* title, const char* active = "") {
     h += STYLE;
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
-    navlink(h, "/products",  "Stock List", active);
+    navlink(h, "/products",  "Products",  active);
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
@@ -727,8 +727,8 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
 // show that, because two products with the same name roll up into one
 // inventory row and look correct.
 static void handleProducts(AsyncWebServerRequest* req) {
-    String p = head("Stock List", "/products");
-    p += "<h3>Stock List</h3>"
+    String p = head("Products", "/products");
+    p += "<h3>Products</h3>"
          "<p class='muted'>What we stock, as opposed to the individual spools on "
          "the shelf. A spool inherits its vendor, filament, colour, tare and "
          "nominal weight from its product.</p>";
@@ -873,7 +873,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     p += "</div>";
     p += "<div><button type='submit'>Save &amp; update spools</button></div>";
     p += "</form>";
-    p += "<p class='muted'><a href='/products' style='color:#8f8'>&larr; back</a></p>";
+    p += "<p class='muted'><a href='/products' style='color:#8f8'>&larr; all products</a></p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
