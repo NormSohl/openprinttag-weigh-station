@@ -464,9 +464,12 @@ static void rebuildInventory_() {
         if (!r.valid || r.material[0] == 0) continue;
         int mi = -1;
         for (size_t i = 0; i < sInv.size(); i++)
-            if (!strcmp(sInv[i].material, r.material)) { mi = (int)i; break; }
+            if (!strcmp(sInv[i].material, r.material) && !strcmp(sInv[i].vendor, r.vendor)) {
+                mi = (int)i; break;
+            }
         if (mi < 0) {
             MatInventory m;
+            strlcpy(m.vendor,   r.vendor,   sizeof(m.vendor));
             strlcpy(m.material, r.material, sizeof(m.material));
             sInv.push_back(m);
             mi = (int)sInv.size() - 1;
@@ -1261,7 +1264,8 @@ bool storeSerialCommand(const String& lineIn) {
             MatInventory m;
             for (size_t i = 0; i < storeInventoryCount(); i++)
                 if (storeInventoryAt(i, m))
-                    Serial.printf("  %-16s %8.1f g  (%u spools)\n", m.material, m.remaining_g, m.count);
+                    Serial.printf("  %-12s %-16s %8.1f g  (%u spools)\n",
+                                  m.vendor, m.material, m.remaining_g, m.count);
         } else if (what == "usage") {
             Serial.printf("[store] usage (%u buckets):\n", (unsigned)storeUsageCount());
             UsageRow u;

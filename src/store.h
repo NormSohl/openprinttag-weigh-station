@@ -176,7 +176,11 @@ struct UsageRow {
 };
 
 // ── Inventory rollup (derived) ────────────────────────────────────────────────
+// Bucketed by (vendor, material) — material alone would merge two different
+// vendors' filament that happens to render the same OPT display string (e.g.
+// two vendors both naming a colour "Summer Grass") into one row.
 struct MatInventory {
+    char     vendor[64] = {};
     char     material[64] = {};
     uint8_t  rgba[4] = {};   // first assigned colour in the group; a[3]==0 = none
     float    remaining_g = 0;

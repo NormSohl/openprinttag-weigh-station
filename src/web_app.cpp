@@ -644,6 +644,9 @@ static void handleRoot(AsyncWebServerRequest* req) {
 
     // Rows are OPT display strings now ("PLA Summer Grass"), not bare material
     // types, so several spools of the same product roll up into one line.
+    // Bucketed by (vendor, material) — see MatInventory's comment in store.h —
+    // so the vendor prefix here ("eSun PLA Summer Grass") is always a single
+    // vendor's, never a merge of two.
     p += "<h3>Inventory</h3><table>"
          "<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
@@ -651,7 +654,8 @@ static void handleRoot(AsyncWebServerRequest* req) {
     if (n == 0) p += "<tr><td colspan='3' class='muted'>No spools yet</td></tr>";
     for (size_t i = 0; i < n; i++) {
         if (!storeInventoryAt(i, m)) continue;
-        p += "<tr><td>" + swatch(m.rgba) + esc(m.material) + "</td><td>" + String(m.count)
+        String label = m.vendor[0] ? String(m.vendor) + " " + m.material : String(m.material);
+        p += "<tr><td>" + swatch(m.rgba) + esc(label.c_str()) + "</td><td>" + String(m.count)
            + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
     }
     p += "</table>";
