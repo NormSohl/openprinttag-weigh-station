@@ -1155,39 +1155,103 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "<details id='cat-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
          "Or enter manually</summary>";
 
-    const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
+    // Every manual select ends with a "+ Add new ..." option that reveals a
+    // hidden panel of plain inputs, submitted alongside it; handleApiOnboard
+    // recognises the '__new__' sentinel, builds the Cfg* row from those
+    // fields, and appends it to the local catalog table (cfgVendorAdd() and
+    // friends) so it is there for next time — same mechanism the catalog
+    // search already uses for Vendor, extended to the fields it doesn't
+    // reach (Material, Color, Spool profile).
+    auto revealOnchange = [&](const char* wrapId) -> String {
+        return String(" onchange=\"document.getElementById('cat-source').value='manual';"
+                       "document.getElementById('") + wrapId + "').style.display="
+                       "this.value=='__new__'?'block':'none'\"";
+    };
 
     // Vendor
-    p += "<label>Vendor</label><select name='vendor'"; p += resetSrc; p += ">";
+    p += "<label>Vendor</label><select name='vendor'" + revealOnchange("vendor-new-wrap") + ">";
     char vbuf[64];
     for (size_t i = 0; i < cfgVendorCount(); i++)
         if (cfgVendorAt(i, vbuf, sizeof(vbuf)))
             p += "<option>" + esc(vbuf) + "</option>";
+    p += "<option value='__new__'>&plus; Add new vendor&hellip;</option>";
     p += "</select>";
+    p += "<div id='vendor-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New vendor name</label>"
+         "<input type='text' name='vendor_new' placeholder='e.g. Filamentive'>"
+         "</div>";
 
-    // Material
-    p += "<label>Material</label><select name='material'"; p += resetSrc; p += ">";
+    // Material — the "+ Add new" panel needs the full CfgMaterial shape
+    // (class/type enums plus print/bed temps), not just a name: those are
+    // exactly the fields that silently write 0 C onto a tag if skipped. The
+    // enum options below are a static copy of prusa3d/OpenPrintTag's
+    // material_class_enum.yaml / material_type_enum.yaml — the same source
+    // CATALOG_SCRIPT's type-token matching already uses — kept local so this
+    // panel works with no network, matching the whole point of the manual
+    // fallback.
+    p += "<label>Material</label><select name='material'" + revealOnchange("material-new-wrap") + ">";
     CfgMaterial m;
     for (size_t i = 0; i < cfgMaterialCount(); i++)
         if (cfgMaterialAt(i, m))
             p += "<option>" + esc(m.name) + "</option>";
+    p += "<option value='__new__'>&plus; Add new material&hellip;</option>";
     p += "</select>";
+    p += "<div id='material-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New material name</label>"
+         "<input type='text' name='material_new_name' placeholder='e.g. PETG Carbon Fiber'>"
+         "<label>Abbreviation (max 7 chars)</label>"
+         "<input type='text' name='material_new_abbr' maxlength='7' placeholder='e.g. PETGCF'>"
+         "<label>Class</label><select name='material_new_class'>"
+         "<option value='0'>FFF (filament)</option><option value='1'>SLA (resin)</option></select>"
+         "<label>Type</label><select name='material_new_type'>";
+    static const struct { int8_t key; const char* abbr; } kMatTypes[] = {
+        {0,"PLA"},{1,"PETG"},{2,"TPU"},{3,"ABS"},{4,"ASA"},{5,"PC"},{6,"PCTG"},{7,"PP"},
+        {8,"PA6"},{9,"PA11"},{10,"PA12"},{42,"PA612"},{11,"PA66"},{12,"CPE"},{13,"TPE"},
+        {14,"HIPS"},{15,"PHA"},{16,"PET"},{17,"PEI"},{18,"PBT"},{19,"PVB"},{20,"PVA"},
+        {21,"PEKK"},{22,"PEEK"},{23,"BVOH"},{24,"TPC"},{25,"PPS"},{26,"PPSU"},{27,"PVC"},
+        {28,"PEBA"},{29,"PVDF"},{30,"PPA"},{31,"PCL"},{32,"PES"},{33,"PMMA"},{34,"POM"},
+        {35,"PPE"},{36,"PS"},{37,"PSU"},{38,"TPI"},{39,"SBS"},{40,"OBC"},{41,"EVA"},
+    };
+    for (const auto& t : kMatTypes)
+        p += "<option value='" + String((int)t.key) + "'>" + t.abbr + "</option>";
+    p += "</select>"
+         "<label>Diameter (mm)</label><input type='number' step='0.01' name='material_new_dia' value='1.75'>"
+         "<label>Print temp min/max (&deg;C)</label>"
+         "<input type='number' name='material_new_print_min' placeholder='min' style='width:48%;display:inline-block'>"
+         " <input type='number' name='material_new_print_max' placeholder='max' style='width:48%;display:inline-block'>"
+         "<label>Bed temp min/max (&deg;C)</label>"
+         "<input type='number' name='material_new_bed_min' placeholder='min' style='width:48%;display:inline-block'>"
+         " <input type='number' name='material_new_bed_max' placeholder='max' style='width:48%;display:inline-block'>"
+         "</div>";
 
     // Color
-    p += "<label>Color</label><select name='color'"; p += resetSrc; p += ">";
+    p += "<label>Color</label><select name='color'" + revealOnchange("color-new-wrap") + ">";
     CfgColor c;
     for (size_t i = 0; i < cfgColorCount(); i++)
         if (cfgColorAt(i, c))
             p += "<option>" + esc(c.name) + "</option>";
+    p += "<option value='__new__'>&plus; Add new colour&hellip;</option>";
     p += "</select>";
+    p += "<div id='color-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New colour name</label>"
+         "<input type='text' name='color_new_name' placeholder='e.g. Summer Grass'>"
+         "<label>Swatch</label><input type='color' name='color_new' value='#808080'>"
+         "</div>";
 
     // Spool profile (fills nominal-full + empty tare)
-    p += "<label>Spool profile</label><select name='profile'"; p += resetSrc; p += ">";
+    p += "<label>Spool profile</label><select name='profile'" + revealOnchange("profile-new-wrap") + ">";
     CfgProfile pr;
     for (size_t i = 0; i < cfgProfileCount(); i++)
         if (cfgProfileAt(i, pr))
             p += "<option>" + esc(pr.label) + "</option>";
+    p += "<option value='__new__'>&plus; Add new spool profile&hellip;</option>";
     p += "</select>";
+    p += "<div id='profile-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New profile label</label>"
+         "<input type='text' name='profile_new_label' placeholder='e.g. Filamentive 1kg PETG'>"
+         "<label>Nominal full weight (g)</label><input type='number' step='0.1' name='profile_new_nom'>"
+         "<label>Empty spool weight / tare (g)</label><input type='number' step='0.1' name='profile_new_empty'>"
+         "</div>";
     p += "</details>";
 
     // Tare override (optional). "Capture tare" reads the load cell once.
@@ -1324,16 +1388,65 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         String profName = arg("profile");
         float  tareOvr  = arg("empty_g").toFloat();   // 0 → use profile
 
-        vendor  = arg("vendor");
-        haveMat = cfgMaterialByName(matName.c_str(), m);
+        // "+ Add new ..." sentinel from the onboard form (see handleOnboardForm)
+        // — build the Cfg* row from the revealed fields and append it to the
+        // local catalog so it is there for next time, same as a typed vendor
+        // already was via cfgVendorAdd() below.
+        vendor = arg("vendor");
+        if (vendor == "__new__") vendor = arg("vendor_new");
+
+        if (matName == "__new__") {
+            CfgMaterial nm = {};
+            strlcpy(nm.name, arg("material_new_name").c_str(), sizeof(nm.name));
+            strlcpy(nm.abbr, arg("material_new_abbr").c_str(), sizeof(nm.abbr));
+            nm.cls       = (int8_t)arg("material_new_class").toInt();
+            nm.type      = (int8_t)arg("material_new_type").toInt();
+            nm.dia       = arg("material_new_dia").toFloat();
+            if (nm.dia <= 0.0f) nm.dia = 1.75f;
+            nm.print_min = (int16_t)arg("material_new_print_min").toInt();
+            nm.print_max = (int16_t)arg("material_new_print_max").toInt();
+            nm.bed_min   = (int16_t)arg("material_new_bed_min").toInt();
+            nm.bed_max   = (int16_t)arg("material_new_bed_max").toInt();
+            cfgMaterialAdd(nm);
+            matName = nm.name;
+            m = nm; haveMat = true;
+        } else {
+            haveMat = cfgMaterialByName(matName.c_str(), m);
+        }
+
         CfgColor col = {};
-        cfgColorByName(colName.c_str(), col);
+        if (colName == "__new__") {
+            CfgColor nc = {};
+            strlcpy(nc.name, arg("color_new_name").c_str(), sizeof(nc.name));
+            String hex = arg("color_new");   // "#rrggbb" from <input type='color'>
+            if (hex.length() == 7 && hex[0] == '#') {
+                nc.rgba[0] = (uint8_t)strtol(hex.substring(1, 3).c_str(), nullptr, 16);
+                nc.rgba[1] = (uint8_t)strtol(hex.substring(3, 5).c_str(), nullptr, 16);
+                nc.rgba[2] = (uint8_t)strtol(hex.substring(5, 7).c_str(), nullptr, 16);
+                nc.rgba[3] = 255;
+            }
+            cfgColorAdd(nc);
+            colName = nc.name;
+            col = nc;
+        } else {
+            cfgColorByName(colName.c_str(), col);
+        }
         memcpy(rgba, col.rgba, 4);
 
         CfgProfile pr = {};
         bool havePr = false;
-        for (size_t i = 0; i < cfgProfileCount(); i++)
-            if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
+        if (profName == "__new__") {
+            CfgProfile np = {};
+            strlcpy(np.label, arg("profile_new_label").c_str(), sizeof(np.label));
+            np.nominal_full_g = arg("profile_new_nom").toFloat();
+            np.empty_g        = arg("profile_new_empty").toFloat();
+            cfgProfileAdd(np);
+            profName = np.label;
+            pr = np; havePr = true;
+        } else {
+            for (size_t i = 0; i < cfgProfileCount(); i++)
+                if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
+        }
 
         nominal = havePr ? pr.nominal_full_g : 0.0f;
         empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);
