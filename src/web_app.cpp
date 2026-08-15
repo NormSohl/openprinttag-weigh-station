@@ -675,7 +675,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
            + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
 
         p += "<tr id='" + rowId + "' style='display:none'><td></td><td colspan='3'>"
-             "<table style='margin:2px 0 10px'><tr><th>#</th><th>Remaining</th><th></th></tr>";
+             "<table style='margin:2px 0 10px'><tr><th>Spool #</th><th>Remaining</th><th></th></tr>";
         SpoolRecord r;
         size_t sn = storeSpoolCount();
         for (size_t k = 0; k < sn; k++) {
