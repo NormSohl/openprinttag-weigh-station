@@ -58,6 +58,22 @@ static bool authOk(AsyncWebServerRequest* req) {
     return false;
 }
 
+// 32 lowercase hex chars (no dashes, matching the store's uuid format) -> 16
+// bytes. Used only for catalog-sourced UUIDs coming off the onboard form —
+// false on anything malformed, and the caller simply leaves the tag field
+// untouched rather than writing a bogus identity.
+static bool hex32ToBytes(const String& hex, uint8_t out[16]) {
+    if (hex.length() != 32) return false;
+    for (int i = 0; i < 16; i++) {
+        char b[3] = { hex[i * 2], hex[i * 2 + 1], 0 };
+        char* end = nullptr;
+        long v = strtol(b, &end, 16);
+        if (end != b + 2) return false;
+        out[i] = (uint8_t)v;
+    }
+    return true;
+}
+
 static String esc(const char* s) {
     String o;
     for (const char* p = s; *p; ++p) {
@@ -126,6 +142,342 @@ static const char* STYLE =
       "button.sec{width:auto}"
     "}"
     "</style>";
+
+// ── Onboard page: OpenPrintTag catalog search widget ──────────────────────────
+// Cascading Vendor -> Material type -> Material combo boxes that live-search
+// github.com/OpenPrintTag/openprinttag-database straight from the browser (the
+// device is never in the loop — no firmware cost, no extra heap). A pick fills
+// the hidden cat_* fields in the onboard form with the vendor's own GTIN, the
+// three OPT identity UUIDs, and real print/bed temps when the material file
+// carries them, instead of whatever a person free-types.
+//
+// Prototyped and verified against the live DB at tools/opt-catalog/prototype.html
+// before landing here; this is the same logic, minus the standalone page chrome.
+static const char* CATALOG_STYLE =
+    "<style>"
+    ".cat-status{font-size:12px;color:#888;margin:6px 0 14px}"
+    ".cat-status b{color:#eee}"
+    ".cat-status.err b{color:#fd6}"
+    ".cat-field{margin-bottom:12px;position:relative}"
+    ".cat-field.disabled{opacity:.45}"
+    ".cat-field label{display:block;font-size:12px;color:#9c9;text-transform:uppercase;"
+      "letter-spacing:.04em;margin-bottom:4px}"
+    ".cat-input.picked{border-color:#2a5}"
+    ".cat-panel{display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);z-index:20;"
+      "background:#1a1a1a;border:1px solid #444;border-radius:6px;max-height:260px;"
+      "overflow-y:auto;box-shadow:0 10px 30px #0008}"
+    ".cat-group{padding:6px 10px 2px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em}"
+    ".cat-divider{border-top:1px solid #333;margin:2px 0}"
+    ".cat-empty{padding:10px;color:#888;font-size:13px}"
+    ".cat-row{padding:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer}"
+    ".cat-row:active,.cat-row.hi{background:#20263a}"
+    ".cat-row .meta{color:#888;font-size:12px;white-space:nowrap}"
+    "</style>";
+
+static const char* CATALOG_SCRIPT = R"OPTJS(<script>
+(function(){
+const OWNER="OpenPrintTag", REPO="openprinttag-database", BRANCH="main";
+const API=`https://api.github.com/repos/${OWNER}/${REPO}`;
+const RAW=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/data`;
+const PKG_PREFIX="data/material-packages/";
+const TYPE_ENUM_URL="https://raw.githubusercontent.com/prusa3d/OpenPrintTag/main/data/material_type_enum.yaml";
+
+const $ = s => document.querySelector(s);
+const statusEl=$("#cat-status"), resolvedEl=$("#cat-resolved");
+let PACKAGES = [];
+let brandNames = new Map();
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function setStatus(html, err){ statusEl.className="cat-status"+(err?" err":""); statusEl.innerHTML=html; }
+
+// ── minimal YAML subset parser (maps, nested maps, lists of scalars/maps) ────
+function parseYaml(text){
+  const lines=text.split(/\r?\n/).map(l=>l.replace(/\s+$/,"")).filter(l=>l.trim()!==""&&!/^\s*#/.test(l));
+  let pos=0; const indentOf=l=>l.length-l.trimStart().length;
+  const scalar=v=>{v=v.trim();
+    if((v[0]==="'"&&v.endsWith("'"))||(v[0]==='"'&&v.endsWith('"')))return v.slice(1,-1);
+    if(/^-?\d+$/.test(v))return v.length>15?v:parseInt(v,10);
+    if(/^-?\d*\.\d+$/.test(v))return parseFloat(v); return v;};
+  function parseMap(indent){const obj={};
+    while(pos<lines.length){const line=lines[pos],ind=indentOf(line),t=line.trim();
+      if(ind<indent)break; if(t.startsWith("- "))break;
+      const m=t.match(/^([^:]+):\s*(.*)$/); if(!m){pos++;continue;}
+      const key=m[1].trim(),val=m[2]; pos++;
+      if(val===""){const nx=lines[pos];
+        if(nx!==undefined){const ni=indentOf(nx);
+          if(nx.trim().startsWith("- ")&&ni>=indent)obj[key]=parseList(ni);
+          else if(ni>indent)obj[key]=parseMap(ni); else obj[key]=null;
+        }else obj[key]=null;
+      }else obj[key]=scalar(val);}
+    return obj;}
+  function parseList(indent){const arr=[];
+    while(pos<lines.length){const line=lines[pos],ind=indentOf(line),t=line.trim();
+      if(ind<indent||!t.startsWith("- "))break;
+      const rest=t.slice(2),m=rest.match(/^([^:]+):\s*(.*)$/); pos++;
+      if(m){const item={};item[m[1].trim()]=m[2]===""?null:scalar(m[2]);
+        const child=ind+2;
+        if(pos<lines.length&&indentOf(lines[pos])>=child&&!lines[pos].trim().startsWith("- "))
+          Object.assign(item,parseMap(child));
+        arr.push(item);}else arr.push(scalar(rest));}
+    return arr;}
+  return parseMap(0);
+}
+async function fetchText(url){ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`); return r.text(); }
+async function fetchYaml(url){ return parseYaml(await fetchText(url)); }
+
+// ── index: one tree fetch (cached by data_hash) + one small type-enum fetch ──
+async function loadIndex(){
+  let hash="nohash";
+  try { const man=await fetchText(`${RAW}/manifest.yaml`); hash=(man.match(/data_hash:\s*(\S+)/)||[])[1]||"nohash"; } catch(e){}
+
+  const cacheKey="opt_pkgindex2_"+hash;
+  const cached=localStorage.getItem(cacheKey);
+  if(cached){ PACKAGES=JSON.parse(cached); setStatus(`${PACKAGES.length.toLocaleString()} packages <span class="muted">(cached)</span>`); }
+  else {
+    setStatus("Fetching catalog tree from GitHub (one request)&hellip;");
+    const tree=JSON.parse(await fetchText(`${API}/git/trees/${BRANCH}?recursive=1`));
+    PACKAGES=(tree.tree||[]).filter(e=>e.type==="blob"&&e.path.startsWith(PKG_PREFIX)&&e.path.endsWith(".yaml"))
+      .map(e=>{const rel=e.path.slice(PKG_PREFIX.length); const brand=rel.split("/")[0];
+        const file=rel.split("/").pop().replace(/\.yaml$/,"");
+        return {path:e.path, brand, file};});
+    try { localStorage.setItem(cacheKey, JSON.stringify(PACKAGES)); } catch(e){}
+    for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if(k&&k.startsWith("opt_pkgindex2_")&&k!==cacheKey) localStorage.removeItem(k); }
+    setStatus(`${PACKAGES.length.toLocaleString()} packages <span class="muted">(fresh)</span>`);
+  }
+
+  // Type tokens: scan filenames for exact hyphen-delimited matches against the
+  // OPT's own material_type_enum abbreviations. No per-item fetch. ~93% of
+  // packages resolve a type; the rest fall into "Other" honestly rather than
+  // guessing.
+  try {
+    const enumText=await fetchText(TYPE_ENUM_URL);
+    const ABBR=new Set([...enumText.matchAll(/abbreviation:\s*(\S+)/g)].map(m=>m[1].toLowerCase()));
+    PACKAGES.forEach(p=>{ p.typeTok = p.file.split("-").find(t=>ABBR.has(t)) || null; });
+  } catch(e){ PACKAGES.forEach(p=>p.typeTok=null); }
+
+  prefetchBrandNames();  // progressive; does not block the UI
+}
+
+async function prefetchBrandNames(){
+  const slugs=[...new Set(PACKAGES.map(p=>p.brand))];
+  await Promise.all(slugs.map(async slug=>{
+    try { const b=await fetchYaml(`${RAW}/brands/${slug}.yaml`); if(b.name) brandNames.set(slug,b.name); } catch(e){}
+  }));
+  vendorCombo.renderPanel();  // refresh labels if the panel happens to be open
+}
+
+// ── small helpers ──────────────────────────────────────────────────────────
+function prettifySlug(s){ return s.replace(/-/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
+function prettyName(file, brand){
+  let n=file.replace(/-/g," ");
+  if(n.toLowerCase().startsWith(brand.replace(/-/g," ").toLowerCase()+" ")) n=n.slice(brand.length+1);
+  return n.replace(/\b\w/g,c=>c.toUpperCase());
+}
+function weightBadge(file){
+  let m=file.match(/-(\d+(?:\.\d+)?kg)(?:-(spool|old-spool|refill))?$/i);
+  if(m) return m[1].toUpperCase().replace("KG"," kg") + (m[2]?` (${m[2].replace("-"," ")})`:"");
+  m=file.match(/-(\d+)-(spool|old-spool|refill|no-spool)$/i);
+  if(m) return `${m[1]} g` + (m[2]!=="spool" ? ` (${m[2].replace("-"," ")})` : "");
+  return null;
+}
+function loadMru(key){ try { return JSON.parse(localStorage.getItem(key)||"[]"); } catch(e){ return []; } }
+function pushMru(key,val,cap){ let a=loadMru(key).filter(v=>v!==val); a.unshift(val); a=a.slice(0,cap); localStorage.setItem(key,JSON.stringify(a)); }
+
+// ── candidate lists (all client-side, zero extra fetches) ───────────────────
+function vendorCandidates(){
+  const counts=new Map();
+  for(const p of PACKAGES) counts.set(p.brand,(counts.get(p.brand)||0)+1);
+  return [...counts.entries()]
+    .map(([slug,count])=>({value:slug, label:brandNames.get(slug)||prettifySlug(slug), count}))
+    .sort((a,b)=>a.label.localeCompare(b.label));
+}
+function typeCandidatesFor(vendorSlug){
+  const counts=new Map();
+  for(const p of PACKAGES){ if(p.brand!==vendorSlug) continue; const tok=p.typeTok||"other"; counts.set(tok,(counts.get(tok)||0)+1); }
+  const total=[...counts.values()].reduce((a,b)=>a+b,0);
+  const rows=[{value:"", label:"All types", count:total}];
+  for(const [tok,count] of [...counts.entries()].sort((a,b)=>b[1]-a[1]))
+    rows.push({value:tok, label: tok==="other" ? "Other / unspecified" : tok.toUpperCase(), count});
+  return rows;
+}
+function materialCandidatesFor(vendorSlug, typeTok){
+  return PACKAGES.filter(p=>p.brand===vendorSlug && (!typeTok || p.typeTok===typeTok))
+    .map(p=>{
+      const badge=weightBadge(p.file);
+      return { value:p.path, label:prettyName(p.file,p.brand)+(badge?` — ${badge}`:"") };
+    })
+    .sort((a,b)=> a.label.localeCompare(b.label));
+}
+
+// ── reusable combo box: MRU (if any) → divider → list; type-to-filter ────────
+function makeCombo(fieldId, inputId, panelId, placeholder){
+  const field=$(fieldId), input=$(inputId), panel=$(panelId);
+  let candidatesFn=()=>[], mruKey=null, mruCap=0, onPick=()=>{};
+  let rows=[], hiIdx=-1;
+
+  function setSource(cfg){ candidatesFn=cfg.candidatesFn; mruKey=cfg.mruKey||null; mruCap=cfg.mruCap||0; onPick=cfg.onPick; }
+  function rowHtml(c,i){
+    return `<div class="cat-row${i===hiIdx?" hi":""}" data-i="${i}">`+
+      `<span>${esc(c.label)}</span>`+
+      (c.count!=null?`<span class="meta">${c.count}</span>`:"")+`</div>`;
+  }
+  function renderPanel(){
+    const all=candidatesFn();
+    const filt=input.value.trim().toLowerCase();
+    const terms=filt.split(/\s+/).filter(Boolean);
+    const match=c=>terms.every(t=>c.label.toLowerCase().includes(t));
+    const mruVals=(!filt && mruKey) ? loadMru(mruKey) : [];
+    const mruRows=mruVals.map(v=>all.find(c=>c.value===v)).filter(Boolean);
+    let rest=all.filter(c=>!mruRows.includes(c));
+    if(filt) rest=rest.filter(match);
+    rest=rest.slice(0,80);
+    rows=[...mruRows, ...rest];
+    hiIdx=-1;
+    panel.innerHTML =
+      (mruRows.length? `<div class="cat-group">Recently used</div>${mruRows.map((c,i)=>rowHtml(c,i)).join("")}<div class="cat-divider"></div>` : "") +
+      (rest.length ? rest.map((c,i)=>rowHtml(c,mruRows.length+i)).join("")
+                   : (all.length ? `<div class="cat-empty">No matches</div>` : `<div class="cat-empty">Nothing here yet</div>`));
+  }
+  function show(){ if(input.disabled) return; renderPanel(); panel.style.display="block"; }
+  function hide(){ panel.style.display="none"; }
+  function pick(c){
+    input.value=c.label; input.classList.add("picked"); hide();
+    if(mruKey) pushMru(mruKey, c.value, mruCap);
+    onPick(c);
+  }
+  input.addEventListener("focus", show);
+  input.addEventListener("input", ()=>{ input.classList.remove("picked"); show(); });
+  input.addEventListener("blur", ()=> setTimeout(hide, 150));
+  input.addEventListener("keydown", e=>{
+    if(panel.style.display!=="block") return;
+    if(e.key==="ArrowDown"){ e.preventDefault(); hiIdx=Math.min(hiIdx+1, rows.length-1); renderHi(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); hiIdx=Math.max(hiIdx-1, 0); renderHi(); }
+    else if(e.key==="Enter"){ e.preventDefault(); if(rows[hiIdx]) pick(rows[hiIdx]); }
+    else if(e.key==="Escape"){ hide(); }
+  });
+  function renderHi(){ panel.querySelectorAll(".cat-row").forEach(r=>r.classList.toggle("hi", +r.dataset.i===hiIdx)); }
+  panel.addEventListener("mousedown", e=>{
+    const row=e.target.closest(".cat-row[data-i]"); if(!row) return;
+    e.preventDefault(); pick(rows[+row.dataset.i]);
+  });
+  function reset(){ input.value=""; input.classList.remove("picked"); }
+  function enable(text){ input.disabled=false; input.placeholder=text||placeholder; field.classList.remove("disabled"); }
+  function disable(text){ input.disabled=true; reset(); input.placeholder=text; field.classList.add("disabled"); }
+  return { setSource, reset, enable, disable, renderPanel };
+}
+
+const vendorCombo   = makeCombo("#cat-field-vendor",   "#cat-in-vendor",   "#cat-panel-vendor",   "Type or tap to browse vendors…");
+const typeCombo     = makeCombo("#cat-field-type",     "#cat-in-type",     "#cat-panel-type",     "Type or tap to browse types…");
+const materialCombo = makeCombo("#cat-field-material", "#cat-in-material", "#cat-panel-material", "Type or tap to browse materials…");
+typeCombo.disable("Pick a vendor first");
+materialCombo.disable("Pick a vendor first");
+
+vendorCombo.setSource({
+  candidatesFn: vendorCandidates,
+  mruKey: "opt_mru_vendor", mruCap: 3,
+  onPick(c){
+    typeCombo.reset(); typeCombo.enable();
+    materialCombo.disable("Pick a material type first");
+    resolvedEl.innerHTML = "";
+    typeCombo.setSource({
+      candidatesFn: ()=>typeCandidatesFor(c.value),
+      mruKey: "opt_mru_type", mruCap: 4,
+      onPick(tc){
+        materialCombo.reset(); materialCombo.enable();
+        resolvedEl.innerHTML = "";
+        materialCombo.setSource({
+          candidatesFn: ()=>materialCandidatesFor(c.value, tc.value || null),
+          onPick(mc){ resolvePick(mc.value); }
+        });
+      }
+    });
+  }
+});
+
+// ── resolve a picked package: package → material + container + brand, then
+//    fill the form's hidden cat_* fields with the authoritative values ───────
+function stripDash(u){ return (u||"").replace(/-/g,""); }
+function setField(name, val){ const el=$("#cat-f-"+name); if(el) el.value = (val==null?"":val); }
+
+async function resolvePick(pkgPath){
+  resolvedEl.innerHTML = "<p class='muted'>Resolving…</p>";
+  const brandSlug = pkgPath.slice(PKG_PREFIX.length).split("/")[0];
+  try {
+    const pkg = await fetchYaml(`${RAW}/material-packages/${brandSlug}/${pkgPath.split("/").pop()}`);
+    const matSlug = pkg.material && pkg.material.slug, contSlug = pkg.container && pkg.container.slug;
+    const [mat, cont, brand] = await Promise.all([
+      matSlug  ? fetchYaml(`${RAW}/materials/${brandSlug}/${matSlug}.yaml`)       : Promise.resolve({}),
+      contSlug ? fetchYaml(`${RAW}/material-containers/${contSlug}.yaml`)         : Promise.resolve({}),
+                 fetchYaml(`${RAW}/brands/${brandSlug}.yaml`).catch(()=>({})),
+    ]);
+    applyPick(pkg, mat, cont, brand, brandSlug);
+  } catch(e){
+    resolvedEl.innerHTML = `<p class="ob">Couldn't resolve that pick: ${esc(e.message)}</p>`;
+  }
+}
+
+function applyPick(pkg, mat, cont, brand, brandSlug){
+  const rgba = (mat.primary_color && mat.primary_color.color_rgba) || "";
+  const dia  = pkg.filament_diameter ? (pkg.filament_diameter/1000) : null;
+  const tare = (cont.empty_weight != null) ? cont.empty_weight : null;
+  const props = mat.properties || {};
+  const tempKeys = ["min_print_temperature","max_print_temperature","min_bed_temperature","max_bed_temperature"];
+  const haveTemps = tempKeys.every(k => typeof props[k] === "number");
+
+  const vendor = brand.name || prettifySlug(brandSlug);
+  const material = mat.name || "";
+  const abbr = mat.abbreviation || mat.type || "";
+
+  setField("cat_vendor", vendor);
+  setField("cat_material", material);
+  setField("cat_abbr", abbr);
+  setField("cat_rgba", rgba ? rgba.replace("#","") : "");
+  setField("cat_dia", dia);
+  setField("cat_nom_g", pkg.nominal_netto_full_weight);
+  setField("cat_empty_g", tare);
+  setField("cat_gtin", pkg.gtin != null ? String(pkg.gtin) : "");
+  setField("cat_pkg_uuid", stripDash(pkg.uuid));
+  setField("cat_mat_uuid", stripDash(mat.uuid));
+  setField("cat_brand_uuid", stripDash(brand.uuid));
+  if (haveTemps) {
+    setField("cat_print_min", props.min_print_temperature);
+    setField("cat_print_max", props.max_print_temperature);
+    setField("cat_bed_min",   props.min_bed_temperature);
+    setField("cat_bed_max",   props.max_bed_temperature);
+  } else {
+    setField("cat_print_min",""); setField("cat_print_max","");
+    setField("cat_bed_min","");   setField("cat_bed_max","");
+  }
+  $("#cat-source").value = "catalog";
+
+  const sw = rgba ? `<span class="sw" style="background:${esc(rgba.slice(0,7))}"></span>` : "";
+  const missTare = tare==null ? " <span class='ob'>&mdash; missing; capture below</span>" : "";
+  resolvedEl.innerHTML =
+    `<div class="card" style="border-color:#2a5;margin-top:10px">` +
+    `<div style="font-size:17px;font-weight:600">${sw}${esc(vendor)} ${esc(material)}</div>` +
+    `<p class="muted">${esc(abbr)}` +
+      (dia!=null?` &middot; ${dia.toFixed(2)} mm`:``) +
+      (pkg.nominal_netto_full_weight?` &middot; ${pkg.nominal_netto_full_weight} g`:``) +
+      ` &middot; tare ${tare!=null?tare+" g":"unknown"}${missTare}</p>` +
+    `<p class="muted" style="font-size:12px">GTIN ${pkg.gtin||"&mdash;"}` +
+      (haveTemps ? ` &middot; print ${props.min_print_temperature}&ndash;${props.max_print_temperature}&deg;C` : ``) +
+    `</p></div>`;
+}
+
+// ── boot ──────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    await loadIndex();
+    vendorCombo.enable();
+    setStatus(`${PACKAGES.length.toLocaleString()} packages, ${new Set(PACKAGES.map(p=>p.brand)).size} vendors ready.`);
+  } catch(e){
+    setStatus(`Couldn't load the catalog: <b>${esc(e.message)}</b> &mdash; use manual entry below.`, true);
+    const det = document.getElementById("cat-manual-details");
+    if (det) det.open = true;
+  }
+})();
+})();
+</script>)OPTJS";
 
 // One nav link, marked `active` when its href matches the current page.
 static void navlink(String& h, const char* href, const char* label, const char* active) {
@@ -755,8 +1107,58 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         p += "<div id='newprod'>";
     }
 
+    // ── OpenPrintTag catalog search ───────────────────────────────────────────
+    // Live search of the OPT database (github.com/OpenPrintTag/openprinttag-
+    // database) straight from the browser — the device is never in the loop,
+    // so this costs the firmware nothing. A pick fills the hidden cat_* fields
+    // below with authoritative vendor data (GTIN, the three OPT UUIDs, real
+    // print/bed temps when the material file has them) instead of whatever a
+    // person free-types. See tools/opt-catalog/prototype.html for how this was
+    // validated against the live DB before landing here.
+    p += "<div class='card'>"
+         "<label>Search filament catalog</label>"
+         "<div class='cat-status' id='cat-status'>Loading catalog&hellip;</div>"
+         "<div class='cat-field' id='cat-field-vendor'>"
+           "<label>Vendor</label>"
+           "<input class='cat-input' id='cat-in-vendor' placeholder='Loading&hellip;' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-vendor'></div>"
+         "</div>"
+         "<div class='cat-field disabled' id='cat-field-type'>"
+           "<label>Material type</label>"
+           "<input class='cat-input' id='cat-in-type' placeholder='Pick a vendor first' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-type'></div>"
+         "</div>"
+         "<div class='cat-field disabled' id='cat-field-material'>"
+           "<label>Material</label>"
+           "<input class='cat-input' id='cat-in-material' placeholder='Pick a vendor first' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-material'></div>"
+         "</div>"
+         "<div id='cat-resolved'></div>"
+         "</div>";
+    p += "<input type='hidden' name='source' id='cat-source' value='manual'>"
+         "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
+         "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
+         "<input type='hidden' name='cat_abbr'        id='cat-f-cat_abbr'>"
+         "<input type='hidden' name='cat_rgba'        id='cat-f-cat_rgba'>"
+         "<input type='hidden' name='cat_dia'         id='cat-f-cat_dia'>"
+         "<input type='hidden' name='cat_nom_g'       id='cat-f-cat_nom_g'>"
+         "<input type='hidden' name='cat_empty_g'     id='cat-f-cat_empty_g'>"
+         "<input type='hidden' name='cat_gtin'        id='cat-f-cat_gtin'>"
+         "<input type='hidden' name='cat_pkg_uuid'    id='cat-f-cat_pkg_uuid'>"
+         "<input type='hidden' name='cat_mat_uuid'    id='cat-f-cat_mat_uuid'>"
+         "<input type='hidden' name='cat_brand_uuid'  id='cat-f-cat_brand_uuid'>"
+         "<input type='hidden' name='cat_print_min'   id='cat-f-cat_print_min'>"
+         "<input type='hidden' name='cat_print_max'   id='cat-f-cat_print_max'>"
+         "<input type='hidden' name='cat_bed_min'     id='cat-f-cat_bed_min'>"
+         "<input type='hidden' name='cat_bed_max'     id='cat-f-cat_bed_max'>";
+
+    p += "<details id='cat-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
+         "Or enter manually</summary>";
+
+    const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
+
     // Vendor
-    p += "<label>Vendor</label><select name='vendor'>";
+    p += "<label>Vendor</label><select name='vendor'"; p += resetSrc; p += ">";
     char vbuf[64];
     for (size_t i = 0; i < cfgVendorCount(); i++)
         if (cfgVendorAt(i, vbuf, sizeof(vbuf)))
@@ -764,7 +1166,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "</select>";
 
     // Material
-    p += "<label>Material</label><select name='material'>";
+    p += "<label>Material</label><select name='material'"; p += resetSrc; p += ">";
     CfgMaterial m;
     for (size_t i = 0; i < cfgMaterialCount(); i++)
         if (cfgMaterialAt(i, m))
@@ -772,7 +1174,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "</select>";
 
     // Color
-    p += "<label>Color</label><select name='color'>";
+    p += "<label>Color</label><select name='color'"; p += resetSrc; p += ">";
     CfgColor c;
     for (size_t i = 0; i < cfgColorCount(); i++)
         if (cfgColorAt(i, c))
@@ -780,12 +1182,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "</select>";
 
     // Spool profile (fills nominal-full + empty tare)
-    p += "<label>Spool profile</label><select name='profile'>";
+    p += "<label>Spool profile</label><select name='profile'"; p += resetSrc; p += ">";
     CfgProfile pr;
     for (size_t i = 0; i < cfgProfileCount(); i++)
         if (cfgProfileAt(i, pr))
             p += "<option>" + esc(pr.label) + "</option>";
     p += "</select>";
+    p += "</details>";
 
     // Tare override (optional). "Capture tare" reads the load cell once.
     p += "<label>Empty spool tare (g) &mdash; blank to use profile</label>"
@@ -797,6 +1200,8 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
 
     p += "<div><button type='submit'>Save &amp; write tag</button></div>";
     p += "</form>";
+    p += CATALOG_STYLE;
+    p += CATALOG_SCRIPT;
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -837,6 +1242,17 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     bool    haveMat = false;
     uint32_t pid = 0;
 
+    // OPT identity carried through regardless of path, so a catalog-sourced
+    // pick's real GTIN/UUIDs (and, when the material file has them, real
+    // print/bed temps) reach both the product record and the physical tag
+    // instead of being dropped on the floor after resolving. Empty/zero here
+    // just means "the source didn't have one" — the tag-write block below
+    // already treats that as absent.
+    String   pkgUuid, matUuid, brandUuid;
+    uint64_t gtin = 0;
+    bool     haveCatTemps = false;
+    int16_t  catPrintMin = 0, catPrintMax = 0, catBedMin = 0, catBedMax = 0;
+
     ProductRecord q;
     if (chosen && storeGetProduct(chosen, q)) {
         pid     = q.id;
@@ -845,11 +1261,63 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         abbr    = q.abbr;
         memcpy(rgba, q.rgba, 4);
         dia = q.dia; empty = q.empty_g; nominal = q.nom_g;
+        pkgUuid = q.pkg_uuid; matUuid = q.mat_uuid; brandUuid = q.brand_uuid; gtin = q.gtin;
         // The tag also wants print/bed temps and the material class/type, which
         // live on the config catalog rather than on the product. Look them up
         // by abbreviation; if there is no matching row the tag simply keeps the
         // temps it already had, which is what happens today for a foreign tag.
         haveMat = cfgMaterialByName(abbr.c_str(), m);
+    } else if (arg("source") == "catalog") {
+        // Picked from the OpenPrintTag catalog search (see CATALOG_SCRIPT) —
+        // the browser already resolved package -> material + container + brand
+        // against the live DB, so these are the vendor's own published values,
+        // not a local guess. No cfgMaterialByName/cfgColorByName lookup needed;
+        // the catalog gave us the real numbers directly.
+        float tareOvr = arg("empty_g").toFloat();   // 0 → use catalog's own tare
+
+        vendor  = arg("cat_vendor");
+        display = arg("cat_material");
+        abbr    = arg("cat_abbr");
+        String rgbaHex = arg("cat_rgba");
+        if (rgbaHex.length() == 8)
+            for (int i = 0; i < 4; i++)
+                rgba[i] = (uint8_t)strtol(rgbaHex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
+
+        dia     = arg("cat_dia").toFloat();
+        if (dia <= 0.0f) dia = 1.75f;
+        nominal = arg("cat_nom_g").toFloat();
+        empty   = (tareOvr > 0.0f) ? tareOvr : arg("cat_empty_g").toFloat();
+
+        pkgUuid   = arg("cat_pkg_uuid");
+        matUuid   = arg("cat_mat_uuid");
+        brandUuid = arg("cat_brand_uuid");
+        gtin      = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
+
+        haveCatTemps = arg("cat_print_min").length() > 0;
+        if (haveCatTemps) {
+            catPrintMin = (int16_t)arg("cat_print_min").toInt();
+            catPrintMax = (int16_t)arg("cat_print_max").toInt();
+            catBedMin   = (int16_t)arg("cat_bed_min").toInt();
+            catBedMax   = (int16_t)arg("cat_bed_max").toInt();
+        }
+        // Local material class/type enum still comes from the config catalog
+        // (the OPT database's class/type strings aren't mapped to our enum) —
+        // by abbreviation, same lookup the manual path uses.
+        haveMat = cfgMaterialByName(abbr.c_str(), m);
+
+        ProductRecord prod;
+        strlcpy(prod.vendor,     vendor.c_str(),    sizeof(prod.vendor));
+        strlcpy(prod.material,   display.c_str(),   sizeof(prod.material));
+        strlcpy(prod.abbr,       abbr.c_str(),       sizeof(prod.abbr));
+        strlcpy(prod.pkg_uuid,   pkgUuid.c_str(),    sizeof(prod.pkg_uuid));
+        strlcpy(prod.mat_uuid,   matUuid.c_str(),    sizeof(prod.mat_uuid));
+        strlcpy(prod.brand_uuid, brandUuid.c_str(),  sizeof(prod.brand_uuid));
+        prod.gtin = gtin;
+        memcpy(prod.rgba, rgba, 4);
+        prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
+        ProductRecord found;
+        if (storeFindProduct(prod, found))      pid = found.id;
+        else if (storeUpsertProduct(prod))      pid = prod.id;
     } else {
         String matName  = arg("material");
         String colName  = arg("color");
@@ -933,14 +1401,42 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         gTagMain.nominal_netto_full_weight = nominal;
         gTagMain.actual_netto_full_weight  = nominal;   // new spool assumed full
         gTagMain.empty_container_weight    = empty;
-        if (haveMat) {
+        // Catalog-sourced temps are the vendor's own published numbers, more
+        // specific than the config catalog's per-type defaults, so they win
+        // when present. Class/type enums still come from the local catalog
+        // either way — the OPT database's strings aren't mapped to our enum.
+        if (haveCatTemps) {
+            gTagMain.min_print_temperature = catPrintMin;
+            gTagMain.max_print_temperature = catPrintMax;
+            gTagMain.min_bed_temperature   = catBedMin;
+            gTagMain.max_bed_temperature   = catBedMax;
+        } else if (haveMat) {
             gTagMain.min_print_temperature = m.print_min;
             gTagMain.max_print_temperature = m.print_max;
             gTagMain.min_bed_temperature   = m.bed_min;
             gTagMain.max_bed_temperature   = m.bed_max;
-            gTagMain.material_class        = m.cls;
-            gTagMain.material_type         = m.type;
         }
+        if (haveMat) {
+            gTagMain.material_class = m.cls;
+            gTagMain.material_type  = m.type;
+        }
+        // Real vendor identity (GTIN, the three OPT UUIDs) — set unconditionally,
+        // same as every other identity field above. This is a REPLACE, not a
+        // merge: a manual/no-uuid submission must clear whatever a previous
+        // catalog-sourced write left behind, or the tag ends up asserting a
+        // vendor identity (a real package_uuid/GTIN) underneath data someone
+        // just typed by hand for a different product entirely — worse than
+        // never having written one, since it reads as verified when it isn't.
+        // A nil UUID/zero GTIN is simply omitted on the next encode
+        // (optUuidIsNil), which is the correct "no identity asserted" state.
+        uint8_t idBytes[16];
+        memset(gTagMain.package_uuid,  0, sizeof(gTagMain.package_uuid));
+        memset(gTagMain.material_uuid, 0, sizeof(gTagMain.material_uuid));
+        memset(gTagMain.brand_uuid,    0, sizeof(gTagMain.brand_uuid));
+        if (hex32ToBytes(pkgUuid,   idBytes)) memcpy(gTagMain.package_uuid,  idBytes, 16);
+        if (hex32ToBytes(matUuid,   idBytes)) memcpy(gTagMain.material_uuid, idBytes, 16);
+        if (hex32ToBytes(brandUuid, idBytes)) memcpy(gTagMain.brand_uuid,    idBytes, 16);
+        gTagMain.gtin = gtin;
         xSemaphoreGive(gTagMutex);
         gWriteMainPending     = true;
         gSpoolNeedsOnboarding = false;

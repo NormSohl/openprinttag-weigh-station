@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPT Catalog Search — prototype</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e9ef; --dim:#9aa4b2;
+          --accent:#4c8dff; --good:#3fbf7f; --warn:#e0a03f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  .wrap { max-width:440px; margin:0 auto; padding:18px 14px 60px; }
+  @media (min-width:700px)  { .wrap { max-width:620px; } }
+  @media (min-width:1000px) { .wrap { max-width:820px; } }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:var(--dim); margin:0 0 14px; font-size:13px; }
+  .status { font-size:12px; color:var(--dim); margin:8px 0; min-height:18px; }
+  .status b { color:var(--fg); } .status.err b { color:var(--warn); }
+  .field { margin-bottom:14px; position:relative; }
+  .field.disabled { opacity:.45; }
+  .field label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim);
+                  text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px; }
+  .field label .n { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
+                     border-radius:50%; background:var(--line); color:var(--fg); font-size:10px; }
+  .combo-input { width:100%; padding:13px 12px; font-size:16px; border:1px solid var(--line);
+                 background:var(--panel); color:var(--fg); border-radius:9px; }
+  .combo-input:focus { border-color:var(--accent); outline:none; }
+  .combo-input:disabled { cursor:not-allowed; }
+  .combo-input.picked { border-color:var(--good); }
+  .combo-panel { display:none; position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:20;
+                 background:#151821; border:1px solid var(--line); border-radius:9px; max-height:280px;
+                 overflow-y:auto; box-shadow:0 10px 30px #0008; }
+  .combo-group { padding:7px 12px 3px; font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  .combo-divider { border-top:1px solid var(--line); margin:2px 0; }
+  .combo-empty { padding:12px; color:var(--dim); font-size:13px; }
+  .combo-row { padding:11px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;
+               cursor:pointer; }
+  .combo-row:active, .combo-row.hi { background:#20263a; }
+  .combo-row .meta { color:var(--dim); font-size:12px; white-space:nowrap; }
+
+  .panel { margin-top:16px; border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:16px; }
+  .panel h2 { font-size:13px; margin:0 0 12px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  table.kv { width:100%; border-collapse:collapse; }
+  table.kv td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; font-size:13px; }
+  table.kv td.k { color:var(--dim); width:150px; white-space:nowrap; }
+  .swatch { display:inline-block; width:14px; height:14px; border-radius:3px; border:1px solid #0006;
+            vertical-align:-2px; margin-right:6px; }
+  .miss { color:var(--warn); }
+  .uuid { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--dim); }
+  .srclinks { font-size:12px; margin-top:10px; }
+  .srclinks a { color:var(--accent); text-decoration:none; margin-right:12px; }
+  .hint { color:var(--dim); font-size:12px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OpenPrintTag Catalog</h1>
+  <p class="sub">Vendor → material type → material. Recently used first. Live search of the OPT
+     database — the device is never in the loop.</p>
+
+  <div class="status" id="status">Loading index…</div>
+
+  <div class="field" id="field-vendor">
+    <label><span class="n">1</span> Vendor</label>
+    <input class="combo-input" id="in-vendor" placeholder="Loading…" disabled autocomplete="off">
+    <div class="combo-panel" id="panel-vendor"></div>
+  </div>
+
+  <div class="field disabled" id="field-type">
+    <label><span class="n">2</span> Material type</label>
+    <input class="combo-input" id="in-type" placeholder="Pick a vendor first" disabled autocomplete="off">
+    <div class="combo-panel" id="panel-type"></div>
+  </div>
+
+  <div class="field disabled" id="field-material">
+    <label><span class="n">3</span> Material</label>
+    <input class="combo-input" id="in-material" placeholder="Pick a vendor first" disabled autocomplete="off">
+    <div class="combo-panel" id="panel-material"></div>
+  </div>
+
+  <div id="detail"></div>
+</div>
+
+<script>
+const OWNER="OpenPrintTag", REPO="openprinttag-database", BRANCH="main";
+const API=`https://api.github.com/repos/${OWNER}/${REPO}`;
+const RAW=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/data`;
+const PKG_PREFIX="data/material-packages/";
+const TYPE_ENUM_URL="https://raw.githubusercontent.com/prusa3d/OpenPrintTag/main/data/material_type_enum.yaml";
+
+const $ = s => document.querySelector(s);
+const statusEl=$("#status"), detailEl=$("#detail");
+let PACKAGES = [];          // { path, brand, file, hay, typeTok }
+let brandNames = new Map(); // slug -> display name (prefetched, progressive)
+
+function setStatus(html, err=false){ statusEl.className="status"+(err?" err":""); statusEl.innerHTML=html; }
+
+// ── minimal YAML subset parser (maps, nested maps, lists of scalars/maps) ──── [verified against live DB]
+function parseYaml(text){
+  const lines=text.split(/\r?\n/).map(l=>l.replace(/\s+$/,"")).filter(l=>l.trim()!==""&&!/^\s*#/.test(l));
+  let pos=0; const indentOf=l=>l.length-l.trimStart().length;
+  const scalar=v=>{v=v.trim();
+    if((v[0]==="'"&&v.endsWith("'"))||(v[0]==='"'&&v.endsWith('"')))return v.slice(1,-1);
+    if(/^-?\d+$/.test(v))return v.length>15?v:parseInt(v,10);
+    if(/^-?\d*\.\d+$/.test(v))return parseFloat(v); return v;};
+  function parseMap(indent){const obj={};
+    while(pos<lines.length){const line=lines[pos],ind=indentOf(line),t=line.trim();
+      if(ind<indent)break; if(t.startsWith("- "))break;
+      const m=t.match(/^([^:]+):\s*(.*)$/); if(!m){pos++;continue;}
+      const key=m[1].trim(),val=m[2]; pos++;
+      if(val===""){const nx=lines[pos];
+        if(nx!==undefined){const ni=indentOf(nx);
+          if(nx.trim().startsWith("- ")&&ni>=indent)obj[key]=parseList(ni);
+          else if(ni>indent)obj[key]=parseMap(ni); else obj[key]=null;
+        }else obj[key]=null;
+      }else obj[key]=scalar(val);}
+    return obj;}
+  function parseList(indent){const arr=[];
+    while(pos<lines.length){const line=lines[pos],ind=indentOf(line),t=line.trim();
+      if(ind<indent||!t.startsWith("- "))break;
+      const rest=t.slice(2),m=rest.match(/^([^:]+):\s*(.*)$/); pos++;
+      if(m){const item={};item[m[1].trim()]=m[2]===""?null:scalar(m[2]);
+        const child=ind+2;
+        if(pos<lines.length&&indentOf(lines[pos])>=child&&!lines[pos].trim().startsWith("- "))
+          Object.assign(item,parseMap(child));
+        arr.push(item);}else arr.push(scalar(rest));}
+    return arr;}
+  return parseMap(0);
+}
+async function fetchText(url){ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`); return r.text(); }
+async function fetchYaml(url){ return parseYaml(await fetchText(url)); }
+
+// ── index: one tree fetch (cached by data_hash) + one small type-enum fetch ─────
+async function loadIndex(){
+  let hash="nohash";
+  try { const man=await fetchText(`${RAW}/manifest.yaml`); hash=(man.match(/data_hash:\s*(\S+)/)||[])[1]||"nohash"; } catch(e){}
+
+  const cacheKey="opt_pkgindex2_"+hash;
+  const cached=localStorage.getItem(cacheKey);
+  if(cached){ PACKAGES=JSON.parse(cached); setStatus(`${PACKAGES.length.toLocaleString()} packages <span class="hint">(cached)</span>`); }
+  else {
+    setStatus("Fetching catalog tree from GitHub (one request)…");
+    const tree=JSON.parse(await fetchText(`${API}/git/trees/${BRANCH}?recursive=1`));
+    PACKAGES=(tree.tree||[]).filter(e=>e.type==="blob"&&e.path.startsWith(PKG_PREFIX)&&e.path.endsWith(".yaml"))
+      .map(e=>{const rel=e.path.slice(PKG_PREFIX.length); const brand=rel.split("/")[0];
+        const file=rel.split("/").pop().replace(/\.yaml$/,"");
+        return {path:e.path, brand, file};});
+    try { localStorage.setItem(cacheKey, JSON.stringify(PACKAGES)); } catch(e){}
+    for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if(k.startsWith("opt_pkgindex2_")&&k!==cacheKey) localStorage.removeItem(k); }
+    setStatus(`${PACKAGES.length.toLocaleString()} packages <span class="hint">(fresh)</span>`);
+  }
+
+  // Type tokens: scan filenames for exact hyphen-delimited matches against the OPT's own
+  // material_type_enum abbreviations. No per-item fetch. ~93% of packages resolve a type;
+  // the rest fall into "Other" honestly rather than guessing.
+  try {
+    const enumText=await fetchText(TYPE_ENUM_URL);
+    const ABBR=new Set([...enumText.matchAll(/abbreviation:\s*(\S+)/g)].map(m=>m[1].toLowerCase()));
+    PACKAGES.forEach(p=>{ p.typeTok = p.file.split("-").find(t=>ABBR.has(t)) || null; });
+  } catch(e){ PACKAGES.forEach(p=>p.typeTok=null); }
+
+  prefetchBrandNames();  // progressive; does not block the UI
+}
+
+async function prefetchBrandNames(){
+  const slugs=[...new Set(PACKAGES.map(p=>p.brand))];
+  await Promise.all(slugs.map(async slug=>{
+    try { const b=await fetchYaml(`${RAW}/brands/${slug}.yaml`); if(b.name) brandNames.set(slug,b.name); } catch(e){}
+  }));
+  vendorCombo.renderPanel();  // refresh labels if the panel happens to be open
+}
+
+// ── small helpers ────────────────────────────────────────────────────────────
+function prettifySlug(s){ return s.replace(/-/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
+function prettyName(file, brand){
+  let n=file.replace(/-/g," ");
+  if(n.toLowerCase().startsWith(brand.replace(/-/g," ").toLowerCase()+" ")) n=n.slice(brand.length+1);
+  return n.replace(/\b\w/g,c=>c.toUpperCase());
+}
+function weightBadge(file){
+  let m=file.match(/-(\d+(?:\.\d+)?kg)(?:-(spool|old-spool|refill))?$/i);
+  if(m) return m[1].toUpperCase().replace("KG"," kg") + (m[2]?` (${m[2].replace("-"," ")})`:"");
+  m=file.match(/-(\d+)-(spool|old-spool|refill|no-spool)$/i);
+  if(m) return `${m[1]} g` + (m[2]!=="spool" ? ` (${m[2].replace("-"," ")})` : "");
+  return null;
+}
+function loadMru(key){ try { return JSON.parse(localStorage.getItem(key)||"[]"); } catch(e){ return []; } }
+function pushMru(key,val,cap){ let a=loadMru(key).filter(v=>v!==val); a.unshift(val); a=a.slice(0,cap); localStorage.setItem(key,JSON.stringify(a)); }
+
+// ── candidate lists (all client-side, zero extra fetches) ──────────────────────
+function vendorCandidates(){
+  const counts=new Map();
+  for(const p of PACKAGES) counts.set(p.brand,(counts.get(p.brand)||0)+1);
+  return [...counts.entries()]
+    .map(([slug,count])=>({value:slug, label:brandNames.get(slug)||prettifySlug(slug), count}))
+    .sort((a,b)=>a.label.localeCompare(b.label));
+}
+function typeCandidatesFor(vendorSlug){
+  const counts=new Map();
+  for(const p of PACKAGES){ if(p.brand!==vendorSlug) continue; const tok=p.typeTok||"other"; counts.set(tok,(counts.get(tok)||0)+1); }
+  const total=[...counts.values()].reduce((a,b)=>a+b,0);
+  const rows=[{value:"", label:"All types", count:total}];
+  for(const [tok,count] of [...counts.entries()].sort((a,b)=>b[1]-a[1]))
+    rows.push({value:tok, label: tok==="other" ? "Other / unspecified" : tok.toUpperCase(), count});
+  return rows;
+}
+function materialCandidatesFor(vendorSlug, typeTok){
+  return PACKAGES.filter(p=>p.brand===vendorSlug && (!typeTok || p.typeTok===typeTok))
+    .map(p=>{
+      const badge=weightBadge(p.file);
+      return { value:p.path, label:prettyName(p.file,p.brand)+(badge?` — ${badge}`:"") };
+    })
+    .sort((a,b)=> a.label.localeCompare(b.label));
+}
+
+// ── reusable combo box: MRU (if any) → divider → list; type-to-filter ──────────
+function makeCombo(fieldId, inputId, panelId, placeholder){
+  const field=$(fieldId), input=$(inputId), panel=$(panelId);
+  let candidatesFn=()=>[], mruKey=null, mruCap=0, onPick=()=>{};
+  let rows=[], hiIdx=-1;
+
+  function setSource(cfg){ candidatesFn=cfg.candidatesFn; mruKey=cfg.mruKey||null; mruCap=cfg.mruCap||0; onPick=cfg.onPick; }
+  function rowHtml(c,i){
+    return `<div class="combo-row${i===hiIdx?" hi":""}" data-i="${i}">`+
+      `<span>${c.label}</span>`+
+      (c.count!=null?`<span class="meta">${c.count}</span>`:"")+`</div>`;
+  }
+  function renderPanel(){
+    const all=candidatesFn();
+    const filt=input.value.trim().toLowerCase();
+    const terms=filt.split(/\s+/).filter(Boolean);
+    const match=c=>terms.every(t=>c.label.toLowerCase().includes(t));
+    const mruVals=(!filt && mruKey) ? loadMru(mruKey) : [];
+    const mruRows=mruVals.map(v=>all.find(c=>c.value===v)).filter(Boolean);
+    let rest=all.filter(c=>!mruRows.includes(c));
+    if(filt) rest=rest.filter(match);
+    rest=rest.slice(0,80);
+    rows=[...mruRows, ...rest];
+    hiIdx=-1;
+    panel.innerHTML =
+      (mruRows.length? `<div class="combo-group">Recently used</div>${mruRows.map((c,i)=>rowHtml(c,i)).join("")}<div class="combo-divider"></div>` : "") +
+      (rest.length ? rest.map((c,i)=>rowHtml(c,mruRows.length+i)).join("")
+                   : (all.length ? `<div class="combo-empty">No matches</div>` : `<div class="combo-empty">Nothing here yet</div>`));
+  }
+  function show(){ if(input.disabled) return; renderPanel(); panel.style.display="block"; }
+  function hide(){ panel.style.display="none"; }
+  function pick(c){
+    input.value=c.label; input.classList.add("picked"); hide();
+    if(mruKey) pushMru(mruKey, c.value, mruCap);
+    onPick(c);
+  }
+  input.addEventListener("focus", show);
+  input.addEventListener("input", ()=>{ input.classList.remove("picked"); show(); });
+  input.addEventListener("blur", ()=> setTimeout(hide, 150));
+  input.addEventListener("keydown", e=>{
+    if(panel.style.display!=="block") return;
+    if(e.key==="ArrowDown"){ e.preventDefault(); hiIdx=Math.min(hiIdx+1, rows.length-1); renderHi(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); hiIdx=Math.max(hiIdx-1, 0); renderHi(); }
+    else if(e.key==="Enter"){ e.preventDefault(); if(rows[hiIdx]) pick(rows[hiIdx]); }
+    else if(e.key==="Escape"){ hide(); }
+  });
+  function renderHi(){ panel.querySelectorAll(".combo-row").forEach(r=>r.classList.toggle("hi", +r.dataset.i===hiIdx)); }
+  panel.addEventListener("mousedown", e=>{
+    const row=e.target.closest(".combo-row[data-i]"); if(!row) return;
+    e.preventDefault(); pick(rows[+row.dataset.i]);
+  });
+  function reset(){ input.value=""; input.classList.remove("picked"); }
+  function enable(text){ input.disabled=false; input.placeholder=text||placeholder; field.classList.remove("disabled"); }
+  function disable(text){ input.disabled=true; reset(); input.placeholder=text; field.classList.add("disabled"); }
+  return { setSource, reset, enable, disable, renderPanel };
+}
+
+const vendorCombo   = makeCombo("#field-vendor",   "#in-vendor",   "#panel-vendor",   "Type or tap to browse vendors…");
+const typeCombo     = makeCombo("#field-type",     "#in-type",     "#panel-type",     "Type or tap to browse types…");
+const materialCombo = makeCombo("#field-material", "#in-material", "#panel-material", "Type or tap to browse materials…");
+typeCombo.disable("Pick a vendor first");
+materialCombo.disable("Pick a vendor first");
+
+vendorCombo.setSource({
+  candidatesFn: vendorCandidates,
+  mruKey: "opt_mru_vendor", mruCap: 3,
+  onPick(c){
+    typeCombo.reset(); typeCombo.enable();
+    materialCombo.disable("Pick a material type first");
+    detailEl.innerHTML = "";
+    typeCombo.setSource({
+      candidatesFn: ()=>typeCandidatesFor(c.value),
+      mruKey: "opt_mru_type", mruCap: 4,
+      onPick(tc){
+        materialCombo.reset(); materialCombo.enable();
+        detailEl.innerHTML = "";
+        materialCombo.setSource({
+          candidatesFn: ()=>materialCandidatesFor(c.value, tc.value || null),
+          onPick(mc){ resolve(mc.value); }
+        });
+      }
+    });
+  }
+});
+// ── resolve a picked package: package → material + container + brand ────────────
+async function resolve(pkgPath){
+  detailEl.innerHTML = `<div class="panel"><h2>Resolving…</h2><div class="status">Fetching package, material, container, brand…</div></div>`;
+  const brandSlug = pkgPath.slice(PKG_PREFIX.length).split("/")[0];
+  try {
+    const pkg = await fetchYaml(`${RAW}/material-packages/${brandSlug}/${pkgPath.split("/").pop()}`);
+    const matSlug = pkg.material?.slug, contSlug = pkg.container?.slug;
+    const [mat, cont, brand] = await Promise.all([
+      matSlug  ? fetchYaml(`${RAW}/materials/${brandSlug}/${matSlug}.yaml`)       : Promise.resolve({}),
+      contSlug ? fetchYaml(`${RAW}/material-containers/${contSlug}.yaml`)         : Promise.resolve({}),
+                 fetchYaml(`${RAW}/brands/${brandSlug}.yaml`).catch(()=>({})),
+    ]);
+    render(pkg, mat, cont, brand, brandSlug, matSlug, contSlug);
+  } catch(e){
+    detailEl.innerHTML = `<div class="panel"><h2>Resolve failed</h2><div class="status err"><b>${e.message}</b></div></div>`;
+  }
+}
+
+function render(pkg, mat, cont, brand, brandSlug, matSlug, contSlug){
+  const rgba = mat.primary_color?.color_rgba || "";
+  const dia  = pkg.filament_diameter ? (pkg.filament_diameter/1000) : null;
+  const tare = (cont.empty_weight ?? null);
+  const rec = {                                   // exactly what the browser would POST
+    vendor: brand.name || brandSlug, material: mat.name || "", abbr: mat.abbreviation || mat.type || "",
+    rgba, dia_mm: dia, nom_g: pkg.nominal_netto_full_weight ?? null, empty_g: tare, gtin: pkg.gtin ?? null,
+    brand_uuid: brand.uuid || "", material_uuid: mat.uuid || "", package_uuid: pkg.uuid || "",
+  };
+  const sw = rgba ? `<span class="swatch" style="background:${rgba.slice(0,7)}"></span>` : "";
+  const missTare = tare==null ? ` <span class="miss">— missing; weigh to establish</span>` : "";
+  const kv = [
+    ["vendor", rec.vendor], ["material (display)", rec.material], ["abbr", rec.abbr],
+    ["colour", rgba ? `${sw}<span class="uuid">${rgba}</span>` : "<span class='miss'>none</span>"],
+    ["diameter", dia!=null ? `${dia.toFixed(2)} mm` : "<span class='miss'>—</span>"],
+    ["nominal net weight", rec.nom_g!=null ? `${rec.nom_g} g` : "<span class='miss'>—</span>"],
+    ["empty/tare weight", (tare!=null?`${tare} g`:"—")+missTare],
+    ["GTIN", rec.gtin ?? "<span class='miss'>—</span>"],
+    ["brand_uuid", `<span class="uuid">${rec.brand_uuid||"—"}</span>`],
+    ["material_uuid", `<span class="uuid">${rec.material_uuid||"—"}</span>`],
+    ["package_uuid", `<span class="uuid">${rec.package_uuid||"—"}</span>`],
+  ].map(([k,v])=>`<tr><td class="k">${k}</td><td>${v}</td></tr>`).join("");
+
+  detailEl.innerHTML = `
+    <div class="panel">
+      <h2>Resolved → would POST to /onboard</h2>
+      <table class="kv">${kv}</table>
+      <div class="srclinks">
+        <a href="${RAW}/material-packages/${brandSlug}/${pkg.slug}.yaml" target="_blank">package.yaml</a>
+        ${matSlug ? `<a href="${RAW}/materials/${brandSlug}/${matSlug}.yaml" target="_blank">material.yaml</a>`:""}
+        ${contSlug ? `<a href="${RAW}/material-containers/${contSlug}.yaml" target="_blank">container.yaml</a>`:""}
+        <a href="${RAW}/brands/${brandSlug}.yaml" target="_blank">brand.yaml</a>
+      </div>
+    </div>`;
+}
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    await loadIndex();
+    vendorCombo.enable();
+    setStatus(`${PACKAGES.length.toLocaleString()} packages, ${new Set(PACKAGES.map(p=>p.brand)).size} vendors ready.`);
+  } catch(e){
+    setStatus(`Couldn't load the catalog: <b>${e.message}</b>. On the device this is where it silently
+      falls back to the manual onboard form (e.g. SoftAP with no internet, or a GitHub rate limit).`, true);
+  }
+})();
+</script>
+</body>
+</html>
