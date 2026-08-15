@@ -67,6 +67,12 @@ bool cfgMaterialAdd(const CfgMaterial& m);
 bool cfgColorAdd(const CfgColor& c);
 bool cfgStockAdd(const CfgStock& s);
 
+// Per-row edit/remove for the Stock items table (the /stock management page).
+// Indexed by position, same as cfgStockAt() -- valid only within one page
+// load's worth of requests, same as every other index-addressed table here.
+bool cfgStockUpdate(size_t i, const CfgStock& s);
+bool cfgStockRemove(size_t i);
+
 // Replace a whole table from a JSON array string (web CRUD posts this).
 // `which` ∈ vendors|materials|spool-profiles|colors|stock-items.
 bool cfgReplaceTable(const char* which, const String& json);

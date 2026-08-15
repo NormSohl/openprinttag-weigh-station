@@ -1651,7 +1651,8 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
-         "or e-mail the list to place the order.</p>";
+         "or e-mail the list to place the order. Manage what's tracked (add, edit, "
+         "remove) on the <a href='/stock' style='color:#8f8'>Stock items</a> page.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
          "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
     CfgStock s;
@@ -1714,6 +1715,130 @@ static void handleReorder(AsyncWebServerRequest* req) {
              "the match exact.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
+}
+
+// ── Stock items: per-row add/edit/remove for what /reorder tracks ─────────────
+// The friendlier counterpart to the raw-JSON "Stock items" textarea on
+// /config, which still exists for bulk edits and import/export. Rows are
+// addressed by position (cfgStockAt()'s index), same as the rest of this
+// table's API — valid for the lifetime of one page load, which is fine here
+// since there is one operator at a time, not concurrent editors.
+static void stockFormFields(String& p, const CfgStock& s) {
+    p += "<label>Vendor</label><input type='text' name='vendor' value='" + esc(s.vendor) + "' required>";
+    p += "<label>Material (bare type, e.g. PLA)</label>"
+         "<input type='text' name='material' value='" + esc(s.material) + "'>";
+    p += "<label>Color</label><input type='text' name='color' value='" + esc(s.color) + "'>";
+    p += "<label>Diameter (mm)</label>"
+         "<input type='number' step='0.01' name='dia' value='" + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'>";
+    p += "<label>Nominal spool weight (g)</label>"
+         "<input type='number' step='0.1' name='spool_g' value='" + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'>";
+    p += "<label>Minimum spools to keep &mdash; 0 = use grams instead</label>"
+         "<input type='number' name='min_spools' value='" + String(s.min_spools) + "'>";
+    p += "<label>Minimum grams to keep &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
+         "<input type='number' step='0.1' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
+    p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
+    p += "<label>GTIN</label><input type='text' name='gtin' value='" + esc(s.gtin) + "'>";
+    p += "<label>Pack quantity</label>"
+         "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
+}
+
+static void handleStockPage(AsyncWebServerRequest* req) {
+    String p = head("Stock items", "/stock");
+
+    long editIdx = -1;
+    if (req->hasParam("edit")) editIdx = req->getParam("edit")->value().toInt();
+    CfgStock editRow{};
+    bool haveEdit = editIdx >= 0 && cfgStockAt((size_t)editIdx, editRow);
+
+    p += "<h3>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
+    p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
+         "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
+    p += "<div class='card'>";
+    p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "'>";
+    if (haveEdit) p += "<input type='hidden' name='index' value='" + String((long)editIdx) + "'>";
+    stockFormFields(p, editRow);
+    p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
+    if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
+    p += "</div></form></div>";
+
+    p += "<h3>Currently tracked</h3>";
+    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th><th>Threshold</th>"
+         "<th>SKU</th><th>Pack</th><th></th></tr>";
+    CfgStock s;
+    size_t n = cfgStockCount();
+    for (size_t i = 0; i < n; i++) {
+        if (!cfgStockAt(i, s)) continue;
+        String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
+                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " g")
+                   : String("&ge; 1 spool");
+        p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
+           + esc(s.color) + "</td><td>" + thr + "</td><td>" + esc(s.sku)
+           + "</td><td>" + String(s.pack_qty) + "</td><td style='white-space:nowrap'>"
+           + "<a href='/stock?edit=" + String((unsigned)i) + "' style='color:#8f8'>Edit</a> "
+           + "<form method='POST' action='/api/stock/delete' style='display:inline' "
+             "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
+           + "<input type='hidden' name='index' value='" + String((unsigned)i) + "'>"
+           + "<button type='submit' style='background:#522;color:#eee;margin:0;padding:4px 10px;"
+             "font-size:13px;border-radius:4px;border:0;cursor:pointer'>Remove</button>"
+           + "</form></td></tr>";
+    }
+    if (n == 0)
+        p += "<tr><td colspan='7' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
+    p += "</table>";
+    p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
+         "on the <a href='/config' style='color:#8f8'>Config</a> and "
+         "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static CfgStock parseStockForm(AsyncWebServerRequest* req) {
+    auto arg = [&](const char* k) -> String {
+        const AsyncWebParameter* pp = req->getParam(k, true);
+        return pp ? pp->value() : String();
+    };
+    CfgStock s{};
+    strlcpy(s.vendor,   arg("vendor").c_str(),   sizeof(s.vendor));
+    strlcpy(s.material, arg("material").c_str(), sizeof(s.material));
+    strlcpy(s.color,    arg("color").c_str(),    sizeof(s.color));
+    s.dia = arg("dia").toFloat();
+    if (s.dia <= 0.0f) s.dia = 1.75f;
+    s.spool_g    = arg("spool_g").toFloat();
+    s.min_spools = (uint16_t)arg("min_spools").toInt();
+    s.min_grams  = arg("min_grams").toFloat();
+    strlcpy(s.sku,  arg("sku").c_str(),  sizeof(s.sku));
+    strlcpy(s.gtin, arg("gtin").c_str(), sizeof(s.gtin));
+    s.pack_qty = (uint8_t)arg("pack_qty").toInt();
+    if (s.pack_qty == 0) s.pack_qty = 1;
+    return s;
+}
+
+static void handleApiStockAdd(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    cfgStockAdd(parseStockForm(req));
+    req->redirect("/stock");
+}
+
+static void handleApiStockUpdate(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* pi = req->getParam("index", true);
+    if (!pi) { req->send(400, "text/plain", "missing index"); return; }
+    if (!cfgStockUpdate((size_t)pi->value().toInt(), parseStockForm(req))) {
+        req->send(400, "text/plain", "invalid index");
+        return;
+    }
+    req->redirect("/stock");
+}
+
+static void handleApiStockDelete(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* pi = req->getParam("index", true);
+    if (!pi) { req->send(400, "text/plain", "missing index"); return; }
+    if (!cfgStockRemove((size_t)pi->value().toInt())) {
+        req->send(400, "text/plain", "invalid index");
+        return;
+    }
+    req->redirect("/stock");
 }
 
 // ── Config catalog editor (raw-JSON round-trip per table) ─────────────────────
@@ -2292,6 +2417,10 @@ void webAppBegin() {
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
+    sServer.on("/stock",            HTTP_GET,  handleStockPage);
+    sServer.on("/api/stock/add",    HTTP_POST, handleApiStockAdd);
+    sServer.on("/api/stock/update", HTTP_POST, handleApiStockUpdate);
+    sServer.on("/api/stock/delete", HTTP_POST, handleApiStockDelete);
     // These two MUST be registered before "/config": ESPAsyncWebServer's
     // default URI matching is "backward compatible" (WebServer.cpp,
     // AsyncURIMatcher::matches, Type::BackwardCompatible) -- a plain string

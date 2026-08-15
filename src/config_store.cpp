@@ -374,6 +374,17 @@ bool cfgMaterialAdd(const CfgMaterial& m) { sMaterials.push_back(m); return cfgS
 bool cfgColorAdd(const CfgColor& c) { sColors.push_back(c); return cfgSave("colors"); }
 bool cfgStockAdd(const CfgStock& s) { sStock.push_back(s); return cfgSave("stock-items"); }
 
+bool cfgStockUpdate(size_t i, const CfgStock& s) {
+    if (i >= sStock.size()) return false;
+    sStock[i] = s;
+    return cfgSave("stock-items");
+}
+bool cfgStockRemove(size_t i) {
+    if (i >= sStock.size()) return false;
+    sStock.erase(sStock.begin() + i);
+    return cfgSave("stock-items");
+}
+
 // ── Save / web JSON ───────────────────────────────────────────────────────────
 static bool matchWhich(const char* which, const char* a, const char* b = nullptr) {
     return !strcasecmp(which, a) || (b && !strcasecmp(which, b));
