@@ -1820,6 +1820,71 @@ static void handleApiConfigSave(AsyncWebServerRequest* req) {
     req->redirect("/config");
 }
 
+// ── Config catalog backup/restore — a SEPARATE artifact from the event log.
+// Nothing in a SpoolRecord/ProductRecord points back into these tables by ID
+// (vendor/material/colour/temps are values, copied once at onboarding), so
+// this file and the event-log export never need to be the same age, and
+// restoring one has no effect on the other. Small enough (a few KB) that the
+// streaming-upload dance below is more about matching the log-import pattern
+// than about needing it, but ESPAsyncWebServer's multipart handling always
+// goes through the upload callback regardless of size.
+static const char* CONFIG_IMPORT_STAGING = "/config/import.staging";
+
+static void handleConfigExport(AsyncWebServerRequest* req) {
+    AsyncWebServerResponse* r =
+        req->beginResponse(200, "application/json", cfgExportAll());
+    r->addHeader("Content-Disposition", "attachment; filename=weighstation-config.json");
+    req->send(r);
+}
+
+static bool sConfigImportAuthed = false;
+
+static void handleConfigImportUpload(AsyncWebServerRequest* req, const String& filename,
+                                      size_t index, uint8_t* data, size_t len, bool final) {
+    if (index == 0) sConfigImportAuthed = !apiKeyIsSet() || authOk(req);
+    if (!sConfigImportAuthed) return;
+    File f = LittleFS.open(CONFIG_IMPORT_STAGING, index == 0 ? "w" : "a");
+    if (f) { f.write(data, len); f.close(); }
+}
+
+static void handleConfigImportDone(AsyncWebServerRequest* req) {
+    if (!sConfigImportAuthed) { LittleFS.remove(CONFIG_IMPORT_STAGING); return; }
+    if (!authOk(req)) return;
+    // Buffered read, not File::readString() -- that reads one byte per VFS
+    // call (Stream::timedRead() in a loop), the same trap CLAUDE.md's log-
+    // reading gotcha warns about. This file is small, but there is no reason
+    // to reintroduce the pattern the project already paid to learn to avoid.
+    String body;
+    File f = LittleFS.open(CONFIG_IMPORT_STAGING, "r");
+    if (f) {
+        body.reserve(f.size());
+        uint8_t buf[513];
+        size_t n;
+        while ((n = f.read(buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = 0;
+            body += (const char*)buf;
+        }
+        f.close();
+    }
+    LittleFS.remove(CONFIG_IMPORT_STAGING);
+    if (cfgImportAll(body)) {
+        String p = head("Restore", "/backup");
+        p += "<div class='card'><p>Config catalog restored &mdash; "
+             + String((unsigned)cfgVendorCount())   + " vendors, "
+             + String((unsigned)cfgMaterialCount()) + " materials, "
+             + String((unsigned)cfgProfileCount())  + " spool profiles, "
+             + String((unsigned)cfgColorCount())    + " colors, "
+             + String((unsigned)cfgStockCount())    + " stock items.</p>"
+             "<a href='/config'><button type='button'>Back to Config</button></a></div>";
+        p += FOOT;
+        req->send(200, "text/html", p);
+    } else {
+        req->send(400, "text/plain",
+                   "Import failed: expected a JSON object with vendors/materials/"
+                   "spool-profiles/colors/stock-items arrays");
+    }
+}
+
 // ── Backup / restore (host download + upload; SD snapshots are hardware-gated) ─
 static const char* IMPORT_STAGING = "/log/import.staging";
 
@@ -1994,6 +2059,23 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
 
 static void handleBackupPage(AsyncWebServerRequest* req) {
     String p = head("Backup", "/backup");
+
+    // One click, two files -- NOT one combined file. The event log and the
+    // config catalog stay independent artifacts (see the Config catalog card
+    // below for why); this button is pure convenience for "back up
+    // everything before I do something risky" without picking each download
+    // separately. Both requests already set Content-Disposition with real
+    // filenames, so the browser saves two distinctly-named files. Most
+    // browsers ask permission once for "this site wants to download multiple
+    // files" the first time a page does this -- expected, not a bug.
+    p += "<div class='card'><label style='margin-top:0'>Everything</label>"
+         "<p class='muted'>Downloads the event log and the config catalog in one "
+         "click &mdash; still two separate files, saved together for convenience.</p>"
+         "<button type='button' onclick=\""
+         "var a=document.createElement('a');a.href='/export';document.body.appendChild(a);a.click();a.remove();"
+         "var b=document.createElement('a');b.href='/config/export';document.body.appendChild(b);b.click();b.remove();"
+         "\">Download everything</button></div>";
+
     p += "<h3>Backup &amp; restore</h3>";
     p += "<div class='card'><label style='margin-top:0'>Download</label>"
          "<p class='muted'>The event log is the source of truth &mdash; download it "
@@ -2006,6 +2088,25 @@ static void handleBackupPage(AsyncWebServerRequest* req) {
          "<input type='file' name='file' accept='.ndjson,text/plain'>"
          "<div><button type='submit'>Upload &amp; restore</button></div>"
          "</form></div>";
+
+    // A separate artifact on purpose — see cfgExportAll()'s comment in
+    // config_store.h. Nothing here needs to be the same age as the log above.
+    p += "<h3>Config catalog</h3>";
+    p += "<div class='card'><label style='margin-top:0'>Download</label>"
+         "<p class='muted'>Vendors, materials, spool profiles, colors and stock "
+         "items &mdash; the reference tables that drive onboarding and reordering. "
+         "Independent of the event log above: nothing in a spool or product record "
+         "points back into these by ID, so the two backups never need to match.</p>"
+         "<a href='/config/export'><button type='button'>Download config catalog</button></a></div>";
+    p += "<div class='card'><label style='margin-top:0'>Restore</label>"
+         "<p class='muted'>Upload a previously downloaded config catalog to replace "
+         "all five tables. Validated first &mdash; a missing or malformed table "
+         "rejects the whole file and leaves the current tables untouched.</p>"
+         "<form method='POST' action='/config/import' enctype='multipart/form-data'>"
+         "<input type='file' name='file' accept='.json,application/json'>"
+         "<div><button type='submit'>Upload &amp; restore</button></div>"
+         "</form></div>";
+
     p += "<h3>Storage</h3>";
     p += "<div class='card'><div id='st' class='muted'>&mdash;</div></div>";
     p += "<p class='muted'>The event log is append-only. Once it passes its "
@@ -2033,8 +2134,6 @@ static void handleBackupPage(AsyncWebServerRequest* req) {
          "e.innerHTML=h;});}"
          "setInterval(s,5000);s();"
          "</script>";
-    p += "<p class='muted'>Config tables also back up separately via the "
-         "<a href='/config' style='color:#8f8'>Config</a> page (copy the JSON).</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -2193,6 +2292,17 @@ void webAppBegin() {
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
+    // These two MUST be registered before "/config": ESPAsyncWebServer's
+    // default URI matching is "backward compatible" (WebServer.cpp,
+    // AsyncURIMatcher::matches, Type::BackwardCompatible) -- a plain string
+    // route matches the exact path OR anything starting with "path/", and
+    // _attachHandler() takes the first handler in registration order whose
+    // canHandle() returns true. Registered after "/config", these two are
+    // silently unreachable -- every request lands on handleConfig() instead
+    // (found by testing GET /config/export and getting the Config PAGE's
+    // HTML back instead of JSON).
+    sServer.on("/config/export", HTTP_GET,  handleConfigExport);
+    sServer.on("/config/import", HTTP_POST, handleConfigImportDone, handleConfigImportUpload);
     sServer.on("/config",      HTTP_GET,  handleConfig);
     sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);
     sServer.on("/calibrate",   HTTP_GET,  handleCalibratePage);

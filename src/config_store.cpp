@@ -412,6 +412,34 @@ bool cfgReplaceTable(const char* which, const String& json) {
     return cfgSave(which);
 }
 
+// ── Combined export/import ───────────────────────────────────────────────────
+String cfgExportAll() {
+    String s = "{\"vendors\":";      s += serVendors();
+    s += ",\"materials\":";          s += serMaterials();
+    s += ",\"spool-profiles\":";     s += serProfiles();
+    s += ",\"colors\":";             s += serColors();
+    s += ",\"stock-items\":";        s += serStock();
+    s += "}";
+    return s;
+}
+
+bool cfgImportAll(const String& json) {
+    JsonDocument d;
+    if (deserializeJson(d, json)) return false;
+    // All five keys must be present and array-shaped before ANY table is
+    // touched — a partial/malformed upload must leave every table exactly as
+    // it was, same guarantee the event-log import already makes.
+    static const char* kKeys[] = { "vendors", "materials", "spool-profiles", "colors", "stock-items" };
+    for (const char* k : kKeys)
+        if (!d[k].is<JsonArrayConst>()) return false;
+    for (const char* k : kKeys) {
+        String sub;
+        serializeJson(d[k], sub);
+        cfgReplaceTable(k, sub);   // shape already checked above; cannot fail here
+    }
+    return true;
+}
+
 // ── Serial harness ────────────────────────────────────────────────────────────
 static String tok(const String& s, int& pos) {
     while (pos < (int)s.length() && s[pos] == ' ') pos++;

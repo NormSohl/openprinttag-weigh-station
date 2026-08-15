@@ -73,6 +73,16 @@ bool cfgReplaceTable(const char* which, const String& json);
 // Serialize a table to a JSON array string (web GET returns this).
 String cfgTableJson(const char* which);
 
+// ── Combined export/import (all five tables in one file) ────────────────────
+// A separate artifact from the event log (store.h's storeExport/storeImportLogFile):
+// nothing in a SpoolRecord/ProductRecord points back into these tables by ID —
+// vendor/material/colour/temps are copied VALUES, resolved once at onboarding
+// time — so the two backups are independent and never need to be the same age.
+// This is what the Config page's "Download" / "Restore" buttons call.
+String cfgExportAll();                    // one JSON object, all 5 tables
+bool   cfgImportAll(const String& json);  // all-or-nothing: any missing/malformed
+                                           // table rejects the whole file untouched
+
 bool cfgSave(const char* which);   // persist one table to its file
 bool cfgSaveAll();
 
