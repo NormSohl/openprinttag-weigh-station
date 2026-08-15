@@ -120,6 +120,7 @@ static const char* STYLE =
     ".ob{color:#fd6}"
     ".inv-row{cursor:pointer}"
     ".inv-row:hover{background:#1a1a1a}"
+    ".arrow{display:inline-block;font-size:22px;line-height:1;color:#8f8}"
     "form label{display:block;margin:12px 0 4px;color:#9c9}"
     "select,input{font-size:16px;padding:8px;width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #444;border-radius:5px}"
     "button{margin-top:16px;font-size:16px;padding:10px 18px;background:#2a5;color:#000;border:0;border-radius:6px;cursor:pointer}"
@@ -490,7 +491,7 @@ static void navlink(String& h, const char* href, const char* label, const char* 
     h += "</a>";
 }
 
-// `active` = the nav href for the current page (e.g. "/spools"); "" = none.
+// `active` = the nav href for the current page (e.g. "/reorder"); "" = none.
 static String head(const char* title, const char* active = "") {
     String h = "<!DOCTYPE html><html><head><meta charset='utf-8'>"
                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -500,7 +501,6 @@ static String head(const char* title, const char* active = "") {
     h += STYLE;
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
-    navlink(h, "/spools",    "Spools",    active);
     navlink(h, "/products",  "Products",  active);
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
@@ -650,15 +650,16 @@ static void handleRoot(AsyncWebServerRequest* req) {
     // so the vendor prefix here ("eSun PLA Summer Grass") is always a single
     // vendor's, never a merge of two.
     // Click a row to expand it in place — the individual spools behind that
-    // count, same columns /spools shows, scoped to just this (vendor,
-    // material) bucket. No fetch: the detail rows are server-rendered right
+    // count, scoped to just this (vendor, material) bucket. This IS the
+    // spool list now; there is no separate /spools page any more. No fetch:
+    // the detail rows are server-rendered right
     // here and hidden with display:none, so expanding costs nothing over the
     // network, only a bit more HTML in the initial page load. Filtered to
     // remaining_g > 1 g, same as m.count itself, so the row count in the
     // summary always matches the number of rows revealed underneath it —
     // showing every last near-empty spool here would make that number lie.
     p += "<h3>Inventory</h3><table>"
-         "<tr><th style='width:1.4em'></th><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
+         "<tr><th style='width:2em'></th><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
     MatInventory m;
     if (n == 0) p += "<tr><td colspan='4' class='muted'>No spools yet</td></tr>";
@@ -692,28 +693,6 @@ static void handleRoot(AsyncWebServerRequest* req) {
     p += "<p class='muted'>" + String((unsigned)storeSpoolCount())
        + " spools tracked &middot; " + String((unsigned)storeLogLineCount())
        + " log entries</p>";
-    p += FOOT;
-    req->send(200, "text/html", p);
-}
-
-// ── Spool list ────────────────────────────────────────────────────────────────
-static void handleSpools(AsyncWebServerRequest* req) {
-    String p = head("Spools", "/spools");
-    p += "<h3>Spools</h3><table>"
-         "<tr><th>#</th><th>Filament</th><th>Vendor</th><th>Remaining</th><th></th></tr>";
-    size_t n = storeSpoolCount();
-    SpoolRecord r;
-    if (n == 0) p += "<tr><td colspan='5' class='muted'>No spools yet</td></tr>";
-    for (size_t i = 0; i < n; i++) {
-        if (!storeSpoolAt(i, r)) continue;
-        p += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
-           + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>" + swatch(r.rgba)
-           + esc(r.material[0] ? r.material : "Unknown") + "</td><td>" + esc(r.vendor)
-           + "</td><td>" + String(r.remaining_g, 0) + " g</td><td>"
-           + (r.needs_ob ? "<span class='ob'>needs onboarding</span>" : "")
-           + "</td></tr>";
-    }
-    p += "</table>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -1043,7 +1022,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
         return;
     }
 
-    String p = head("Spool", "/spools");
+    String p = head("Spool", "/");
     p += "<div class='card'>";
     p += "<div class='big'>" + swatch(r.rgba)
        + "#" + String((unsigned)r.spool) + " "
@@ -1085,7 +1064,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
            + " g</td><td>" + String(s.rem[k], 0) + " g</td><td>"
            + String(s.used[k], 0) + " g</td></tr>";
     p += "</table>";
-    p += "<p class='muted'><a href='/spools' style='color:#8f8'>&larr; all spools</a></p>";
+    p += "<p class='muted'><a href='/' style='color:#8f8'>&larr; back</a></p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -2448,7 +2427,6 @@ void webAppBegin() {
     });
 
     sServer.on("/",            HTTP_GET,  handleRoot);
-    sServer.on("/spools",      HTTP_GET,  handleSpools);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
     sServer.on("/products",     HTTP_GET,  handleProducts);
