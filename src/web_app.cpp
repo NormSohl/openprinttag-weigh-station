@@ -506,7 +506,6 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/config",    "Settings",  active);
-    navlink(h, "/calibrate", "Calibrate", active);
     navlink(h, "/backup",    "Backup",    active);
     h += "</nav></header><main>";
     return h;
@@ -1897,6 +1896,20 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "<button type='submit' class='sec'>Choose a WiFi network&hellip;</button>"
          "</form></div>";
 
+    // A setup/maintenance task like Network above, not a shelf-facing page —
+    // dropped off the top nav for the same reason Products did. Unlike
+    // Products, there's already a built-in "come here now" surface for this
+    // one: Inventory shows a "Scale not calibrated" banner linking straight
+    // to /calibrate whenever gScaleCalibrated is false, so this link is for
+    // the proactive/maintenance case (drift, after moving the station).
+    p += "<h3>Scale calibration</h3><div class='card'>";
+    if (gScaleCalibrated)
+        p += "<p>Scale is calibrated.</p>";
+    else
+        p += "<p><b class='ob'>Not calibrated.</b> Weights will be wrong until "
+             "this is done.</p>";
+    p += "<a href='/calibrate'><button type='button' class='sec'>Calibrate&hellip;</button></a></div>";
+
     p += "<h3>API access</h3>";
     if (apiKeyIsSet())
         p += "<div class='card'><p>An API key <b>is set</b>. Endpoints that change "
@@ -2384,7 +2397,7 @@ static void handleApiCal(AsyncWebServerRequest* req) {
 }
 
 static void handleCalibratePage(AsyncWebServerRequest* req) {
-    String p = head("Calibrate", "/calibrate");
+    String p = head("Calibrate", "/config");
     p += "<h3>Scale calibration</h3>";
     p += "<div class='card'><div class='muted'>Live weight</div>"
          "<div class='big' id='w'>&mdash;</div>"
