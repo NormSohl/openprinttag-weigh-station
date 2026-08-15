@@ -503,7 +503,7 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
-    navlink(h, "/config",    "Config",    active);
+    navlink(h, "/config",    "Settings",  active);
     navlink(h, "/calibrate", "Calibrate", active);
     navlink(h, "/backup",    "Backup",    active);
     h += "</nav></header><main>";
@@ -1786,7 +1786,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<tr><td colspan='7' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
     p += "</table>";
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
-         "on the <a href='/config' style='color:#8f8'>Config</a> and "
+         "on the <a href='/config' style='color:#8f8'>Settings</a> and "
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
@@ -1855,15 +1855,7 @@ static void configTableForm(String& p, const char* label, const char* which) {
 }
 
 static void handleConfig(AsyncWebServerRequest* req) {
-    String p = head("Config", "/config");
-    p += "<h3>Config catalog</h3>";
-    p += "<p class='muted'>Edit the reference tables that drive onboarding and "
-         "reordering. Each is a JSON array; Save validates and persists it.</p>";
-    configTableForm(p, "Vendors",        "vendors");
-    configTableForm(p, "Materials",      "materials");
-    configTableForm(p, "Spool profiles", "spool-profiles");
-    configTableForm(p, "Colors",         "colors");
-    configTableForm(p, "Stock items",    "stock-items");
+    String p = head("Settings", "/config");
 
     // Network. Nothing in the app offered this before — /reset existed but was
     // reachable only by typing the URL, so a station that had fallen back to
@@ -1914,6 +1906,22 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') \u2014 "
          "the current key is required to change it.';});}"
          "</script>";
+
+    // Raw-JSON catalog tables — the bulk-edit / power-user path. Everyday
+    // add/edit/remove for Stock items lives on the friendlier /stock page;
+    // these stay here for the tables that don't have one yet, and for
+    // pasting in a bulk edit. Kept last since Network and API access are
+    // what most visits to this page are actually for.
+    p += "<h3>Config catalog</h3>";
+    p += "<p class='muted'>Edit the reference tables that drive onboarding and "
+         "reordering. Each is a JSON array; Save validates and persists it. "
+         "Stock items has a friendlier editor at "
+         "<a href='/stock' style='color:#8f8'>/stock</a>.</p>";
+    configTableForm(p, "Vendors",        "vendors");
+    configTableForm(p, "Materials",      "materials");
+    configTableForm(p, "Spool profiles", "spool-profiles");
+    configTableForm(p, "Colors",         "colors");
+    configTableForm(p, "Stock items",    "stock-items");
 
     p += FOOT;
     req->send(200, "text/html", p);
@@ -2000,7 +2008,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
              + String((unsigned)cfgProfileCount())  + " spool profiles, "
              + String((unsigned)cfgColorCount())    + " colors, "
              + String((unsigned)cfgStockCount())    + " stock items.</p>"
-             "<a href='/config'><button type='button'>Back to Config</button></a></div>";
+             "<a href='/config'><button type='button'>Back to Settings</button></a></div>";
         p += FOOT;
         req->send(200, "text/html", p);
     } else {
