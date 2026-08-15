@@ -118,6 +118,8 @@ static const char* STYLE =
     ".sw0{background:#1c1c1c;border-color:#666;background-image:"
     "linear-gradient(to top right,transparent 45%,#8a8a8a 45%,#8a8a8a 55%,transparent 55%)}"
     ".ob{color:#fd6}"
+    ".inv-row{cursor:pointer}"
+    ".inv-row:hover{background:#1a1a1a}"
     "form label{display:block;margin:12px 0 4px;color:#9c9}"
     "select,input{font-size:16px;padding:8px;width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #444;border-radius:5px}"
     "button{margin-top:16px;font-size:16px;padding:10px 18px;background:#2a5;color:#000;border:0;border-radius:6px;cursor:pointer}"
@@ -647,16 +649,44 @@ static void handleRoot(AsyncWebServerRequest* req) {
     // Bucketed by (vendor, material) — see MatInventory's comment in store.h —
     // so the vendor prefix here ("eSun PLA Summer Grass") is always a single
     // vendor's, never a merge of two.
+    // Click a row to expand it in place — the individual spools behind that
+    // count, same columns /spools shows, scoped to just this (vendor,
+    // material) bucket. No fetch: the detail rows are server-rendered right
+    // here and hidden with display:none, so expanding costs nothing over the
+    // network, only a bit more HTML in the initial page load. Filtered to
+    // remaining_g > 1 g, same as m.count itself, so the row count in the
+    // summary always matches the number of rows revealed underneath it —
+    // showing every last near-empty spool here would make that number lie.
     p += "<h3>Inventory</h3><table>"
-         "<tr><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
+         "<tr><th style='width:1.4em'></th><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
     MatInventory m;
-    if (n == 0) p += "<tr><td colspan='3' class='muted'>No spools yet</td></tr>";
+    if (n == 0) p += "<tr><td colspan='4' class='muted'>No spools yet</td></tr>";
     for (size_t i = 0; i < n; i++) {
         if (!storeInventoryAt(i, m)) continue;
         String label = m.vendor[0] ? String(m.vendor) + " " + m.material : String(m.material);
-        p += "<tr><td>" + swatch(m.rgba) + esc(label.c_str()) + "</td><td>" + String(m.count)
+        String rowId = "inv-detail-" + String((unsigned)i);
+        p += "<tr class='inv-row' onclick=\"var d=document.getElementById('" + rowId + "');"
+             "var open=d.style.display=='table-row';d.style.display=open?'none':'table-row';"
+             "this.querySelector('.arrow').textContent=open?'\\u25b8':'\\u25be'\">"
+             "<td class='muted'><span class='arrow'>&#9656;</span></td><td>"
+           + swatch(m.rgba) + esc(label.c_str()) + "</td><td>" + String(m.count)
            + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
+
+        p += "<tr id='" + rowId + "' style='display:none'><td></td><td colspan='3'>"
+             "<table style='margin:2px 0 10px'><tr><th>#</th><th>Remaining</th><th></th></tr>";
+        SpoolRecord r;
+        size_t sn = storeSpoolCount();
+        for (size_t k = 0; k < sn; k++) {
+            if (!storeSpoolAt(k, r)) continue;
+            if (r.remaining_g <= 1.0f) continue;
+            if (strcmp(r.vendor, m.vendor) != 0 || strcmp(r.material, m.material) != 0) continue;
+            p += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
+               + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>"
+               + String(r.remaining_g, 0) + " g</td><td>"
+               + (r.needs_ob ? "<span class='ob'>needs onboarding</span>" : "") + "</td></tr>";
+        }
+        p += "</table></td></tr>";
     }
     p += "</table>";
     p += "<p class='muted'>" + String((unsigned)storeSpoolCount())
