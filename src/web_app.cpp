@@ -1756,6 +1756,8 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
 }
 
+static const int STOCK_POPULARITY_WINDOW_DAYS = 90;
+
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock items", "/stock");
 
@@ -1776,18 +1778,58 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "</div></form></div>";
 
     p += "<h3>Currently tracked</h3>";
-    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th><th>Threshold</th>"
-         "<th>SKU</th><th>Pack</th><th></th></tr>";
+    p += "<p class='muted'>Sorted by popularity, lowest first &mdash; the top of this "
+         "list is where to look for items to remove. Popularity is grams consumed per "
+         "day the material was actually IN STOCK over the last " + String(STOCK_POPULARITY_WINDOW_DAYS)
+       + " days, not per calendar day &mdash; a spool that sold out early and sat empty "
+         "is scored on the days it was available, not diluted across the ones it wasn't, "
+         "so running out never makes something look unpopular.</p>";
+
     CfgStock s;
-    size_t n = cfgStockCount();
+    const size_t n = cfgStockCount();
+    std::vector<CfgStock> rows(n);
+    std::vector<PopularityQuery> q(n);
     for (size_t i = 0; i < n; i++) {
-        if (!cfgStockAt(i, s)) continue;
-        String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
-                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " g")
+        cfgStockAt(i, rows[i]);
+        strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
+        // Same composition Reorder's rollUp() uses: CfgStock.material is the bare
+        // type, colour rides separately, but consumption is keyed on the full
+        // display string a spool's Main section actually carries.
+        String disp = rows[i].material;
+        if (rows[i].color[0]) disp += String(" ") + rows[i].color;
+        strlcpy(q[i].material, disp.c_str(), sizeof(q[i].material));
+    }
+    std::vector<PopularityResult> pop(n);
+    char earliestTs[25] = {};
+    if (n) storeMaterialPopularity(q.data(), pop.data(), n, STOCK_POPULARITY_WINDOW_DAYS,
+                                    earliestTs, sizeof(earliestTs));
+
+    std::vector<size_t> order(n);
+    for (size_t i = 0; i < n; i++) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        // No-data sorts first (the clearest removal candidates), then by rate.
+        if (pop[a].has_data != pop[b].has_data) return !pop[a].has_data;
+        return (pop[a].grams / (pop[a].available_days > 0 ? pop[a].available_days : 1.0f))
+             < (pop[b].grams / (pop[b].available_days > 0 ? pop[b].available_days : 1.0f));
+    });
+
+    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th><th>Popularity</th>"
+         "<th>Threshold</th><th>SKU</th><th>Pack</th><th></th></tr>";
+    for (size_t i : order) {
+        const CfgStock& sr = rows[i];
+        String thr = sr.min_spools > 0 ? (String(sr.min_spools) + " spools")
+                   : sr.min_grams  > 0 ? (String(sr.min_grams, 0) + " g")
                    : String("&ge; 1 spool");
-        p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
-           + esc(s.color) + "</td><td>" + thr + "</td><td>" + esc(s.sku)
-           + "</td><td>" + String(s.pack_qty) + "</td><td style='white-space:nowrap'>"
+        String popCell;
+        if (!pop[i].has_data) {
+            popCell = "<span class='ob'>no data</span>";
+        } else {
+            const float perWeek = pop[i].grams / pop[i].available_days * 7.0f;
+            popCell = String(perWeek, 0) + " g/wk";
+        }
+        p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material) + "</td><td>"
+           + esc(sr.color) + "</td><td>" + popCell + "</td><td>" + thr + "</td><td>"
+           + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)i) + "' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
              "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
@@ -1797,8 +1839,10 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + "</form></td></tr>";
     }
     if (n == 0)
-        p += "<tr><td colspan='7' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
+        p += "<tr><td colspan='8' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
     p += "</table>";
+    if (n && earliestTs[0])
+        p += "<p class='muted'>Popularity data available since " + esc(earliestTs) + ".</p>";
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
          "on the <a href='/config' style='color:#8f8'>Settings</a> and "
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
@@ -1853,6 +1897,52 @@ static void handleApiStockDelete(AsyncWebServerRequest* req) {
         return;
     }
     req->redirect("/stock");
+}
+
+// Read-only: every Stock List row plus its popularity over the same trailing
+// STOCK_POPULARITY_WINDOW_DAYS window /stock itself shows. Open, like the
+// other /api/* reads — no key needed.
+static void handleApiStock(AsyncWebServerRequest* req) {
+    const size_t n = cfgStockCount();
+    std::vector<CfgStock> rows(n);
+    std::vector<PopularityQuery> q(n);
+    for (size_t i = 0; i < n; i++) {
+        cfgStockAt(i, rows[i]);
+        strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
+        String disp = rows[i].material;
+        if (rows[i].color[0]) disp += String(" ") + rows[i].color;
+        strlcpy(q[i].material, disp.c_str(), sizeof(q[i].material));
+    }
+    std::vector<PopularityResult> pop(n);
+    char earliestTs[25] = {};
+    if (n) storeMaterialPopularity(q.data(), pop.data(), n, STOCK_POPULARITY_WINDOW_DAYS,
+                                    earliestTs, sizeof(earliestTs));
+
+    String j = "{\"window_days\":" + String(STOCK_POPULARITY_WINDOW_DAYS)
+             + ",\"data_since\":" + (earliestTs[0] ? ("\"" + String(earliestTs) + "\"") : String("null"))
+             + ",\"items\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) j += ",";
+        const CfgStock& s = rows[i];
+        j += "{\"vendor\":\"" + esc(s.vendor) + "\""
+           + ",\"material\":\"" + esc(s.material) + "\""
+           + ",\"color\":\"" + esc(s.color) + "\""
+           + ",\"dia\":" + String(s.dia, 2)
+           + ",\"spool_g\":" + String(s.spool_g, 1)
+           + ",\"min_spools\":" + String(s.min_spools)
+           + ",\"min_grams\":" + String(s.min_grams, 1)
+           + ",\"sku\":\"" + esc(s.sku) + "\""
+           + ",\"gtin\":\"" + esc(s.gtin) + "\""
+           + ",\"pack_qty\":" + String(s.pack_qty)
+           + ",\"has_data\":" + (pop[i].has_data ? "true" : "false")
+           + ",\"grams_in_window\":" + String(pop[i].grams, 1)
+           + ",\"available_days\":" + String(pop[i].available_days, 5)
+           + ",\"grams_per_week\":" + (pop[i].has_data
+                 ? String(pop[i].grams / pop[i].available_days * 7.0f, 1) : String("null"))
+           + "}";
+    }
+    j += "]}";
+    req->send(200, "application/json", j);
 }
 
 // ── Config catalog editor (raw-JSON round-trip per table) ─────────────────────
@@ -2468,6 +2558,7 @@ void webAppBegin() {
     sServer.on("/api/stock/add",    HTTP_POST, handleApiStockAdd);
     sServer.on("/api/stock/update", HTTP_POST, handleApiStockUpdate);
     sServer.on("/api/stock/delete", HTTP_POST, handleApiStockDelete);
+    sServer.on("/api/stock",        HTTP_GET,  handleApiStock);
     // These two MUST be registered before "/config": ESPAsyncWebServer's
     // default URI matching is "backward compatible" (WebServer.cpp,
     // AsyncURIMatcher::matches, Type::BackwardCompatible) -- a plain string

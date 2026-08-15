@@ -969,6 +969,167 @@ size_t storeForEachWeigh(uint32_t spool,
     return n;
 }
 
+// ── Material popularity (Stock List curation) ─────────────────────────────────
+// Days from the civil (Gregorian) epoch 1970-01-01, Howard Hinnant's
+// days_from_civil algorithm (public domain) -- avoids timegm(), which this
+// toolchain's newlib does not provide.
+static long daysFromCivil_(int y, unsigned m, unsigned d) {
+    y -= (m <= 2);
+    const long era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+
+// "YYYY-MM-DDTHH:MM:SSZ" (UTC, storeNowIso()'s own format) -> epoch seconds.
+// 0 on anything unparseable; callers must not treat 0 as a real instant.
+static time_t parseIso_(const char* ts) {
+    int y, mo, d, h, mi, s;
+    if (sscanf(ts, "%d-%d-%dT%d:%d:%dZ", &y, &mo, &d, &h, &mi, &s) != 6) return 0;
+    const long days = daysFromCivil_(y, (unsigned)mo, (unsigned)d);
+    return (time_t)days * 86400 + h * 3600 + mi * 60 + s;
+}
+
+static std::string popKey_(const char* vendor, const char* material) {
+    std::string k(vendor); k += '\x01'; k += material; return k;
+}
+
+void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* results,
+                              size_t n, int windowDays,
+                              char* earliestTsOut, size_t earliestTsLen) {
+    for (size_t i = 0; i < n; i++) results[i] = PopularityResult{};
+    if (earliestTsOut && earliestTsLen) earliestTsOut[0] = 0;
+    if (n == 0) return;
+
+    Lock lk;
+    if (!LittleFS.exists(LOG_PATH)) return;
+    File f = LittleFS.open(LOG_PATH, "r");
+    if (!f) return;
+
+    const time_t nowT    = time(nullptr);
+    const time_t cutoffT = nowT - (time_t)windowDays * 86400;
+
+    // key -> every query index that shares it (Stock List can legitimately have
+    // more than one row resolve to the same vendor+material, e.g. two pack
+    // sizes -- both get the same computed values).
+    std::unordered_map<std::string, std::vector<size_t>> qIndex;
+    for (size_t i = 0; i < n; i++)
+        qIndex[popKey_(queries[i].vendor, queries[i].material)].push_back(i);
+
+    struct SpoolState { std::string key; float remaining = 0; bool has = false; };
+    std::unordered_map<uint32_t, SpoolState> spools;
+    std::unordered_map<std::string, float>   groupTotal;   // current on-hand, tracked keys only
+    std::unordered_map<std::string, time_t>  zeroSince;    // key -> when it went <=0 (unset = currently available)
+    std::unordered_map<std::string, time_t>  unavailSec;   // accumulated gap seconds within the window
+    std::unordered_map<std::string, float>   grams;        // consumed within the window, per key
+    bool windowEntered = false;
+
+    // Zero-crossing bookkeeping for ONE key, called right after its group total
+    // changes. Only meaningful once the replay has reached the window -- before
+    // that we are only establishing the on-hand state the window will start from.
+    auto noteCrossing = [&](const std::string& key, time_t ts) {
+        if (!windowEntered || !qIndex.count(key)) return;
+        const float total = groupTotal.count(key) ? groupTotal[key] : 0.0f;
+        const bool zeroNow = total <= 0.05f;
+        const bool wasZero = zeroSince.count(key) > 0;
+        if (zeroNow && !wasZero) {
+            zeroSince[key] = ts;
+        } else if (!zeroNow && wasZero) {
+            time_t start = zeroSince[key];
+            if (start < cutoffT) start = cutoffT;
+            unavailSec[key] += (ts > start) ? (ts - start) : 0;
+            zeroSince.erase(key);
+        }
+    };
+
+    LogReader rd(f);
+    String line;
+    while (rd.next(line)) {
+        line.trim();
+        if (line.length() == 0) continue;
+        StoreEvent e;
+        if (!decodeLine(line, e)) continue;
+        const time_t ts = parseIso_(e.ts);
+        if (ts == 0) continue;   // can't place an unstamped/malformed event in time
+
+        if (earliestTsOut && earliestTsLen && earliestTsOut[0] == 0)
+            strlcpy(earliestTsOut, e.ts, earliestTsLen);
+
+        // Crossing into the window: snapshot which tracked keys are ALREADY at
+        // zero, so their gap is measured from the window's start, not from
+        // whenever they actually ran out (which may be long before it and is
+        // not this window's business).
+        if (!windowEntered && ts >= cutoffT) {
+            windowEntered = true;
+            for (auto& kv : qIndex) {
+                const float total = groupTotal.count(kv.first) ? groupTotal[kv.first] : 0.0f;
+                if (total <= 0.05f) zeroSince[kv.first] = cutoffT;
+            }
+        }
+
+        const bool identEv = (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
+                               e.ev == StoreEv::Checkpoint);
+        if (identEv && e.material[0]) {
+            SpoolState& sp = spools[e.spool];
+            std::string newKey = popKey_(e.vendor, e.material);
+            if (sp.has && sp.key != newKey) {
+                const std::string oldKey = sp.key;
+                if (qIndex.count(oldKey)) {
+                    groupTotal[oldKey] -= sp.remaining;
+                    noteCrossing(oldKey, ts);   // this spool leaving may zero the old key out
+                }
+                sp.key = newKey;
+                if (qIndex.count(newKey)) {
+                    groupTotal[newKey] += sp.remaining;   // re-home the existing weight
+                    noteCrossing(newKey, ts);
+                }
+            } else {
+                sp.key = newKey;
+            }
+            sp.has = true;
+        }
+
+        if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
+            SpoolState& sp = spools[e.spool];
+            if (!sp.has) { sp.has = true; sp.key = popKey_(e.vendor, e.material); }
+            const float oldRem = sp.remaining;
+            const float newRem = e.remaining_g;
+            if (qIndex.count(sp.key)) groupTotal[sp.key] += (newRem - oldRem);
+            sp.remaining = newRem;
+
+            if (e.ev == StoreEv::Weigh && windowEntered) {
+                const float delta = oldRem - newRem;   // same "consumption" test store.cpp's own rollup uses
+                if (delta > 0.05f) {
+                    auto it = qIndex.find(sp.key);
+                    if (it != qIndex.end())
+                        for (size_t idx : it->second) results[idx].grams += delta;
+                }
+            }
+            noteCrossing(sp.key, ts);
+        }
+    }
+    f.close();
+
+    if (!windowEntered) return;   // whole log predates the window: nothing attributable
+
+    for (size_t i = 0; i < n; i++) {
+        const std::string key = popKey_(queries[i].vendor, queries[i].material);
+        time_t unavail = unavailSec.count(key) ? unavailSec[key] : 0;
+        if (zeroSince.count(key)) {   // still unavailable as of now
+            time_t start = zeroSince[key];
+            if (start < cutoffT) start = cutoffT;
+            unavail += (nowT > start) ? (nowT - start) : 0;
+        }
+        float availDays = (float)windowDays - (float)unavail / 86400.0f;
+        if (availDays < 0) availDays = 0;
+        // grams already summed straight into results[i] during the replay
+        // (results[i].grams), since a key can map to multiple query indices.
+        results[i].available_days = availDays;
+        results[i].has_data       = availDays > 0.01f;
+    }
+}
+
 // ── Backup / restore (host export/import) ─────────────────────────────────────
 const char* storeLogPath() { return LOG_PATH; }
 

@@ -312,6 +312,40 @@ void storeNowIso(char* buf, size_t buflen);
 size_t storeForEachWeigh(uint32_t spool,
                          void (*cb)(const StoreEvent&, void*), void* ctx);
 
+// ── Material popularity (Stock List curation) ─────────────────────────────────
+// For each (vendor, material) queried — Stock List rows, at the same identity a
+// spool's Main section carries (material already includes colour, e.g. "PLA
+// Fire Engine Red") — grams consumed in the trailing `windowDays`, DIVIDED BY
+// the days that material was actually available (combined on-hand across every
+// spool of it was > 0), not by the calendar window. A material that sold out
+// on day 2 of 90 and sat empty the other 88 is scored on those 2 days, not
+// diluted across 90 — the whole point being that a stockout must never make a
+// popular material look unpopular, which is exactly what a naive grams/window
+// average would do.
+//
+// has_data is false when the material was never available at all in the
+// window (never on the scale, or already dead before the window opened) —
+// callers should show that as "no data", not a fabricated zero score.
+//
+// Costs one full log read (LittleFS, bounded by log size, not spool count) —
+// call it once per page load, not per row.
+struct PopularityQuery {
+    char vendor[64]   = {};
+    char material[64] = {};
+};
+struct PopularityResult {
+    float grams          = 0;      // consumed within the window
+    float available_days = 0;      // out of windowDays
+    bool  has_data        = false;
+};
+// `earliestTsOut` (may be nullptr) receives the earliest event timestamp found
+// anywhere in the current log, so a caller whose log doesn't actually reach
+// back `windowDays` can disclose the real coverage instead of implying a full
+// window was measured.
+void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* results,
+                              size_t n, int windowDays,
+                              char* earliestTsOut = nullptr, size_t earliestTsLen = 0);
+
 // ── Backup / restore (host export/import) ─────────────────────────────────────
 // Path of the raw event log on LittleFS — serve it directly for download.
 const char* storeLogPath();
