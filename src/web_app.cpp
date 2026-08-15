@@ -504,6 +504,7 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
+    navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/config",    "Settings",  active);
     navlink(h, "/calibrate", "Calibrate", active);
     navlink(h, "/backup",    "Backup",    active);
