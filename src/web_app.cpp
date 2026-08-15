@@ -501,7 +501,6 @@ static String head(const char* title, const char* active = "") {
     h += STYLE;
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
-    navlink(h, "/products",  "Products",  active);
     navlink(h, "/onboard",   "Onboard",   active);
     navlink(h, "/usage",     "Usage",     active);
     navlink(h, "/reorder",   "Reorder",   active);
@@ -1665,7 +1664,9 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
          "or e-mail the list to place the order. Manage what's tracked (add, edit, "
-         "remove) on the <a href='/stock' style='color:#8f8'>Stock items</a> page.</p>";
+         "remove) on the <a href='/stock' style='color:#8f8'>Stock items</a> page. A row "
+         "matched by name rather than a product below means <a href='/products' "
+         "style='color:#8f8'>Products</a> is worth a look.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
          "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
     CfgStock s;
@@ -1919,6 +1920,18 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') \u2014 "
          "the current key is required to change it.';});}"
          "</script>";
+
+    // Products dropped off the top nav — it's a diagnostic/admin list (is
+    // adoption converging, edit a product's definition), not a shelf-facing
+    // page like Inventory/Reorder/Onboard, and belongs with the other
+    // occasional-admin surfaces on this page. A spool's own detail page
+    // already links straight to ITS product's edit page for the common
+    // "fix this one spool's product" case; this is for browsing everything.
+    p += "<h3>Products</h3>"
+         "<p class='muted'>What we stock, and whether tag adoption is converging "
+         "on it correctly — two spools of the same filament should be one entry, "
+         "not two. Also the only place a product's definition can be edited.</p>"
+         "<a href='/products'><button type='button' class='sec'>Products</button></a>";
 
     // Raw-JSON catalog tables — the bulk-edit / power-user path. Everyday
     // add/edit/remove for Stock items lives on the friendlier /stock page;
