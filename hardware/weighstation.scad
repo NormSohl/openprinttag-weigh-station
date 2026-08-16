@@ -285,6 +285,27 @@ module base() {
                    [porch_x0 - porch_len, base_h - porch_len],
                    [porch_x0 - porch_len, 0]]);
 
+      // front-corner gusset: rrect()'s corner rounding recedes inward by
+      // corner_r starting exactly at X=porch_x0 (the porch's attachment
+      // face), but the porch wedge above is a full base_w-wide block with
+      // sharp (unrounded) side edges. The two surfaces don't blend — the
+      // porch's sharp edge sits proud of the point where the shell's curve
+      // has already tucked inward, leaving an ~8x8mm crescent notch/seam at
+      // both front corners (render-confirmed 2026-08-16, see
+      // printed-parts-issues.md #4). This block closes it: sized to fully
+      // cover the crescent (corner_r + gusset_margin per side, generous
+      // overlap into both the shell and the porch for a robust union, not a
+      // coincident-face seam), full height so it also stiffens the
+      // porch-to-body joint, not just fills it cosmetically.
+      gusset_margin = 2;
+      gusset_x = corner_r + gusset_margin;
+      gusset_y = corner_r + gusset_margin;
+      for (sy = [-1, 1])
+        translate([porch_x0 - eps,
+                   sy > 0 ? base_w/2 - gusset_y : -base_w/2,
+                   0])
+          cube([gusset_x + eps, gusset_y + eps, base_h]);
+
       // (ALL interior bosses — load cell, overload stop, tray, deck
       // columns — are added AFTER the difference below. Inside this union
       // the full-height main cavity void would erase them, since they sit

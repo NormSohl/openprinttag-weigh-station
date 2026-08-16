@@ -1,9 +1,10 @@
 # 3D-Printed Parts — Known Issues / Errata
 
-Field-found problems with the printed parts, and the fixes made. **All three
-below have been printed and verified as of 2026-08-16.** Kept here as the
-errata history — add a new row and update status the same way if a future
-print turns up a new issue.
+Field-found problems with the printed parts, and the fixes made. Issues 1-3
+have been printed and verified as of 2026-08-16; issue 4 is fixed and
+render-verified (2026-08-16) but not yet printed. Kept here as the errata
+history — add a new row and update status the same way if a future print
+turns up a new issue.
 
 Related files: [`weighstation.scad`](./weighstation.scad),
 [`porch-tft-adapter.scad`](./porch-tft-adapter.scad).
@@ -13,6 +14,7 @@ Related files: [`weighstation.scad`](./weighstation.scad),
 | 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | **Fixed & verified** — reinforced boss printed, no visible deflection under load |
 | 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed & verified** — printed, fits as designed |
 | 3 | TFT adapter top edge fouls the overhanging platform | High (blocks weighing) | **Fixed & verified** — plate_y 67→63 + plat_gap 2→5 (~3.1mm), printed and clears |
+| 4 | Base — front-corner seam where the rounded main-shell corner meets the porch wedge | Low/Medium (cosmetic seam; also a joint stiffness gain) | **Fixed, render-verified** — gusset added, not yet printed |
 
 ---
 
@@ -103,3 +105,40 @@ lip, adds 10 mm of wall to house the soldered header). The design now
 CGAL convention as the base part above). `win_x`/`win_y`/`pocket_clr`/
 `plate_t`/`pocket_d`/`plate_y`/`sd_slot_offset`/`sd_slot_w` all confirmed
 present in the SCAD exactly as described above.
+
+---
+
+## 4. Front-corner seam where the rounded main-shell corner meets the porch wedge
+
+**File:** `weighstation.scad` — `base()`, SOLIDS union, ~line 288
+(`gusset_margin` / `gusset_x` / `gusset_y`).
+
+**Symptom:** at both front corners (where the main shell's rounded corner
+transitions into the 45-degree porch wedge), a visible seam/notch runs down
+the outer wall from the top rim. Spotted in an exterior render, not yet on a
+physical print.
+
+**Root cause:** `rrect()`'s corner rounding (radius `corner_r` = 8mm) recedes
+inward starting exactly at X = `porch_x0` (= `-base_l/2` = -100) — the
+porch wedge's attachment face. But the porch wedge is a full `base_w`-wide
+extrusion with sharp, unrounded side edges. At X = `porch_x0` the rounded
+shell only has wall material out to Y = ±(`base_w/2 - corner_r`) = ±62,
+while the porch's flat side wall covers the full ±70 right there — an
+~8×8mm crescent-shaped gap between the two surfaces at each front corner:
+tangent point at (`porch_x0 + corner_r`, `base_w/2`) = (-92, 70), corner tip
+at (`porch_x0`, `base_w/2 - corner_r`) = (-100, 62).
+
+**Fix:** a full-height gusset cube at each front corner (`sy = [-1, 1]`),
+sized `(corner_r + gusset_margin)` per side with a 2mm margin for a robust
+overlapping union into both the shell and the porch wedge — not a
+coincident-face seam. Being solid PETG bridging the two load-bearing walls,
+it stiffens the porch-to-body joint at the same time it closes the visual
+gap, which is the "reenforced and filled" the issue asked for.
+
+**Render-verified (2026-08-16, OpenSCAD 2021.01, headless):** `openscad -D
+part="base" --render` reports `Simple: yes`, `Volumes: 2` (unchanged from
+before the fix — still one connected solid, no new disconnected geometry).
+The visible seam is gone in the same exterior viewpoint used to find it; the
+interior cavity, wiring passage, and deck rebate ledge are all unaffected
+(the gusset sits outside the cavity's footprint at that corner). **Not yet
+printed** — physical fit/strength unconfirmed.
