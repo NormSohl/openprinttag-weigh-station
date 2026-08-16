@@ -297,9 +297,20 @@ module base() {
       // above/beside the cusp is deliberate (the look this corner is
       // supposed to have) and stays untouched -- only the cusp itself gets
       // a small radius, just enough to give it a printable minimum width.
+      //
+      // Centred at X=porch_x0+fillet_r, NOT on the boundary itself: the
+      // porch wedge's TOP edge is a 45-degree slope (its solid only
+      // reaches full height base_h exactly AT X=porch_x0, receding forward
+      // 1mm in Z for every 1mm forward in X past it). A cylinder centred
+      // ON X=porch_x0 straddles that boundary and pokes a stub through the
+      // receding slope near the rim -- caught visually before printing.
+      // Keeping the full cylinder at X >= porch_x0 (tangent to the
+      // boundary, not crossing it) stays entirely on the shell/void side,
+      // where nothing recedes with height, so it can safely run the full
+      // base_h without ever exceeding the porch's own envelope.
       fillet_r = 1.5;
       for (sy = [-1, 1])
-        translate([porch_x0, sy*(base_w/2 - corner_r), 0])
+        translate([porch_x0 + fillet_r, sy*(base_w/2 - corner_r), 0])
           cylinder(r=fillet_r, h=base_h);
 
       // (ALL interior bosses — load cell, overload stop, tray, deck

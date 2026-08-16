@@ -139,9 +139,26 @@ changing the corner's silhouette — not what was wanted. Reverted
 (`git revert`) in favour of the fix below.
 
 **Fix:** a small vertical cylinder (`fillet_r` = 1.5mm radius, full base
-height) centred exactly on the tangent/cusp point at each front corner —
-not filling the crevice, just padding the one point where it pinches to
-zero. The broader crescent shape stays exactly as it was.
+height) at each front corner — not filling the crevice, just padding the
+point where it pinches to zero. The broader crescent shape stays exactly
+as it was.
+
+> **First version of this fix was itself broken** — centred exactly on the
+> tangent point (X=`porch_x0`), which straddles the porch wedge's own
+> boundary there. The porch's top edge is a 45-degree slope: its solid
+> only reaches the full `base_h` height exactly AT X=`porch_x0`, receding
+> forward in Z for every mm forward in X past it. A cylinder centred ON
+> that boundary therefore pokes a visible stub through the receding slope
+> near the rim on the porch side, even though it's fine on the shell side
+> — caught visually (a render sent for review showed it clearly) before
+> ever reaching a printer. Fixed by moving the cylinder's centre to
+> X=`porch_x0 + fillet_r`, keeping the entire cylinder at X >= `porch_x0`
+> (tangent to the boundary, never crossing it) — entirely on the
+> shell/void side, where nothing recedes with height, so it can safely run
+> the full `base_h`. Confirmed by isolating just the porch wedge and the
+> fillet cylinder in a standalone test file and rendering an orthographic
+> side profile: the cylinder's silhouette sits entirely inside the wedge's
+> own outline at every height.
 
 **Render-verified (2026-08-16, OpenSCAD 2021.01, headless):** `openscad -D
 part="base" --render` reports `Simple: yes`, `Volumes: 2` — unchanged from
