@@ -15,6 +15,8 @@
 #include "store.h"
 #include "config_store.h"
 #include "api_key.h"
+#include "display_tz.h"
+#include "station_name.h"
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -671,8 +673,8 @@ static void handleRoot(AsyncWebServerRequest* req) {
             } else {
                 p += "<p class='muted'>" + esc(r.vendor)
                    + (r.abbr[0] ? " &middot; " + esc(r.abbr) : String())
-                   + " &middot; " + String(r.remaining_g, 0) + " g remaining &middot; "
-                   + String(r.used_g, 0) + " g used</p>";
+                   + " &middot; " + String(r.remaining_g, 0) + " grams remaining &middot; "
+                   + String(r.used_g, 0) + " grams used</p>";
 
                 // Spec strip, plus the print temperatures. The temps are not in
                 // the store record at all — they live on the tag, so read them
@@ -1090,7 +1092,12 @@ static void collectWeigh(const StoreEvent& e, void* ctx) {
     s->rem.push_back(e.remaining_g);
     s->used.push_back(e.used_g);
     s->gross.push_back(e.gross_g);
-    s->ts.push_back(String(e.ts));
+    // Localized here, once, so both the HTML table and the CSV export below
+    // get the same human-readable local time -- the log's own e.ts stays UTC
+    // and untouched; this is a display-time conversion only.
+    char local[32];
+    storeLocalizeIso(e.ts, local, sizeof(local));
+    s->ts.push_back(local[0] ? String(local) : String(e.ts));
     s->retired.push_back(e.ev == StoreEv::Retire);
 }
 
@@ -1136,7 +1143,12 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     storeForEachWeigh(id, collectWeigh, &s);
 
     if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
-        String out = "ts,gross_g,remaining_g,used_g,event\n";
+        // "when_local" (not "ts"): the value is already converted to the
+        // configured display timezone (Settings page), unlike every other
+        // timestamp this station exposes (/export, /api/*), which stay UTC
+        // on purpose -- this is the one download meant for a human to open
+        // directly, not a machine to parse.
+        String out = "when_local,gross_g,remaining_g,used_g,event\n";
         for (size_t i = 0; i < s.rem.size(); i++)
             out += s.ts[i] + "," + String(s.gross[i], 1) + ","
                  + String(s.rem[i], 1) + "," + String(s.used[i], 1) + ","
@@ -1155,14 +1167,18 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
        + esc(r.material[0] ? r.material : "Unknown") + "</div>";
     p += "<p class='muted'>" + esc(r.vendor) + (r.abbr[0] ? " &middot; " + esc(r.abbr) : String())
        + " &middot; " + String((unsigned)s.rem.size()) + " weigh session(s)</p>";
-    p += "<p class='big'>" + String(r.remaining_g, 0) + " g <span class='muted' "
+    p += "<p class='big'>" + String(r.remaining_g, 0) + " grams <span class='muted' "
          "style='font-size:15px'>remaining &middot; " + String(r.used_g, 0)
-       + " g used</span></p>";
+       + " grams used</span></p>";
     // This is where onboarding now lands, so it has to show what was entered —
     // otherwise submitting the form gives no confirmation that the tare and
     // nominal weight (the values every later reading depends on) took.
     String spec = specStrip(r);
-    if (r.last_ts[0]) spec += kv("Last weighed", esc(r.last_ts));
+    if (r.last_ts[0]) {
+        char local[32];
+        storeLocalizeIso(r.last_ts, local, sizeof(local));
+        spec += kv("Last weighed", esc(local[0] ? local : r.last_ts));
+    }
     // Which product this spool is an instance of. Worth showing even though the
     // fields above are its resolved values: if two spools of the same filament
     // report different products, the matching ladder missed, and this line is
@@ -1182,7 +1198,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
 
     p += "<h3>Weigh history <a href='/spool?id=" + String(id)
        + "&format=csv' style='font-size:14px;color:#8f8'>(CSV)</a></h3>";
-    p += "<table><tr><th>When (UTC)</th><th>Gross</th><th>Remaining</th><th>Used</th><th></th></tr>";
+    p += "<table><tr><th>When</th><th>Gross</th><th>Remaining</th><th>Used</th><th></th></tr>";
     if (s.rem.empty())
         p += "<tr><td colspan='5' class='muted'>No weigh sessions yet</td></tr>";
     for (size_t k = s.rem.size(); k-- > 0; )   // newest first
@@ -1808,11 +1824,11 @@ static void handleReorder(AsyncWebServerRequest* req) {
         flagged++;
         if (!oh.product) unmatched++;
         String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
-                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " g")
+                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " grams")
                    : String("empty");
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
            + esc(s.color) + "</td><td>" + String(oh.count) + " spool(s), "
-           + String(oh.grams, 0) + " g</td><td>" + thr + "</td><td>"
+           + String(oh.grams, 0) + " grams</td><td>" + thr + "</td><td>"
            // Which rule produced this row. A stock item falling back to the name
            // match is not wrong, but it is coarser — it will count every colour
            // of that vendor's PLA — and there is no other way to see that.
@@ -1947,7 +1963,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
         String thr = sr.min_spools > 0 ? (String(sr.min_spools) + " spools")
-                   : sr.min_grams  > 0 ? (String(sr.min_grams, 0) + " g")
+                   : sr.min_grams  > 0 ? (String(sr.min_grams, 0) + " grams")
                    : String("&ge; 1 spool");
         String popCell;
         if (!pop[i].has_data) {
@@ -1970,8 +1986,12 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     if (n == 0)
         p += "<tr><td colspan='8' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
     p += "</table>";
-    if (n && earliestTs[0])
-        p += "<p class='muted'>Popularity data available since " + esc(earliestTs) + ".</p>";
+    if (n && earliestTs[0]) {
+        char local[32];
+        storeLocalizeIso(earliestTs, local, sizeof(local));
+        p += "<p class='muted'>Popularity data available since "
+           + esc(local[0] ? local : earliestTs) + ".</p>";
+    }
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
          "on the <a href='/config' style='color:#8f8'>Settings</a> and "
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
@@ -2090,6 +2110,27 @@ static void configTableForm(String& p, const char* label, const char* which) {
 static void handleConfig(AsyncWebServerRequest* req) {
     String p = head("Settings", "/config");
 
+    // Station name: the Idle screen's green heading, and the only place on
+    // the whole device that greets by the owning org's name -- everything
+    // else (every other TFT title, the web app's own header) is deliberately
+    // generic. Configurable because this firmware is meant to run at more
+    // than one lab eventually.
+    p += "<h3>Station name</h3><div class='card'>";
+    p += "<p class='muted'>Shown on the idle screen. Max " + String(STATION_NAME_MAX_LEN)
+       + " characters -- the title has no wrap.</p>";
+    p += "<input id='snin' type='text' maxlength='" + String(STATION_NAME_MAX_LEN)
+       + "' value='" + esc(stationNameGet()) + "'>"
+         "<div style='margin-top:8px'><button type='button' onclick='ssn()'>Save name</button></div>"
+         "<p class='muted' id='snmsg'></p></div>";
+    p += "<script>"
+         "function ssn(){var n=document.getElementById('snin').value;"
+         "fetch('/api/station-name',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+         "body:'name='+encodeURIComponent(n)})"
+         ".then(r=>{document.getElementById('snmsg').textContent="
+         "r.ok?'Saved. Takes effect immediately.':'Refused (HTTP '+r.status+') — "
+         "check it is not empty or over " + String(STATION_NAME_MAX_LEN) + " characters.';});}"
+         "</script>";
+
     // Network. Nothing in the app offered this before — /reset existed but was
     // reachable only by typing the URL, so a station that had fallen back to
     // its own AP (the setup window closes after WIFI_PORTAL_TIMEOUT_SEC with
@@ -2128,6 +2169,40 @@ static void handleConfig(AsyncWebServerRequest* req) {
         p += "<p><b class='ob'>Not calibrated.</b> Weights will be wrong until "
              "this is done.</p>";
     p += "<a href='/calibrate'><button type='button' class='sec'>Calibrate&hellip;</button></a></div>";
+
+    // Display-only: the log itself always stores UTC (storeNowIso(), gmtime_r)
+    // so it stays unambiguous and string-sortable across a DST transition —
+    // the popularity window math, the audit "found" comparison, and
+    // storeCompact()'s retention floor all depend on that. Changing this only
+    // changes what the TFT corner clock and the timestamps on this site show.
+    p += "<h3>Display timezone</h3><div class='card'>";
+    p += "<p class='muted'>Affects the station's on-screen clock and every "
+         "timestamp shown in the web app (weigh history, popularity dates). "
+         "The event log itself always records UTC, so backups and the API "
+         "are unaffected and never need converting.</p>";
+    p += "<select id='tzsel'>";
+    for (size_t i = 0; i < tzZoneCount(); i++) {
+        const TzZone& z = tzZoneAt(i);
+        p += "<option value='" + String(z.id) + "'"
+           + (!strcmp(z.id, tzGetId()) ? " selected" : "") + ">"
+           + esc(z.label) + "</option>";
+    }
+    p += "</select>";
+    p += "<label>Clock format</label><select id='tzh24'>"
+         "<option value='0'" + String(tzGet24Hour() ? "" : " selected")
+       + ">12-hour (2:30 PM)</option>"
+         "<option value='1'" + String(tzGet24Hour() ? " selected" : "")
+       + ">24-hour (14:30)</option></select>";
+    p += "<div style='margin-top:8px'><button type='button' onclick='stz()'>Save timezone</button></div>"
+         "<p class='muted' id='tzmsg'></p></div>";
+    p += "<script>"
+         "function stz(){var z=document.getElementById('tzsel').value;"
+         "var h=document.getElementById('tzh24').value;"
+         "fetch('/api/tz',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+         "body:'tz='+encodeURIComponent(z)+'&h24='+encodeURIComponent(h)})"
+         ".then(r=>{document.getElementById('tzmsg').textContent="
+         "r.ok?'Saved. Takes effect immediately.':'Refused (HTTP '+r.status+').';});}"
+         "</script>";
 
     p += "<h3>API access</h3>";
     if (apiKeyIsSet())
@@ -2196,6 +2271,39 @@ static void handleApiKeySet(AsyncWebServerRequest* req) {
     apiKeySet(k.c_str());
     req->send(200, "application/json",
               String("{\"ok\":true,\"required\":") + (apiKeyIsSet() ? "true" : "false") + "}");
+}
+
+static void handleApiTzSet(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    String z;
+    if (req->hasParam("tz", true))      z = req->getParam("tz", true)->value();
+    else if (req->hasParam("tz"))       z = req->getParam("tz")->value();
+    if (!tzSet(z.c_str())) { req->send(400, "text/plain", "unknown timezone id"); return; }
+
+    String h;
+    if (req->hasParam("h24", true))      h = req->getParam("h24", true)->value();
+    else if (req->hasParam("h24"))       h = req->getParam("h24")->value();
+    if (h.length()) tzSet24Hour(h == "1");
+
+    req->send(200, "application/json",
+              String("{\"ok\":true,\"tz\":\"") + tzGetId()
+            + "\",\"h24\":" + (tzGet24Hour() ? "true" : "false") + "}");
+}
+
+static void handleApiStationName(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    String n;
+    if (req->hasParam("name", true))      n = req->getParam("name", true)->value();
+    else if (req->hasParam("name"))       n = req->getParam("name")->value();
+    if (!stationNameSet(n.c_str())) {
+        req->send(400, "text/plain", "name must be 1-" + String(STATION_NAME_MAX_LEN) + " characters");
+        return;
+    }
+    // Not echoing the saved name back: it is arbitrary user text and esc()
+    // is HTML-escaping, not JSON-escaping, so embedding it here the way
+    // handleApiTzSet() embeds tzGetId() (always one of a fixed set of safe
+    // internal ids) would be wrong for a value someone actually typed.
+    req->send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleApiConfigSave(AsyncWebServerRequest* req) {
@@ -2719,6 +2827,8 @@ void webAppBegin() {
     sServer.on("/api/usage",      HTTP_GET,  handleApiUsage);
     sServer.on("/api/status",     HTTP_GET,  handleApiStatus);
     sServer.on("/api/apikey",     HTTP_POST, handleApiKeySet);
+    sServer.on("/api/tz",         HTTP_POST, handleApiTzSet);
+    sServer.on("/api/station-name", HTTP_POST, handleApiStationName);
 
     // Re-provisioning for a cabinet-installed unit with no physical access:
     // clear stored WiFi credentials and reboot into the captive portal.
