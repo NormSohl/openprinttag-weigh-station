@@ -1792,7 +1792,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Review, then <a href='/reorder?format=csv' style='color:#8f8'>download CSV</a> "
          "or e-mail the list to place the order. Manage what's tracked (add, edit, "
-         "remove) on the <a href='/stock' style='color:#8f8'>Stock items</a> page. A row "
+         "remove) on the <a href='/stock' style='color:#8f8'>Stock List</a> page. A row "
          "matched by name rather than a product below means <a href='/products' "
          "style='color:#8f8'>Products</a> is worth a look.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
@@ -1887,7 +1887,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
 static const int STOCK_POPULARITY_WINDOW_DAYS = 90;
 
 static void handleStockPage(AsyncWebServerRequest* req) {
-    String p = head("Stock items", "/stock");
+    String p = head("Stock List", "/stock");
 
     long editIdx = -1;
     if (req->hasParam("edit")) editIdx = req->getParam("edit")->value().toInt();
@@ -2173,7 +2173,7 @@ static void handleConfig(AsyncWebServerRequest* req) {
     p += "<h3>Config catalog</h3>";
     p += "<p class='muted'>Edit the reference tables that drive onboarding and "
          "reordering. Each is a JSON array; Save validates and persists it. "
-         "Stock items has a friendlier editor at "
+         "Stock items has a friendlier editor, Stock List, at "
          "<a href='/stock' style='color:#8f8'>/stock</a>.</p>";
     configTableForm(p, "Vendors",        "vendors");
     configTableForm(p, "Materials",      "materials");

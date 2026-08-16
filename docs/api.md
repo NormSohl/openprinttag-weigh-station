@@ -18,14 +18,16 @@ work with no configuration.
 | Endpoint | Content-Type | Purpose |
 |---|---|---|
 | `GET /api/status` | JSON | Everything a dashboard polls: state, spool on the scale, weight, WiFi, storage health |
-| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag |
+| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag, retired flag |
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
+| `GET /api/stock` | JSON | Every Stock List item (what to keep + its reorder threshold), each with its 90-day popularity |
 | `GET /reorder?format=csv` | CSV | Stock items below threshold |
-| `GET /api/usage` | JSON | Consumption per month per vendor+material |
+| `GET /api/usage` | JSON | Consumption per month per vendor+material (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
 | `GET /api/storage` | JSON | Log size, free space, compaction due, write-failure flag |
 | `GET /export` | NDJSON | The complete raw event log — the full backup artifact |
+| `GET /config/export` | JSON | The Config catalog (vendors/materials/spool-profiles/colors/stock-items) as one file — a separate backup from `/export`; see below |
 
 > **`color` is `null` when no colour has been assigned**, on both `/api/spools` and
 > `/api/status` — it is not `"000000"`. A spool onboarded before its colour was
@@ -70,6 +72,41 @@ one spool's form. The single place an edit is allowed is `POST /api/product`
 before you save). It updates the definition, clears `provisional`, and emits one
 `Reconcile` per spool of the product. See `docs/design/product-instance.md`.
 
+### `GET /api/stock`
+
+```json
+{
+  "window_days": 90,
+  "data_since": "2026-08-14T03:51:15Z",
+  "items": [
+    { "vendor": "eSun", "material": "PLA", "color": "Beige", "dia": 1.75,
+      "spool_g": 1000.0, "min_spools": 1, "min_grams": 0.0,
+      "sku": "", "gtin": "", "pack_qty": 1,
+      "has_data": true, "grams_in_window": 820.0, "available_days": 41.2,
+      "grams_per_week": 139.3 }
+  ]
+}
+```
+
+Every row is a Stock List item — what you've decided to keep, not what's
+currently on the shelf (that's `/api/products`/`/api/spools`) — paired with its
+**popularity**: grams consumed in the trailing `window_days`, divided by the
+days that material was actually *in stock* (combined on-hand across every
+spool of it), not by the calendar window. A material that sold out on day 2 of
+90 and sat empty the other 88 is scored on those 2 days, not diluted across
+90 — a stockout must never make a popular material look unpopular.
+
+- **`has_data: false`** means the item was never in stock at all during the
+  window — the strongest possible signal it's a candidate to remove from the
+  Stock List, not an edge case to hide. `grams_per_week` is `null` in that case.
+- **`data_since`** is the earliest event timestamp actually found in the log.
+  If it's less than `window_days` ago, coverage is shorter than the window
+  implies — shown rather than silently assumed.
+- This is computed fresh from the log on every request (a bounded, read-only
+  pass, same cost class as compaction) — it is not the same permanent,
+  coarser rollup `/api/usage` reports, and the two numbers for the same
+  material will not match.
+
 ### `GET /api/status`
 
 ```json
@@ -113,9 +150,35 @@ These change state and are guarded once an API key is set.
 | `POST /api/cal-zero` | Zero the scale |
 | `POST /api/cal` | Calibrate against a known weight |
 | `POST /api/config` | Replace a config catalog table |
+| `POST /api/stock/add` | Add a Stock List item |
+| `POST /api/stock/update` | Edit a Stock List item (form field `index`, its position from `/api/stock`) |
+| `POST /api/stock/delete` | Remove a Stock List item (form field `index`) |
+| `POST /api/audit/start` | Begin a physical-inventory audit (Idle → Scanning) |
+| `POST /api/audit/finish` | Move to reviewing what wasn't found (Scanning → Resolving) |
+| `POST /api/audit/abandon` | Drop the audit itself, from either phase, without undoing anything already Closed/Found |
+| `POST /api/audit/close` | Confirm a spool disposed (form field `spool`, the local id) — see below |
+| `POST /api/audit/found` | Confirm a spool present without a fresh weigh (form field `spool`) |
 | `POST /api/apikey` | Set or clear the API key (needs the *current* key) |
 | `POST /import` | Replace the event log with an uploaded backup |
+| `POST /config/import` | Replace all five Config catalog tables from a `/config/export` file — a separate backup from `/import`, see below |
 | `POST /reset` | Erase WiFi credentials and reboot into the setup portal |
+
+`POST /api/audit/close` is not a soft delete: it computes a consumption delta
+from the spool's last known weight down to 0 — the same path a real weigh
+takes, feeding `/api/usage` and `/api/stock`'s popularity — because a spool's
+absence at audit time is evidence its remaining weight got used up, not
+discarded with material still in it. The record stays (`retired: true` on
+`/api/spools`, `remaining_g: 0`) for historical analysis; nothing is deleted.
+A genuine reweigh later clears `retired` automatically, so a spool that
+reappears just rejoins normal tracking with no separate reactivation step.
+
+`GET /config/export` and `POST /config/import` back up the Config catalog
+(vendors/materials/spool-profiles/colors/stock-items) as one JSON file,
+independently of `/export`/`/import` — nothing in a spool or product record
+points back into these tables by ID, so the two backups never need to be the
+same age. A `/config/import` upload is validated in full (all five keys
+present and array-shaped) before any table is touched; a malformed file
+leaves every table untouched, same guarantee `/import` already makes.
 
 `/reset` is POST-only by design. As a GET, any page on the network that merely
 linked to the URL could wipe the station's network config just by being loaded
@@ -135,7 +198,7 @@ station lives in a cabinet with no reachable BOOT button, and a device that can
 lock out its own operators is worse than one that trusts the LAN. The web app
 and the boot log both say so plainly when no key is set.
 
-Set one on the **Config** page, or over serial:
+Set one on the **Settings** page, or over serial:
 
 ```
 APIKEY my-long-random-secret     # set
