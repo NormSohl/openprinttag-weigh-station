@@ -70,6 +70,17 @@
 // that name for a chip EEPROM register address.
 #define FW_VERSION       "1.0.0"
 
+// git describe (tag-commits-hash[-dirty]) at build time, set by
+// scripts/pre_build_version.py -- answers "which commit is actually flashed
+// on this unit", which FW_VERSION above doesn't (hand-maintained, hasn't
+// moved since 1.0.0). Guarded in case anything ever compiles against this
+// header outside the PlatformIO env that runs the script (e.g. tools/store's
+// native shim build, which doesn't include config.h's owner main.cpp/
+// web_app.cpp anyway, but costs nothing to guard).
+#ifndef BUILD_VERSION
+#define BUILD_VERSION "unknown"
+#endif
+
 // ── Behaviour constants ───────────────────────────────────────
 #define RECONCILE_POLL_MS      1000  // local-store reconciliation cadence (~1 Hz)
 // ── Event-log capacity ────────────────────────────────────────

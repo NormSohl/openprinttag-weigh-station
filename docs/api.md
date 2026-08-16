@@ -112,6 +112,7 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
 ```json
 {
   "firmware": "1.0.0",
+  "build_version": "milestone-2026-08-16-3-gabc1234",
   "state": "present",
   "uptime_s": 84213,
   "heap_free": 142360,
@@ -129,6 +130,11 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
 ```
 
 `spool` is `null` when nothing is on the scale.
+
+`build_version` is `git describe --tags --always --dirty` at build time --
+which commit is actually flashed on this unit, distinct from `firmware`
+(a hand-maintained semver that doesn't move on every commit). A `-dirty`
+suffix means the working tree had uncommitted changes when it was built.
 
 ### Polling
 

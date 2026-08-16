@@ -2407,6 +2407,10 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
 
     String j = "{";
     j += "\"firmware\":\"";  j += FW_VERSION;
+    // git describe at build time (tag-commits-hash[-dirty]) -- FW_VERSION
+    // above is a hand-maintained semver that hasn't moved since 1.0.0; this
+    // is the one that actually answers "which commit is flashed on THIS unit".
+    j += "\",\"build_version\":\""; j += BUILD_VERSION;
     j += "\",\"state\":\"";   j += deviceStateName(st);
     j += "\",\"uptime_s\":";  j += String((unsigned)(millis() / 1000));
     j += ",\"heap_free\":";   j += String((unsigned)ESP.getFreeHeap());

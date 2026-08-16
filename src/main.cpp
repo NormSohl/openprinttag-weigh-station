@@ -115,6 +115,7 @@ void setup() {
     delay(3000);
     Serial.println();
     Serial.println("=== weigh station boot ===");
+    Serial.printf("[boot] build %s\n", BUILD_VERSION);
 
     bootMark("i2c (Wire.begin)");
     Wire.begin(I2C_SDA, I2C_SCL);
