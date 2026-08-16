@@ -1884,7 +1884,8 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
 }
 
-static const int STOCK_POPULARITY_WINDOW_DAYS = 90;
+// STOCK_POPULARITY_WINDOW_DAYS itself lives in config.h now, shared with
+// storeCompact()'s retention floor -- see the comment there.
 
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock List", "/stock");

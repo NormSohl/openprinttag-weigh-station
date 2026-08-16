@@ -1370,18 +1370,56 @@ bool storeCompactNeeded() {
 bool storeCompact() {
     Lock lk;
 
-    // 1) Count good lines to find the cutoff. Everything before the last
-    //    STORE_LOG_KEEP_EVENTS is what the checkpoints will stand in for.
+    // 1) Count good lines to find the cutoff, AND find the earliest line whose
+    //    timestamp falls inside the Stock List popularity window. Everything
+    //    before the STORE_LOG_KEEP_EVENTS cutoff is what the checkpoints will
+    //    stand in for -- EXCEPT that a Checkpoint is a state SNAPSHOT (no
+    //    grams, no stockout-crossing history), so storeMaterialPopularity(),
+    //    which has no permanent rollup the way consumption/Usage does, would
+    //    silently lose any in-window consumption folded away this way. Never
+    //    fold a line at or after the window floor, no matter how far past
+    //    STORE_LOG_KEEP_EVENTS the log has grown -- a compaction that would
+    //    otherwise do nothing but corrupt Stock List popularity is not worth
+    //    running; STORE_LOG_COMPACT_BYTES's 900 kB trigger still bounds how
+    //    long that can go on for.
+    // The floor needs a real clock: with no NTP sync, time(nullptr) is a small
+    // boot-relative value, so `now - windowDays*86400` goes deeply negative and
+    // EVERY timestamp -- including genuinely ancient ones -- would read as
+    // ">= cutoff", pinning windowFloor at 0 and disabling compaction entirely,
+    // forever, on any station that never reaches NTP (SoftAP fallback, a
+    // network with no outbound UDP 123). An unbounded log is a worse failure
+    // than the pre-fix popularity-across-compaction imprecision, so an unset
+    // clock skips the floor and falls back to the old STORE_LOG_KEEP_EVENTS-
+    // only behaviour -- same logic as periodOf_() degrading to "unknown"
+    // rather than inventing a real-looking window it cannot actually measure.
     size_t total = 0;
+    size_t windowFloor = 0;      // count of lines before the popularity window
+    bool   windowFloorSet = false;
+    const time_t popCutoffT = time(nullptr) - (time_t)STOCK_POPULARITY_WINDOW_DAYS * 86400;
     {
         File f = LittleFS.open(LOG_PATH, "r");
         if (!f) return false;
         LogReader rd(f);
         String l;
-        while (rd.next(l)) { l.trim(); if (l.length()) total++; }
+        while (rd.next(l)) {
+            l.trim();
+            if (l.length() == 0) continue;
+            if (gClockSet && !windowFloorSet) {
+                StoreEvent e;
+                if (decodeLine(l, e)) {
+                    const time_t ts = parseIso_(e.ts);
+                    if (ts != 0 && ts >= popCutoffT) { windowFloor = total; windowFloorSet = true; }
+                }
+            }
+            total++;
+        }
         f.close();
     }
-    const size_t skip = (total > STORE_LOG_KEEP_EVENTS) ? total - STORE_LOG_KEEP_EVENTS : 0;
+    // Clock unset, or nothing in the log reaches the window: no extra floor.
+    if (!windowFloorSet) windowFloor = total;
+
+    size_t skip = (total > STORE_LOG_KEEP_EVENTS) ? total - STORE_LOG_KEEP_EVENTS : 0;
+    if (skip > windowFloor) skip = windowFloor;
     if (skip == 0) return false;   // nothing old enough to be worth folding
 
     // 2) Replay ONLY the region being discarded, into its own index.

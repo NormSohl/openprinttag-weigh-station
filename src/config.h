@@ -90,6 +90,19 @@
 #define STORE_LOG_KEEP_EVENTS         2000       // recent events kept verbatim
 #define STORE_FREE_WARN_BYTES    (128UL * 1024)  // warn below this much free space
 
+// storeMaterialPopularity() (Stock List curation) replays raw log lines within
+// a trailing window to compute grams-consumed and stockout-corrected available
+// days — it has no permanent rollup the way consumption/Usage does, so once a
+// line is folded into a Checkpoint (a state SNAPSHOT, not grams or crossing
+// history) that line's contribution to popularity is gone. storeCompact()
+// therefore refuses to fold anything with a timestamp inside this window,
+// regardless of STORE_LOG_KEEP_EVENTS — see the "never fold the popularity
+// window" comment in storeCompact(). Shared with the caller-supplied
+// `windowDays` on every storeMaterialPopularity() call (web_app.cpp) on
+// purpose: the compaction floor and the query window must never drift apart,
+// or that guarantee silently stops holding for whichever one moved.
+#define STOCK_POPULARITY_WINDOW_DAYS 90
+
 // ── Clock ─────────────────────────────────────────────────────────────────────
 // The ESP32-S3 has no battery-backed RTC, so the clock reads 1970 on every
 // power-up until SNTP answers. That matters more than it looks: the consumption
