@@ -362,9 +362,11 @@ uint32_t storeCrc32(const uint8_t* data, size_t len);
 void storeNowIso(char* buf, size_t buflen);
 
 // ── Per-spool weigh history (analytics) ───────────────────────────────────────
-// Iterate weigh events for one spool, oldest→newest (log order). `cb` is called
-// once per matching event with the caller's `ctx`. Returns the match count.
-// Streams the log line-by-line — no large allocation.
+// Iterate weigh events for one spool, oldest→newest (log order) -- including
+// its Retire event if it has one, since that IS a weigh reading (to 0) and a
+// spool's history should show its closing entry, not just stop. `cb` is
+// called once per matching event with the caller's `ctx`. Returns the match
+// count. Streams the log line-by-line — no large allocation.
 size_t storeForEachWeigh(uint32_t spool,
                          void (*cb)(const StoreEvent&, void*), void* ctx);
 

@@ -1083,6 +1083,7 @@ static void handleApiProducts(AsyncWebServerRequest* req) {
 struct WeighSeries {
     std::vector<float>  rem, used, gross;
     std::vector<String> ts;
+    std::vector<bool>   retired;   // this row is the spool's closing entry
 };
 static void collectWeigh(const StoreEvent& e, void* ctx) {
     WeighSeries* s = (WeighSeries*)ctx;
@@ -1090,6 +1091,7 @@ static void collectWeigh(const StoreEvent& e, void* ctx) {
     s->used.push_back(e.used_g);
     s->gross.push_back(e.gross_g);
     s->ts.push_back(String(e.ts));
+    s->retired.push_back(e.ev == StoreEv::Retire);
 }
 
 // Remaining-weight-over-sessions sparkline: one series, so no legend — the title
@@ -1134,10 +1136,11 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     storeForEachWeigh(id, collectWeigh, &s);
 
     if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
-        String out = "ts,gross_g,remaining_g,used_g\n";
+        String out = "ts,gross_g,remaining_g,used_g,event\n";
         for (size_t i = 0; i < s.rem.size(); i++)
             out += s.ts[i] + "," + String(s.gross[i], 1) + ","
-                 + String(s.rem[i], 1) + "," + String(s.used[i], 1) + "\n";
+                 + String(s.rem[i], 1) + "," + String(s.used[i], 1) + ","
+                 + (s.retired[i] ? "retired" : "weigh") + "\n";
         AsyncWebServerResponse* resp = req->beginResponse(200, "text/csv", out);
         resp->addHeader("Content-Disposition",
                         "attachment; filename=spool-" + String(id) + ".csv");
@@ -1179,13 +1182,14 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
 
     p += "<h3>Weigh history <a href='/spool?id=" + String(id)
        + "&format=csv' style='font-size:14px;color:#8f8'>(CSV)</a></h3>";
-    p += "<table><tr><th>When (UTC)</th><th>Gross</th><th>Remaining</th><th>Used</th></tr>";
+    p += "<table><tr><th>When (UTC)</th><th>Gross</th><th>Remaining</th><th>Used</th><th></th></tr>";
     if (s.rem.empty())
-        p += "<tr><td colspan='4' class='muted'>No weigh sessions yet</td></tr>";
+        p += "<tr><td colspan='5' class='muted'>No weigh sessions yet</td></tr>";
     for (size_t k = s.rem.size(); k-- > 0; )   // newest first
         p += "<tr><td>" + s.ts[k] + "</td><td>" + String(s.gross[k], 0)
            + " g</td><td>" + String(s.rem[k], 0) + " g</td><td>"
-           + String(s.used[k], 0) + " g</td></tr>";
+           + String(s.used[k], 0) + " g</td><td>"
+           + (s.retired[k] ? "<span class='ob'>closed &mdash; audit</span>" : "") + "</td></tr>";
     p += "</table>";
     p += "<p class='muted'><a href='/' style='color:#8f8'>&larr; back</a></p>";
     p += FOOT;

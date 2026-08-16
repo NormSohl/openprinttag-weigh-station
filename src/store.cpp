@@ -1103,7 +1103,10 @@ size_t storeForEachWeigh(uint32_t spool,
         line.trim();
         if (line.length() == 0) continue;
         StoreEvent e;
-        if (decodeLine(line, e) && e.ev == StoreEv::Weigh && e.spool == spool) {
+        // Retire included: it IS a weigh reading (to 0), and a spool's own
+        // history should show its closing entry, not just silently stop.
+        if (decodeLine(line, e) && (e.ev == StoreEv::Weigh || e.ev == StoreEv::Retire)
+            && e.spool == spool) {
             if (cb) cb(e, ctx);
             n++;
         }
