@@ -6,7 +6,7 @@
 
 extern volatile bool gTagForceFormat;
 // Task handles, for the STACK command's high-water report (defined in main.cpp).
-extern TaskHandle_t gNfcTask, gScaleTask, gDisplayTask, gSyncTask;
+extern TaskHandle_t gNfcTask, gScaleTask, gDisplayTask, gSyncTask, gControllerTask;
 
 // False until the ADC answers. ZERO/CAL are still reachable over serial
 // while it is missing, and averaging 32 samples from a chip that is not
@@ -181,10 +181,11 @@ static void handleCalRequests(NAU7802& nau) {
 // app — then run STACK. A margin under ~512 bytes is where to worry.
 static void reportStacks() {
     struct { const char* name; TaskHandle_t h; uint32_t size; } t[] = {
-        { "nfc",     gNfcTask,     6144 },
-        { "scale",   gScaleTask,   8192 },
-        { "display", gDisplayTask, 6144 },
-        { "sync",    gSyncTask,    8192 },
+        { "nfc",     gNfcTask,        6144 },
+        { "scale",   gScaleTask,      8192 },
+        { "display", gDisplayTask,    6144 },
+        { "sync",    gSyncTask,       8192 },
+        { "ctrl",    gControllerTask, 3072 },
     };
     Serial.println("[stack] smallest free margin seen since boot:");
     for (auto& e : t) {
@@ -329,8 +330,13 @@ static bool scaleInit(NAU7802& nau) {
 
     // Load stored calibration from NVS, or perform a first-boot auto-tare
     // and apply the config.h default calibration factor.
+    //
+    // Read-write, not read-only: on a genuinely fresh device this namespace
+    // does not exist yet, and a read-only open of a missing namespace logs a
+    // spurious ESP_LOGE at boot -- same trap api_key.cpp already documents
+    // and avoids for exactly this reason.
     Preferences prefs;
-    prefs.begin("scale", true);
+    prefs.begin("scale", false);
     bool hasStoredCal = prefs.getBool("valid", false);
     gScaleCalibrated = hasStoredCal;
     if (hasStoredCal) {
