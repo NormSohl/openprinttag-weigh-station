@@ -2460,6 +2460,11 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
 static void handleUsagePage(AsyncWebServerRequest* req) {
     String p = head("Usage", "/usage");
     p += "<h3>Filament consumed</h3>";
+    p += "<p class='muted'>This is the lab's permanent consumption record "
+         "&mdash; how much of each material has actually gone through the "
+         "station, by month and year, since tracking began. Once an entry "
+         "lands here it's permanent &mdash; even the raw weigh events it's "
+         "built from eventually get folded away, but these totals don't.</p>";
 
     const size_t n = storeUsageCount();
     if (n == 0) {
@@ -2496,6 +2501,37 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     p += "<p class='muted'>Total " + String(grand / 1000.0f, 2) + " kg across "
        + String((unsigned)n) + " month/vendor/material buckets.</p>";
 
+    // Yearly rollup, same shape as "by month" below but grouped one level
+    // coarser — drilling down from the all-time summary above. Rows with no
+    // synced clock at the time (period == "unknown") stay their own bucket
+    // rather than being sliced into a fake year.
+    p += "<h3>By year</h3><table>"
+         "<tr><th>Year</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>Weighs</th></tr>";
+    struct YKey { String year, vendor, material; };
+    struct YTot { YKey k; float g; uint32_t w; };
+    std::vector<YTot> byYear;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeUsageAt(i, u)) continue;
+        String yr = strcmp(u.period, "unknown") == 0 ? String("unknown")
+                                                       : String(u.period).substring(0, 4);
+        bool found = false;
+        for (auto& t : byYear)
+            if (t.k.year == yr && t.k.vendor == u.vendor && t.k.material == u.material) {
+                t.g += u.grams; t.w += u.weighs; found = true; break;
+            }
+        if (!found) byYear.push_back({{yr, String(u.vendor), String(u.material)}, u.grams, u.weighs});
+    }
+    std::sort(byYear.begin(), byYear.end(), [](const YTot& a, const YTot& b) {
+        int c = strcmp(b.k.year.c_str(), a.k.year.c_str());   // newest year first
+        return c ? (c < 0) : (a.g > b.g);
+    });
+    for (const auto& t : byYear) {
+        p += "<tr><td>" + esc(t.k.year.c_str()) + "</td><td>" + esc(t.k.vendor.c_str())
+           + "</td><td>" + esc(t.k.material.c_str()) + "</td><td>" + String(t.g, 0)
+           + " grams</td><td>" + String((unsigned)t.w) + "</td></tr>";
+    }
+    p += "</table>";
+
     p += "<h3>By month</h3><table>"
          "<tr><th>Period</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>Weighs</th></tr>";
     // Newest first: periods are "YYYY-MM", so lexical order is chronological.
@@ -2511,15 +2547,14 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
         if (!storeUsageAt(i, u)) continue;
         p += "<tr><td>" + esc(u.period) + "</td><td>" + esc(u.vendor)
            + "</td><td>" + esc(u.material) + "</td><td>" + String(u.grams, 0)
-           + " g</td><td>" + String((unsigned)u.weighs) + "</td></tr>";
+           + " grams</td><td>" + String((unsigned)u.weighs) + "</td></tr>";
     }
     p += "</table>";
     p += "<p><a href='/usage.csv'><button type='button'>Download CSV</button></a></p>";
-    p += "<p class='muted'>These totals are kept permanently and are not lost when "
-         "the event log is compacted. Consumption is the drop in a spool's remaining "
-         "weight between two weighings, attributed to the vendor and material "
-         "recorded at that time; a spool's first weighing establishes its baseline "
-         "and counts as zero.</p>";
+    p += "<p class='muted'>Consumption is the drop in a spool's remaining weight "
+         "between two weighings, attributed to the vendor and material recorded "
+         "at that time; a spool's first weighing establishes its baseline and "
+         "counts as zero.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
