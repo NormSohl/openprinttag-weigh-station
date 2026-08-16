@@ -364,6 +364,15 @@ uint32_t storeCrc32(const uint8_t* data, size_t len);
 // (year >= 2020), otherwise a boot-relative "1970-…" stamp (flagged upstream).
 void storeNowIso(char* buf, size_t buflen);
 
+// Convert a UTC ISO-8601 log timestamp ("2026-08-15T21:34:11Z") to a human-
+// readable string in whatever display timezone is currently configured (see
+// display_tz.h) -- for web-page and CSV rendering ONLY. What is actually
+// STORED never goes through this; storeNowIso() above always writes UTC, so
+// the log itself stays unambiguous and string-sortable across a DST
+// transition regardless of what this function is asked to show. buf is ""
+// when utcIso is empty or unparseable -- never a fabricated time.
+void storeLocalizeIso(const char* utcIso, char* buf, size_t buflen);
+
 // ── Per-spool weigh history (analytics) ───────────────────────────────────────
 // Iterate weigh events for one spool, oldest→newest (log order) -- including
 // its Retire event if it has one, since that IS a weigh reading (to 0) and a

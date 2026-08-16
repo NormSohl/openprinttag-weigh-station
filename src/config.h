@@ -104,6 +104,11 @@
 #define NTP_SERVER_1  "pool.ntp.org"
 #define NTP_SERVER_2  "time.nist.gov"
 
+// Display-only local time (the TFT clock corner, and web-app timestamps).
+// Everything that gets LOGGED still uses UTC via gmtime_r (see NTP_SERVER_1
+// above and storeNowIso()). The configurable zone itself lives in
+// display_tz.h/.cpp, picked on the Settings page and persisted to NVS.
+
 #define BLANK_TAG_CONFIRM_SEC     5  // countdown before auto-format proceeds
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing

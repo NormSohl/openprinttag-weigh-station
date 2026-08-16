@@ -159,6 +159,8 @@ These change state and are guarded once an API key is set.
 | `POST /api/audit/close` | Confirm a spool disposed (form field `spool`, the local id) — see below |
 | `POST /api/audit/found` | Confirm a spool present without a fresh weigh (form field `spool`) |
 | `POST /api/apikey` | Set or clear the API key (needs the *current* key) |
+| `POST /api/tz` | Set the display timezone (form field `tz`, one of a fixed zone-id list) and/or the 12/24-hour clock format (form field `h24`, `"0"`/`"1"`) — see below |
+| `POST /api/station-name` | Rename the idle screen's greeting (form field `name`, 1–20 characters) — see below |
 | `POST /import` | Replace the event log with an uploaded backup |
 | `POST /config/import` | Replace all five Config catalog tables from a `/config/export` file — a separate backup from `/import`, see below |
 | `POST /reset` | Erase WiFi credentials and reboot into the setup portal |
@@ -183,6 +185,17 @@ leaves every table untouched, same guarantee `/import` already makes.
 `/reset` is POST-only by design. As a GET, any page on the network that merely
 linked to the URL could wipe the station's network config just by being loaded
 in someone's browser.
+
+`POST /api/tz` and `POST /api/station-name` affect **display only** — the TFT
+corner clock, timestamps rendered in the web app, and the idle screen's
+greeting. They never touch what gets logged: the event log always records UTC
+(`storeNowIso()`), independent of these settings, so `/export`/`/api/*`
+timestamps stay unambiguous and string-sortable regardless of what a station
+is configured to display. Both take effect immediately, no reboot. `tz`
+accepts only the fixed zone ids the Settings page's dropdown offers (`pacific`,
+`mountain`, `arizona`, `central`, `eastern`, `alaska`, `hawaii`, `utc`) —
+`400` on anything else. `name` is capped at 20 characters (the idle screen's
+title has no wrap) and rejects empty — `400` on either.
 
 `/api/product` is the widest-reaching write here: it appends one `Reconcile`
 per spool of the product, and each of those spools rewrites its physical tag

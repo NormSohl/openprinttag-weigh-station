@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include "config.h"
+#include "display_tz.h"
 #include "device_state.h"
 #include "opt_tag.h"
 #include "store.h"
@@ -325,6 +326,16 @@ void syncTask(void* param) {
         // and writes a trailing "Z", so an offset here would produce timestamps
         // that contradict their own zone marker.
         configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
+        // For display only (TFT corner clock, web-app timestamps via
+        // storeLocalizeIso()) -- gmtime_r() (everything that gets LOGGED)
+        // ignores TZ entirely, so this cannot touch stored timestamps.
+        // configTime() above already calls setenv("TZ", ...) itself for a
+        // fixed 0-offset zone; tzApply() overrides it right after with
+        // whichever zone is configured on the Settings page (see
+        // display_tz.h), same clock, same instant, just a DST-aware
+        // reinterpretation of it. Re-applied here on every join because
+        // nothing guarantees configTime() won't stomp the TZ env var again.
+        tzApply();
         // Show the IP rather than the mDNS name: .local depends on the *client*
         // resolving it (Windows in particular is unreliable), while the IP works
         // from anything on the network. mDNS still runs, so weighstation.local

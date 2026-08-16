@@ -1,5 +1,6 @@
 #include "store.h"
 #include "config.h"
+#include "display_tz.h"   // tzGet24Hour() for storeLocalizeIso()
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
@@ -1148,6 +1149,22 @@ static time_t parseIso_(const char* ts) {
 
 static std::string popKey_(const char* vendor, const char* material) {
     std::string k(vendor); k += '\x01'; k += material; return k;
+}
+
+// Display-only: never touches the log, never used by anything that compares
+// or sorts timestamps. localtime_r() reads whatever TZ tzApply() last set
+// (see display_tz.h) -- independent of this file, deliberately, so store.cpp
+// stays free of any notion of "which timezone" the way it is free of any
+// notion of "which vendor" belongs to onboarding.
+void storeLocalizeIso(const char* utcIso, char* buf, size_t buflen) {
+    buf[0] = 0;
+    if (!utcIso || !utcIso[0]) return;
+    const time_t t = parseIso_(utcIso);
+    if (t == 0) return;
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    strftime(buf, buflen,
+             tzGet24Hour() ? "%Y-%m-%d %H:%M %Z" : "%Y-%m-%d %I:%M %p %Z", &tmv);
 }
 
 void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* results,

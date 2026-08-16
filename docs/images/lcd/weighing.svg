@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" font-family="ui-monospace,Menlo,Consolas,monospace">
 <rect width="480" height="320" rx="6" fill="#000"/>
 <text x="12" y="32" font-size="26" font-weight="700" fill="#0064dc">Weighing...</text>
-<text x="12" y="81" font-size="17" fill="#ffffff">612 g</text>
+<text x="12" y="81" font-size="17" fill="#ffffff">612 grams</text>
+<text x="228" y="303" font-size="17" fill="#c0c0c0">08/15/2026 09:27 PM</text>
 </svg>

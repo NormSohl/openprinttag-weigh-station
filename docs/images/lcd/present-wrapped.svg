@@ -2,6 +2,7 @@
 <rect width="480" height="320" rx="6" fill="#000"/>
 <text x="12" y="25" font-size="17" fill="#ffffff">Spool #51  Prusament  PC Blend Carbon</text>
 <text x="12" y="53" font-size="17" fill="#ffffff">Fiber Black</text>
-<text x="12" y="109" font-size="17" fill="#00ff00">612 g remaining</text>
-<text x="12" y="165" font-size="17" fill="#7b7d7b">Weight recorded</text>
+<text x="12" y="109" font-size="17" fill="#00ff00">612 grams remaining</text>
+<text x="12" y="165" font-size="17" fill="#c0c0c0">Weight recorded</text>
+<text x="228" y="303" font-size="17" fill="#c0c0c0">08/15/2026 09:27 PM</text>
 </svg>

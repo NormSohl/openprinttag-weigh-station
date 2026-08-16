@@ -2,11 +2,14 @@
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 #include <Adafruit_NeoPixel.h>
+#include <time.h>
 #include "config.h"
 #include "spi_bus.h"
 #include "store.h"
 #include "device_state.h"
 #include "opt_tag.h"
+#include "display_tz.h"
+#include "station_name.h"
 
 // ── Shared globals ────────────────────────────────────────────────────────────
 extern volatile DeviceState gState;
@@ -23,6 +26,7 @@ extern char                 gWebAddr[48];
 extern char                 gApSsid[24];
 extern volatile int         gPortalSecsLeft;
 extern volatile bool        gScaleCalibrated;
+extern volatile bool        gClockSet;
 
 // TFT_eSPI configured via -D flags in platformio.ini (ILI9488, 480x320).
 // Landscape (TFT_ROTATION in config.h): width=480, height=320.
@@ -120,6 +124,22 @@ static const int QR_X   = 332;
 // was 6 px — enough, but not enough to be obviously enough.
 static const int QR_Y   = 78;
 static const int QR_BOX = 140;   // fits 480-332-8 wide, panel ends y 214
+
+// Corner clock, every screen. Bottom-right, below and clear of everything
+// any screen draws: the lowest other content is WiFiSetupMode's row 8
+// countdown (y 236) and AwaitingFormatConfirm's big digit (ends y 260) --
+// both well above CLOCK_Y.
+//
+// Sized for the longer of the two formats tzGet24Hour() picks between --
+// "MM/DD/YYYY hh:mm PM" (19 chars, strftime zero-pads) beats "MM/DD/YYYY
+// HH:MM" (16) -- so switching modes on the Settings page never leaves a
+// stray tail of the previous, longer string behind (the clear-rect always
+// covers the max width, not whichever string happens to be drawn this time).
+static const int CLOCK_CHARS = 20;
+static const int CLOCK_W = CLOCK_CHARS * 12;      // text size 2
+static const int CLOCK_H = 18;
+static const int CLOCK_X = 480 - MARGIN - CLOCK_W;
+static const int CLOCK_Y = 320 - MARGIN - CLOCK_H;
 
 static void cls() { tft.fillScreen(TFT_BLACK); }
 
@@ -321,6 +341,9 @@ void displayTask(void* param) {
     int         lastCount  = -1;
     bool        lastCal    = gScaleCalibrated;
     bool        lastWrFail = storeWriteFailed();
+    char        lastClock[CLOCK_CHARS + 1] = {};
+    char        lastStationName[STATION_NAME_MAX_LEN + 1];
+    strlcpy(lastStationName, stationNameGet(), sizeof(lastStationName));
 
     for (;;) {
         xSemaphoreTake(gStateMutex, portMAX_DELAY);
@@ -337,6 +360,11 @@ void displayTask(void* param) {
             continue;
         }
 
+        // Every cls() below blanks the corner clock along with everything
+        // else, so each site sets this to force an immediate redraw of it —
+        // otherwise it would sit blank until the minute happens to roll over.
+        bool clsHappened = false;
+
         bool stateChanged = (state != prevState);
         if (stateChanged) {
             buzz(prevState, state);
@@ -345,6 +373,7 @@ void displayTask(void* param) {
             spiBusGive();
             rendered  = false;
             lastCount = -1;
+            clsHappened = true;
             if (state == DeviceState::AwaitingFormatConfirm) {
                 awaitStart = xTaskGetTickCount();
                 blinkOn    = true;
@@ -362,6 +391,7 @@ void displayTask(void* param) {
             cls();
             spiBusGive();
             rendered = false;
+            clsHappened = true;
         }
 
         // Same for the storage banner. A log that has stopped accepting writes
@@ -374,6 +404,21 @@ void displayTask(void* param) {
             cls();
             spiBusGive();
             rendered = false;
+            clsHappened = true;
+        }
+
+        // Same idea, for the Idle screen's own greeting: a Settings-page save
+        // is silent otherwise. Unlike cal/wrFail this can only ever actually
+        // change the pixels while state == Idle, but forcing the redraw
+        // unconditionally (matching the two checks above) is simpler than
+        // gating it, and costs nothing extra on any other screen.
+        if (strcmp(stationNameGet(), lastStationName) != 0) {
+            strlcpy(lastStationName, stationNameGet(), sizeof(lastStationName));
+            spiBusTakeTft();
+            cls();
+            spiBusGive();
+            rendered = false;
+            clsHappened = true;
         }
 
         xSemaphoreTake(gTagMutex, portMAX_DELAY);
@@ -407,7 +452,7 @@ void displayTask(void* param) {
 
             case DeviceState::Boot:
                 title("Weigh Station", TFT_WHITE);
-                row(2, "Starting...", TFT_DARKGREY);
+                row(2, "Starting...", TFT_SILVER);
                 pixelColor = 0;
                 break;
 
@@ -415,8 +460,8 @@ void displayTask(void* param) {
                 title("WiFi Setup", tft.color565(0, 100, 220));
                 row(2, "Join network:", TFT_WHITE);
                 row(3, "WeighStation-Setup", TFT_CYAN);
-                row(5, "Then open browser to", TFT_DARKGREY);
-                row(6, "192.168.4.1", TFT_DARKGREY);
+                row(5, "Then open browser to", TFT_SILVER);
+                row(6, "192.168.4.1", TFT_SILVER);
                 // Scan-to-join. A phone camera reads the WIFI: URI and offers to
                 // join the open setup AP directly, so nobody has to type the SSID.
                 // A web-URL QR would be useless on THIS screen — 192.168.4.1 is
@@ -431,7 +476,7 @@ void displayTask(void* param) {
                 break;
 
             case DeviceState::Idle:
-                title("Seattle Makers", TFT_GREEN);
+                title(stationNameGet(), TFT_GREEN);
                 row(2, "Place spool to begin", TFT_WHITE);
                 if (storeWriteFailed()) {
                     row(3, "STORAGE FULL - not", TFT_RED);
@@ -445,9 +490,9 @@ void displayTask(void* param) {
                     // reading and typing, but mDNS is not universal — plenty of
                     // Android browsers won't resolve it — so the numeric address
                     // is there as the fallback that always works.
-                    row(5, "Web app:", TFT_DARKGREY);
+                    row(5, "Web app:", TFT_SILVER);
                     rowf(6, TFT_CYAN, "%s.local", DEVICE_HOSTNAME);
-                    rowf(7, TFT_DARKGREY, "or %s", gWebAddr);
+                    rowf(7, TFT_SILVER, "or %s", gWebAddr);
                     char url[64];
                     snprintf(url, sizeof(url), "http://%s/", gWebAddr);
                     drawQr(url, QR_X, QR_Y, QR_BOX);   // IP, not mDNS: must just work
@@ -457,13 +502,28 @@ void displayTask(void* param) {
 
             case DeviceState::IdleNoWiFi:
                 title("Weigh Station", tft.color565(220, 140, 0));
+                // Row 1 is free here (only Present's wide header uses it) --
+                // name the cause. Reaching this state always means the setup
+                // portal was offered and closed without new credentials being
+                // entered, whether this is a first join or a previously-saved
+                // network that dropped and fell back to a retry portal — see
+                // runConfigPortal() in sync_task.cpp.
+                row(1, "Setup timed out", TFT_SILVER);
                 row(2, "Place spool to weigh", TFT_WHITE);
                 if (storeWriteFailed())
                     row(3, "STORAGE FULL - not saving", TFT_RED);
                 else if (!gScaleCalibrated)
                     row(3, "Uncalibrated - web app", tft.color565(220, 140, 0));
+                else
+                    // Weighing and local saving never depend on WiFi (nfcTask
+                    // has no network awareness at all) -- only NTP does, so
+                    // without it new events still record, just filed as
+                    // "unknown" period until the clock syncs. Worth saying
+                    // explicitly: this screen looks like a degraded state,
+                    // and someone should not hesitate to use the scale on it.
+                    row(3, "Weighs & saves locally", TFT_SILVER);
                 if (gApSsid[0]) {
-                    row(4, "Join WiFi:", TFT_DARKGREY);
+                    row(4, "Join WiFi:", TFT_SILVER);
                     rowf(5, TFT_CYAN, "%s", gApSsid);
                     rowf(6, TFT_CYAN, "http://%s", gWebAddr);
                     // The way back to network setup. Reaching this screen means
@@ -471,7 +531,7 @@ void displayTask(void* param) {
                     // only route onward is knowing the /reset URL by heart —
                     // which is exactly how a unit ends up stranded on its own
                     // AP in a space whose WiFi it was carried there to join.
-                    row(7, "Change network:", TFT_DARKGREY);
+                    row(7, "Change network:", TFT_SILVER);
                     rowf(8, TFT_CYAN, "%s/reset", gWebAddr);
                     // Scan-to-join the station's own AP. Joining is the friction
                     // here — the URL above is printed as text and is unreachable
@@ -519,17 +579,21 @@ void displayTask(void* param) {
                 {
                     int r = rowWrap(3, snap.material_name[0] ? snap.material_name
                                                              : "Unknown material", TFT_WHITE);
-                    row(r + 1, "Registering spool...", TFT_DARKGREY);
+                    row(r + 1, "Registering spool...", TFT_SILVER);
                 }
                 pixelColor = pixel.Color(0, 50, 50);
                 break;
 
             case DeviceState::ValidTagFound:
                 title("Tag read", TFT_CYAN);
+                // Brand before material, same order and fallback strings as
+                // ForeignTagFound and Present's header -- OPT's own "Prusament
+                // PLA Galaxy Black" convention. Neither line color-differentiated
+                // from the other, matching those two screens as well.
                 {
-                    int r = rowWrap(2, snap.material_name[0] ? snap.material_name
-                                                             : "Reading spool...", TFT_WHITE);
-                    if (snap.brand_name[0]) row(r, snap.brand_name, TFT_DARKGREY);
+                    row(2, snap.brand_name[0] ? snap.brand_name : "Unknown brand", TFT_WHITE);
+                    rowWrap(3, snap.material_name[0] ? snap.material_name
+                                                      : "Reading spool...", TFT_WHITE);
                 }
                 pixelColor = pixel.Color(0, 40, 60);
                 break;
@@ -537,7 +601,7 @@ void displayTask(void* param) {
             case DeviceState::WeighingAndSync: {
                 title("Weighing...", tft.color565(0, 100, 220));
                 char wbuf[24];
-                snprintf(wbuf, sizeof(wbuf), "%.0f g", weight);
+                snprintf(wbuf, sizeof(wbuf), "%.0f grams", weight);
                 row(2, wbuf, TFT_WHITE);
                 pixelColor = pixel.Color(0, 0, 80);
                 break;
@@ -549,8 +613,8 @@ void displayTask(void* param) {
                     // Identity and weight on one line: they are read together
                     // ("which spool, and how much is on it"), and pairing them
                     // buys back a row for the two addresses below.
-                    if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d  %.0f g", spoolId, remaining);
-                    else             rowf(2, TFT_WHITE, "%.0f g", remaining);
+                    if (spoolId > 0) rowf(2, TFT_WHITE, "Spool #%d  %.0f grams", spoolId, remaining);
+                    else             rowf(2, TFT_WHITE, "%.0f grams", remaining);
                     // Name the state outright. "Registered!" alone reads as
                     // finished, when in fact the spool has no vendor, material
                     // or colour yet and is useless for inventory until someone
@@ -563,14 +627,14 @@ void displayTask(void* param) {
                     // Both addresses carry the /onboard path: the home page does
                     // not say which spool it would act on, and the whole point
                     // here is to reach the form for THIS one.
-                    row(4, "Scan QR to add details,", TFT_DARKGREY);
-                    row(5, "or visit the Onboard page:", TFT_DARKGREY);
+                    row(4, "Scan QR to add details,", TFT_SILVER);
+                    row(5, "or visit the Onboard page:", TFT_SILVER);
                     // mDNS only resolves on a real LAN. In SoftAP fallback the
                     // numeric address is the only one that works, so don't
                     // advertise a name that would just fail there.
                     if (!gApSsid[0]) {
                         rowf(6, TFT_CYAN, "%s.local/onboard", DEVICE_HOSTNAME);
-                        if (gWebAddr[0]) rowf(7, TFT_DARKGREY, "or %s/onboard", gWebAddr);
+                        if (gWebAddr[0]) rowf(7, TFT_SILVER, "or %s/onboard", gWebAddr);
                     } else if (gWebAddr[0]) {
                         rowf(6, TFT_CYAN, "%s/onboard", gWebAddr);
                     }
@@ -607,7 +671,7 @@ void displayTask(void* param) {
                     strlcat(hdr, snap.material_name[0] ? snap.material_name : "Unknown",
                             sizeof(hdr));
                     int r = rowWrapWide(0, hdr, TFT_WHITE);
-                    rowf(r + 1, TFT_GREEN, "%.0f g remaining", remaining);
+                    rowf(r + 1, TFT_GREEN, "%.0f grams remaining", remaining);
                     // "Saved locally" was left from the Spoolman era, where the
                     // alternative was "pushed to the server". There is no
                     // server now, so it distinguished nothing — and being
@@ -616,14 +680,20 @@ void displayTask(void* param) {
                     // claimed the weight had been recorded. Say what actually
                     // happened, and say it loudly when it didn't.
                     if (storeWriteFailed()) row(r + 3, "NOT SAVED - storage full", TFT_RED);
-                    else                    row(r + 3, "Weight recorded", TFT_DARKGREY);
+                    else                    row(r + 3, "Weight recorded", TFT_SILVER);
                     pixelColor = pixel.Color(0, 80, 0);
                 }
                 break;
 
             case DeviceState::ReconcilingMainSection:
-                title("Updating tag...", TFT_YELLOW);
-                pixelColor = pixel.Color(50, 50, 0);
+                // Blue, not yellow: this is the same "working silently in the
+                // background, nothing needed from you" case as WiFiSetupMode/
+                // FormattingAndRegistering/WeighingAndSync, not a "success but
+                // incomplete" case like Present's NEEDS ONBOARDING banner —
+                // yellow is reserved for that one. NeoPixel matches the other
+                // blue states' color for the same reason.
+                title("Updating tag...", tft.color565(0, 100, 220));
+                pixelColor = pixel.Color(0, 0, 80);
                 break;
 
             // A state with no case above used to fall through to a bare break,
@@ -632,9 +702,9 @@ void displayTask(void* param) {
             // and it cost a debugging session. Draw the state name instead: an
             // unhandled state is now self-identifying.
             default:
-                title("...", TFT_DARKGREY);
+                title("...", TFT_SILVER);
                 row(2, deviceStateName(state), TFT_WHITE);
-                row(3, "(no screen for this state)", TFT_DARKGREY);
+                row(3, "(no screen for this state)", TFT_SILVER);
                 pixelColor = pixel.Color(30, 30, 30);
                 break;
             }
@@ -686,6 +756,43 @@ void displayTask(void* param) {
                 lastBlink = now;
                 pixel.setPixelColor(0, blinkOn ? pixel.Color(80, 40, 0) : 0);
                 pixel.show();
+            }
+        }
+
+        // ── Dynamic: corner clock, every screen ────────────────────────────────
+        // Unconditional on `state`, unlike the two blocks above — every screen
+        // gets this. Formatted before taking the bus so an unchanged minute
+        // costs nothing but a string compare, not an SPI transaction; only
+        // redraws on an actual minute rollover or right after a cls() wiped it
+        // (clsHappened), never on every 50 ms tick.
+        //
+        // gClockSet gates it exactly like periodOf_() gates Usage's calendar
+        // bucketing: no battery-backed RTC means the clock reads a small
+        // boot-relative value until NTP answers, and a fabricated date would
+        // be worse than no clock at all. Local time (DISPLAY_TZ), not UTC —
+        // this is the one place on the whole device someone reads the time at
+        // a glance, and everything that gets LOGGED still uses gmtime_r/UTC
+        // regardless of the TZ env var this reads.
+        {
+            char buf[CLOCK_CHARS + 1] = {};
+            if (gClockSet) {
+                time_t     now = time(nullptr);
+                struct tm  tmv;
+                localtime_r(&now, &tmv);
+                strftime(buf, sizeof(buf),
+                         tzGet24Hour() ? "%m/%d/%Y %H:%M" : "%m/%d/%Y %I:%M %p", &tmv);
+            }
+            if (clsHappened || strcmp(buf, lastClock) != 0) {
+                strlcpy(lastClock, buf, sizeof(lastClock));
+                spiBusTakeTft();
+                tft.fillRect(CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H, TFT_BLACK);
+                if (buf[0]) {
+                    tft.setTextSize(2);
+                    tft.setTextColor(TFT_SILVER, TFT_BLACK);
+                    tft.setCursor(CLOCK_X, CLOCK_Y);
+                    tft.print(buf);
+                }
+                spiBusGive();
             }
         }
 

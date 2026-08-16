@@ -7,6 +7,8 @@
 #include "store.h"          // local-storage core (redesign Phase 1)
 #include "config_store.h"   // config catalog (redesign Phase 3)
 #include "api_key.h"        // shared secret for mutating HTTP endpoints
+#include "display_tz.h"     // display-only local timezone (TFT clock, web app)
+#include "station_name.h"   // Idle screen's configurable greeting
 #include "controller.h"     // single owner of the WiFi/idle gState group
 
 // ── Shared state ──────────────────────────────────────────────
@@ -156,6 +158,17 @@ void setup() {
     Serial.printf("[api] write endpoints are %s\n",
                   apiKeyIsSet() ? "protected by an API key"
                                 : "UNPROTECTED (no key set — see APIKEY over serial)");
+
+    // Independent of WiFi/NTP: tzset() only affects how localtime_r() later
+    // INTERPRETS whatever the clock is, real or boot-relative, so this is
+    // safe to apply before the clock is even set. syncTask re-applies it
+    // after every configTime() call too, in case that call's own internal
+    // setenv("TZ", ...) stomps it.
+    tzBegin();
+    Serial.printf("[tz] display timezone: %s\n", tzGetId());
+
+    stationNameBegin();
+    Serial.printf("[station] name: %s\n", stationNameGet());
 
     Serial.printf("[store] filesystem: %u kB free / %u kB\n",
                   (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10));
