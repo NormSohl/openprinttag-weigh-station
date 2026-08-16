@@ -126,7 +126,10 @@ struct SpoolRecord {
     bool     foreign = false;
     // Confirmed physically disposed during a physical-inventory audit. Distinct
     // from remaining_g happening to read near zero: this is a fact about
-    // disposal, not an inference from weight. Sticky -- nothing ever clears it.
+    // disposal, not an inference from weight. Cleared automatically by the
+    // next real weigh reading -- a spool that gets weighed again is back in
+    // circulation by definition, e.g. one Closed and presumed used up that
+    // quietly reappears later. Nothing else clears it.
     bool     retired = false;
     char     last_ts[25] = {};
     bool     valid = false;

@@ -475,6 +475,15 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         case StoreEv::Weigh:
             r.remaining_g = e.remaining_g;
             r.used_g      = e.used_g;
+            // A real weigh reading is the strongest possible evidence a spool
+            // is back in physical circulation -- e.g. one Closed at an audit
+            // (removed and presumed used up) that quietly reappears and gets
+            // weighed again later. Auto-clearing here means that just works:
+            // no separate "reactivate" action, and it stops being invisible
+            // to every future audit the instant it's weighed. The alternative
+            // -- staying stuck retired forever -- was never a deliberate
+            // choice, just a case the original design didn't consider.
+            r.retired     = false;
             break;
         case StoreEv::Retire:
             r.remaining_g = 0;
