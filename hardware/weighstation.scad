@@ -285,6 +285,23 @@ module base() {
                    [porch_x0 - porch_len, base_h - porch_len],
                    [porch_x0 - porch_len, 0]]);
 
+      // Small fillet at the bottom of the front-corner crevice. rrect()'s
+      // corner arc is TANGENT to the porch wedge's exposed front face at
+      // (porch_x0, base_w/2-corner_r) -- the arc is centred at
+      // (porch_x0+corner_r, base_w/2-corner_r), so at X=porch_x0 its
+      // tangent direction is vertical, exactly matching the porch's flat
+      // face there. A tangent meeting closes to zero width at that one
+      // point, which is a real void everywhere except the mathematical
+      // point itself -- no nozzle can resolve that, so it prints as a
+      // hairline crack (issue #4, printed-parts-issues.md). The crescent
+      // above/beside the cusp is deliberate (the look this corner is
+      // supposed to have) and stays untouched -- only the cusp itself gets
+      // a small radius, just enough to give it a printable minimum width.
+      fillet_r = 1.5;
+      for (sy = [-1, 1])
+        translate([porch_x0, sy*(base_w/2 - corner_r), 0])
+          cylinder(r=fillet_r, h=base_h);
+
       // (ALL interior bosses — load cell, overload stop, tray, deck
       // columns — are added AFTER the difference below. Inside this union
       // the full-height main cavity void would erase them, since they sit

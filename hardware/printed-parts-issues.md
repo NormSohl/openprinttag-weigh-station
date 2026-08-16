@@ -1,9 +1,10 @@
 # 3D-Printed Parts — Known Issues / Errata
 
-Field-found problems with the printed parts, and the fixes made. **All three
-below have been printed and verified as of 2026-08-16.** Kept here as the
-errata history — add a new row and update status the same way if a future
-print turns up a new issue.
+Field-found problems with the printed parts, and the fixes made. Issues 1-3
+have been printed and verified as of 2026-08-16; issue 4 is fixed and
+render-verified (2026-08-16) but not yet printed. Kept here as the errata
+history — add a new row and update status the same way if a future print
+turns up a new issue.
 
 Related files: [`weighstation.scad`](./weighstation.scad),
 [`porch-tft-adapter.scad`](./porch-tft-adapter.scad).
@@ -13,6 +14,7 @@ Related files: [`weighstation.scad`](./weighstation.scad),
 | 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | **Fixed & verified** — reinforced boss printed, no visible deflection under load |
 | 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed & verified** — printed, fits as designed |
 | 3 | TFT adapter top edge fouls the overhanging platform | High (blocks weighing) | **Fixed & verified** — plate_y 67→63 + plat_gap 2→5 (~3.1mm), printed and clears |
+| 4 | Base — hairline crack at the bottom of the front-corner crevice (rounded body meets porch wedge) | Low (unprintable cusp, not a structural issue) | **Fixed, render-verified** — small fillet at the cusp, not yet printed |
 
 ---
 
@@ -103,3 +105,49 @@ lip, adds 10 mm of wall to house the soldered header). The design now
 CGAL convention as the base part above). `win_x`/`win_y`/`pocket_clr`/
 `plate_t`/`pocket_d`/`plate_y`/`sd_slot_offset`/`sd_slot_w` all confirmed
 present in the SCAD exactly as described above.
+
+---
+
+## 4. Hairline crack at the bottom of the front-corner crevice
+
+**File:** `weighstation.scad` — `base()`, SOLIDS union, ~line 288
+(`fillet_r`).
+
+**Symptom:** at both front corners (where the main shell's rounded corner
+transitions into the 45-degree porch wedge), a hairline crack runs down the
+outer wall from the top rim, right where the curved wall and the flat porch
+wall meet. Spotted in an exterior render, not yet on a physical print.
+
+**Root cause — genuinely different from a modeling gap.** The crescent-
+shaped notch/crevice at this corner (bounded by `rrect()`'s corner arc on
+one side and the porch wedge's exposed front face on the other) is the
+*intended* shape of this transition — it's what a rounded corner meeting a
+sharp-edged wedge looks like, and it's the look this corner is meant to
+have. The problem is narrower than that: the arc is centred at
+(`porch_x0+corner_r`, `base_w/2-corner_r`), so at X=`porch_x0` its tangent
+direction is exactly vertical — the same direction as the porch's flat
+face there. A tangent meeting closes the gap to **exactly zero width at one
+point** and opens up on either side of it. No nozzle can resolve a
+zero-width feature, so that one point prints as a hairline gap even though
+the model is a valid, fully manifold solid there (confirmed: `Volumes: 2`,
+`Simple: yes`, unchanged before and after the fix below — this was never a
+hole in the geometry, just a cusp too fine to print).
+
+**First attempt (reverted):** a full-height gusset cube filling the entire
+crevice. This closed the crack, but also squared off the whole notch,
+changing the corner's silhouette — not what was wanted. Reverted
+(`git revert`) in favour of the fix below.
+
+**Fix:** a small vertical cylinder (`fillet_r` = 1.5mm radius, full base
+height) centred exactly on the tangent/cusp point at each front corner —
+not filling the crevice, just padding the one point where it pinches to
+zero. The broader crescent shape stays exactly as it was.
+
+**Render-verified (2026-08-16, OpenSCAD 2021.01, headless):** `openscad -D
+part="base" --render` reports `Simple: yes`, `Volumes: 2` — unchanged from
+both the original and the (reverted) gusset version, still one connected
+solid. The hairline seam is gone in the same exterior viewpoint used to
+find it, and the crescent notch's overall shape is visibly preserved (not
+squared off) compared side-by-side with the gusset version. **Not yet
+printed** — the fillet radius (1.5mm) is a starting estimate, not
+bench-confirmed; tune it up if it's still too fine to print cleanly.
