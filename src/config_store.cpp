@@ -18,6 +18,17 @@ static std::vector<CfgStock>    sStock;
 #define P_STOCK    "/config/stock-items.json"
 
 // ── File helpers ──────────────────────────────────────────────────────────────
+// Touch a file into existence without erroring if it's already there. Same
+// fix as store.cpp's ensureLogFile_(): LittleFS.exists() and a read-open both
+// log an ESP_LOGE for a path that does not exist yet, and an "a" (append)
+// open creates quietly when missing and writes nothing when it isn't --
+// which turns a first-ever-boot's five read-opens (one per config table)
+// from five spurious errors into none.
+static void ensureFile_(const char* path) {
+    File f = LittleFS.open(path, "a");
+    if (f) f.close();
+}
+
 static bool readDoc(const char* path, JsonDocument& doc) {
     File f = LittleFS.open(path, "r");
     if (!f) return false;
@@ -316,7 +327,13 @@ static void seedStock() {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 bool cfgBegin() {
-    if (!LittleFS.exists("/config")) LittleFS.mkdir("/config");
+    // mkdir on an existing directory just returns false, quietly -- unlike
+    // exists()/open() on a missing FILE, it doesn't go through the read-open
+    // path that logs an ESP_LOGE, so no ensureFile_()-style guard is needed
+    // here, only for the five files below.
+    LittleFS.mkdir("/config");
+    ensureFile_(P_VENDORS); ensureFile_(P_MATS);  ensureFile_(P_PROFILES);
+    ensureFile_(P_COLORS);  ensureFile_(P_STOCK);
     JsonDocument d;
     if (readDoc(P_VENDORS, d))  parseVendors(d.as<JsonArrayConst>());  else { seedVendors();  writeStr(P_VENDORS,  serVendors()); }
     d.clear(); if (readDoc(P_MATS, d))     parseMaterials(d.as<JsonArrayConst>()); else { seedMaterials(); writeStr(P_MATS, serMaterials()); }
