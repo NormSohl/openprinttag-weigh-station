@@ -32,12 +32,22 @@ static inline size_t strlcat(char* d, const char* s, size_t n) {
 }
 #endif
 
-// mingw has no gmtime_r (store.cpp uses it); it does have the C11 gmtime_s,
-// whose argument order is the reverse. Bridge it so src/ stays unchanged.
+// mingw has no gmtime_r/localtime_r (store.cpp/display_tz.cpp use them); it
+// has the C11 gmtime_s/localtime_s, whose argument order is reversed. Bridge
+// both so src/ stays unchanged. mingw's time.h already declares tzset()
+// itself (deprecated but real, mapped to MSVCRT's _tzset) -- only setenv is
+// actually missing, POSIX-only; bridge it onto _putenv_s.
 #ifdef _WIN32
 #include <ctime>
+#include <cstdlib>
 static inline struct tm* gmtime_r(const time_t* t, struct tm* out) {
     return gmtime_s(out, t) == 0 ? out : nullptr;
+}
+static inline struct tm* localtime_r(const time_t* t, struct tm* out) {
+    return localtime_s(out, t) == 0 ? out : nullptr;
+}
+static inline int setenv(const char* name, const char* value, int /*overwrite*/) {
+    return _putenv_s(name, value);
 }
 #endif
 

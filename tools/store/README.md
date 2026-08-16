@@ -37,6 +37,47 @@ fold. It found a real bug on its first run — `productDiffers_()` was not
 comparing the tare, the field where a silent disagreement does the most damage,
 since remaining weight is gross minus tare.
 
+`--audit` covers the physical-inventory audit state machine — phase
+transitions, Found/Close semantics, and specifically the two real bugs found on
+hardware 2026-08-15 that no automated test had caught until this one existed:
+the four `Audit*` marker events (global, no `uuid`) silently vanishing across a
+compaction fold that straddled an in-progress audit, and a retired spool never
+clearing `retired` on a genuine subsequent reweigh. Both are regression-tested
+here now (SEED past `STORE_LOG_KEEP_EVENTS`, `COMPACT`, assert the phase
+survived; reweigh a retired spool, assert `retired` cleared).
+
+`--popularity` covers `storeMaterialPopularity()` — the Stock List's
+stockout-corrected `grams / available_days` metric — against a hand-built
+timeline (in stock, consumed to empty, restocked, partially consumed again)
+where every expected number is known in advance. Writing it surfaced a real,
+previously undocumented gap: **popularity had no fold-survival mechanism.**
+Unlike the consumption rollup (folded into permanent `Usage` rows) and unlike
+Products/Audits (re-emitted from live state at compaction time),
+`storeMaterialPopularity()` only ever replays raw log lines, and a compaction
+`Checkpoint` carries a state snapshot, not grams or crossing history. On a
+station busy enough that `STORE_LOG_KEEP_EVENTS` (2000 events) covers less
+real time than the popularity window (90 days by default), a compaction could
+silently fold away consumption still legitimately inside the window —
+reproduced on this bench as `grams` dropping 1000 → 0 and `available_days`
+shifting 15 → 5 for identical underlying history, before vs. after a forced
+compaction. That was the opposite of the feature's stated purpose ("a
+stockout must never make a popular material look artificially unpopular").
+
+**Fixed** by giving `storeCompact()` a retention floor: it now refuses to
+fold any log line timestamped within `STOCK_POPULARITY_WINDOW_DAYS` of now
+(`config.h`), no matter how far past `STORE_LOG_KEEP_EVENTS` the log has
+grown — found by a single pre-pass over the log (piggybacked on the existing
+line-count pass) that locates the earliest in-window line and caps `skip` at
+that index, since compaction only ever discards a *prefix* of the log.
+`STORE_LOG_COMPACT_BYTES`'s byte trigger is what still bounds how long that
+can go on for. `STOCK_POPULARITY_WINDOW_DAYS` moved out of `web_app.cpp` and
+into `config.h` specifically so the compaction floor and the query window
+share one definition and cannot drift apart. `--popularity` now asserts (not
+just prints) both directions: a compaction that would touch in-window history
+must be refused entirely and leave the numbers byte-for-byte unchanged, and
+material genuinely outside the window must still compact normally without
+disturbing an unrelated in-window material's numbers.
+
 **This does not replace `pio run`.** Everything outside `store.cpp` — the tasks,
 the web app, the display — still has no compiler here.
 

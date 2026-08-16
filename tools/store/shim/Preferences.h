@@ -9,6 +9,10 @@ public:
     bool     isKey(const char* key);
     uint32_t getUInt(const char* key, uint32_t def = 0);
     void     putUInt(const char* key, uint32_t v);
+    bool     getBool(const char* key, bool def = false);
+    void     putBool(const char* key, bool v);
+    String   getString(const char* key, const char* def = "");
+    void     putString(const char* key, const String& v);
 private:
     std::string ns_;
 };

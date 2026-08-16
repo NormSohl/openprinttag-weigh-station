@@ -87,16 +87,23 @@ static std::string nvsPath(const std::string& ns) { return root() + "/nvs." + ns
 bool Preferences::begin(const char* ns, bool) { ns_ = ns; mkdirp(root()); return true; }
 void Preferences::end() { ns_.clear(); }
 
-static std::map<std::string, uint32_t> nvsLoad(const std::string& ns) {
-    std::map<std::string, uint32_t> m;
+// Stored as strings regardless of the typed accessor used to write them —
+// real NVS is mixed-type per namespace too, and this keeps one file format
+// for whichever of getUInt/getBool/getString a caller reaches for.
+static std::map<std::string, std::string> nvsLoad(const std::string& ns) {
+    std::map<std::string, std::string> m;
     std::ifstream in(nvsPath(ns));
     std::string line;
     while (std::getline(in, line)) {
         size_t eq = line.find('=');
         if (eq != std::string::npos)
-            m[line.substr(0, eq)] = (uint32_t)strtoul(line.c_str() + eq + 1, nullptr, 10);
+            m[line.substr(0, eq)] = line.substr(eq + 1);
     }
     return m;
+}
+static void nvsSave(const std::string& ns, const std::map<std::string, std::string>& m) {
+    std::ofstream out(nvsPath(ns), std::ios::trunc);
+    for (auto& kv : m) out << kv.first << "=" << kv.second << "\n";
 }
 bool Preferences::isKey(const char* key) {
     auto m = nvsLoad(ns_);
@@ -105,11 +112,30 @@ bool Preferences::isKey(const char* key) {
 uint32_t Preferences::getUInt(const char* key, uint32_t def) {
     auto m = nvsLoad(ns_);
     auto it = m.find(key);
-    return it == m.end() ? def : it->second;
+    return it == m.end() ? def : (uint32_t)strtoul(it->second.c_str(), nullptr, 10);
 }
 void Preferences::putUInt(const char* key, uint32_t v) {
     auto m = nvsLoad(ns_);
-    m[key] = v;
-    std::ofstream out(nvsPath(ns_), std::ios::trunc);
-    for (auto& kv : m) out << kv.first << "=" << kv.second << "\n";
+    m[key] = std::to_string(v);
+    nvsSave(ns_, m);
+}
+bool Preferences::getBool(const char* key, bool def) {
+    auto m = nvsLoad(ns_);
+    auto it = m.find(key);
+    return it == m.end() ? def : (it->second == "1");
+}
+void Preferences::putBool(const char* key, bool v) {
+    auto m = nvsLoad(ns_);
+    m[key] = v ? "1" : "0";
+    nvsSave(ns_, m);
+}
+String Preferences::getString(const char* key, const char* def) {
+    auto m = nvsLoad(ns_);
+    auto it = m.find(key);
+    return String(it == m.end() ? def : it->second.c_str());
+}
+void Preferences::putString(const char* key, const String& v) {
+    auto m = nvsLoad(ns_);
+    m[key] = v.c_str();
+    nvsSave(ns_, m);
 }

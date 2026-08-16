@@ -26,7 +26,8 @@ echo
 echo "=== store.cpp, compiled and run natively ==="
 # shellcheck disable=SC2086
 g++ -std=c++17 -O0 -g $SAN $AJ -I ../../src -I shim -I "$ARDUINOJSON_SRC" \
-    -o "$OUT/store_test" store_test.cpp shim/shim.cpp ../../src/store.cpp
+    -o "$OUT/store_test" store_test.cpp shim/shim.cpp ../../src/store.cpp \
+    ../../src/display_tz.cpp
 echo "compiled clean"
 
 echo
@@ -63,6 +64,18 @@ else
     echo "after compact+replay:"; echo "$R2"
     exit 1
 fi
+
+echo
+echo "--- physical inventory audits: phase transitions, found/close, retired ---"
+echo "    auto-clears on reweigh, audit state survives compaction (the two bugs"
+echo "    found on hardware 2026-08-15) ---"
+STORE_TEST_ROOT="$OUT/fs5" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --audit | tail -3
+
+echo
+echo "--- material popularity: stockout-corrected available_days, no-data ---"
+echo "    materials (also prints, but does not fail on, what a compaction that"
+echo "    folds away in-window history does to the numbers -- see README) ---"
+STORE_TEST_ROOT="$OUT/fs6" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --popularity
 
 echo
 echo "--- consumption rollup survives the fold ---"
