@@ -49,6 +49,8 @@ static bool               sLogEndsNL = true;  // does the log end with a newline
 static bool               sWriteFailed = false; // last append was short/failed
 static uint32_t           sNextId  = 1;
 static uint32_t           sNextProdId = 1;
+static AuditPhase         sAuditPhase = AuditPhase::Idle;
+static char                sAuditStartTs[25] = {};   // "" when Idle
 
 // RAII lock. No public function that takes the lock calls another that does,
 // so a plain (non-recursive) mutex is safe.
@@ -68,6 +70,12 @@ const char* storeEvName(StoreEv ev) {
         case StoreEv::Checkpoint:  return "checkpoint";
         case StoreEv::Usage:       return "usage";
         case StoreEv::Product:     return "product";
+        case StoreEv::Retire:       return "retire";
+        case StoreEv::Found:        return "found";
+        case StoreEv::AuditStart:   return "audit_start";
+        case StoreEv::AuditFinish:  return "audit_finish";
+        case StoreEv::AuditEnd:     return "audit_end";
+        case StoreEv::AuditAbandon: return "audit_abandon";
         default:                   return "unknown";
     }
 }
@@ -80,6 +88,12 @@ StoreEv storeEvFromName(const char* s) {
     if (!strcmp(s, "checkpoint"))   return StoreEv::Checkpoint;
     if (!strcmp(s, "usage"))        return StoreEv::Usage;
     if (!strcmp(s, "product"))      return StoreEv::Product;
+    if (!strcmp(s, "retire"))        return StoreEv::Retire;
+    if (!strcmp(s, "found"))         return StoreEv::Found;
+    if (!strcmp(s, "audit_start"))   return StoreEv::AuditStart;
+    if (!strcmp(s, "audit_finish"))  return StoreEv::AuditFinish;
+    if (!strcmp(s, "audit_end"))     return StoreEv::AuditEnd;
+    if (!strcmp(s, "audit_abandon")) return StoreEv::AuditAbandon;
     return StoreEv::Unknown;
 }
 
@@ -123,11 +137,17 @@ static String encodeBody(const StoreEvent& e) {
     b += "\"spool\":"; b += n; b += ",";
 
     // A Checkpoint is an Onboard and a Weigh rolled into one record, so it
-    // emits both groups. Independent ifs, not if/else.
-    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
+    // emits both groups. Independent ifs, not if/else. Retire shares this
+    // group too -- it IS a weigh reading, just always to 0 -- so the exact
+    // same consumption-delta math applyInto_ already does for a real weigh
+    // applies to it with no special-casing.
+    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
         snprintf(n, sizeof(n), "%.1f", e.gross_g);     b += "\"gross_g\":";     b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.remaining_g); b += "\"remaining_g\":"; b += n; b += ",";
         snprintf(n, sizeof(n), "%.1f", e.used_g);      b += "\"used_g\":";      b += n; b += ",";
+    }
+    if (e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
+        b += "\"retired\":"; b += (e.retired ? "true" : "false"); b += ",";
     }
     if (e.ev == StoreEv::Usage) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
@@ -202,11 +222,13 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     strlcpy(e.ts,   doc["ts"]   | "", sizeof(e.ts));
     strlcpy(e.uuid, doc["uuid"] | "", sizeof(e.uuid));
     e.spool = doc["spool"] | 0u;
-    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
+    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
         e.gross_g     = doc["gross_g"]     | 0.0f;
         e.remaining_g = doc["remaining_g"] | 0.0f;
         e.used_g      = doc["used_g"]      | 0.0f;
     }
+    if (e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire)
+        e.retired = doc["retired"] | false;
     if (e.ev == StoreEv::Usage) {
         strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
         strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
@@ -402,7 +424,13 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
     // spool that was refilled or swapped onto the same tag, and a spool's very
     // first weigh (previous remaining is 0, so the delta is negative). None of
     // those is filament anyone consumed.
-    if (e.ev == StoreEv::Weigh) {
+    // Retire shares this path with Weigh: "we don't throw away good inventory",
+    // so a spool's absence at audit time IS evidence its remaining weight got
+    // used up, exactly like a real weigh to the same number would be. Treating
+    // it as anything but a normal consumption delta would under-count exactly
+    // the material people actually go through fast enough to run out between
+    // scans — the case worth getting right most.
+    if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Retire) {
         const float delta = r.remaining_g - e.remaining_g;
         if (delta > 0.05f) {
             char p[8]; periodOf_(e.ts, p, sizeof(p));
@@ -425,6 +453,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         case StoreEv::Checkpoint:
             r.remaining_g = e.remaining_g;
             r.used_g      = e.used_g;
+            r.retired     = e.retired;   // carry disposal status through the fold
             // fall through
         case StoreEv::Onboard:
         case StoreEv::Reconcile:
@@ -447,6 +476,35 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             r.remaining_g = e.remaining_g;
             r.used_g      = e.used_g;
             break;
+        case StoreEv::Retire:
+            r.remaining_g = 0;
+            r.retired     = true;
+            break;
+        // Found touches only last_ts (set unconditionally above, for every
+        // event) -- that IS the whole mechanism, no field here needs it.
+        default:
+            break;
+    }
+}
+
+// Called only from applyEvent_ (live apply + boot replay), NEVER from
+// storeCompact()'s independent fold, which calls applyInto_() directly for
+// exactly this reason -- replaying folded-away history must not re-derive
+// (and corrupt) live audit phase.
+static void updateAuditState_(const StoreEvent& e) {
+    switch (e.ev) {
+        case StoreEv::AuditStart:
+            sAuditPhase = AuditPhase::Scanning;
+            strlcpy(sAuditStartTs, e.ts, sizeof(sAuditStartTs));
+            break;
+        case StoreEv::AuditFinish:
+            if (sAuditPhase == AuditPhase::Scanning) sAuditPhase = AuditPhase::Resolving;
+            break;
+        case StoreEv::AuditEnd:
+        case StoreEv::AuditAbandon:
+            sAuditPhase = AuditPhase::Idle;
+            sAuditStartTs[0] = 0;
+            break;
         default:
             break;
     }
@@ -454,7 +512,21 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
 
 static void applyEvent_(const StoreEvent& e) {
     applyInto_(sSpools, sByUuid, sUsage, &sProducts, e);
+    updateAuditState_(e);
     sInvDirty = true;                    // inventory recomputed lazily
+}
+
+// How many currently-tracked (non-retired, non-empty) spools were NOT seen
+// since the audit's start -- the list Resolving is working through. Assumes
+// the caller holds the lock.
+static size_t auditNotFoundCount_() {
+    if (sAuditPhase != AuditPhase::Resolving && sAuditPhase != AuditPhase::Scanning) return 0;
+    size_t n = 0;
+    for (auto& r : sSpools) {
+        if (!r.valid || r.retired || r.remaining_g <= 1.0f) continue;
+        if (strcmp(r.last_ts, sAuditStartTs) < 0) n++;
+    }
+    return n;
 }
 
 static void rebuildInventory_() {
@@ -566,6 +638,77 @@ bool storeAppendEvent(const StoreEvent& in) {
     sWriteFailed = false;
     sLogEndsNL   = true;
     applyEvent_(e);   // only once the bytes are durably on disk
+    return true;
+}
+
+// ── Physical inventory audits ──────────────────────────────────────────────────
+AuditPhase storeAuditPhase() { Lock lk; return sAuditPhase; }
+void storeAuditStartTs(char* buf, size_t buflen) { Lock lk; strlcpy(buf, sAuditStartTs, buflen); }
+
+// storeAppendEvent() takes the lock itself, so every function below only ever
+// holds `lk` for the read it needs, releases it, then appends -- never both at
+// once. Lock is non-recursive, same rule the rest of this file follows.
+static void maybeAutoEndAudit_() {
+    bool shouldEnd;
+    { Lock lk; shouldEnd = (sAuditPhase == AuditPhase::Resolving) && (auditNotFoundCount_() == 0); }
+    if (shouldEnd) { StoreEvent e; e.ev = StoreEv::AuditEnd; storeAppendEvent(e); }
+}
+
+bool storeAuditStart() {
+    { Lock lk; if (sAuditPhase != AuditPhase::Idle) return false; }
+    StoreEvent e; e.ev = StoreEv::AuditStart;
+    return storeAppendEvent(e);
+}
+
+bool storeAuditFinish() {
+    { Lock lk; if (sAuditPhase != AuditPhase::Scanning) return false; }
+    StoreEvent e; e.ev = StoreEv::AuditFinish;
+    if (!storeAppendEvent(e)) return false;
+    maybeAutoEndAudit_();   // nothing was missed at all -> resolve immediately
+    return true;
+}
+
+bool storeAuditAbandon() {
+    { Lock lk; if (sAuditPhase == AuditPhase::Idle) return false; }
+    StoreEvent e; e.ev = StoreEv::AuditAbandon;
+    return storeAppendEvent(e);
+}
+
+// Shared by Close/Found: the spool's uuid (Retire/Found are keyed on it, like
+// every other spool event), skipping anything already retired.
+static bool findAuditableSpoolUuid_(uint32_t spool, char* uuidOut, size_t uuidLen) {
+    Lock lk;
+    for (auto& r : sSpools)
+        if (r.valid && r.spool == spool && !r.retired) {
+            strlcpy(uuidOut, r.uuid, uuidLen);
+            return true;
+        }
+    return false;
+}
+
+bool storeAuditClose(uint32_t spool) {
+    char uuid[33] = {};
+    if (!findAuditableSpoolUuid_(spool, uuid, sizeof(uuid))) return false;
+    StoreEvent e;
+    e.ev = StoreEv::Retire;
+    strlcpy(e.uuid, uuid, sizeof(e.uuid));
+    e.spool = spool;
+    e.remaining_g = 0;
+    e.retired = true;
+    if (!storeAppendEvent(e)) return false;
+    maybeAutoEndAudit_();
+    return true;
+}
+
+bool storeAuditFound(uint32_t spool) {
+    char uuid[33] = {};
+    if (!findAuditableSpoolUuid_(spool, uuid, sizeof(uuid))) return false;
+    StoreEvent e;
+    e.ev = StoreEv::Found;
+    strlcpy(e.uuid, uuid, sizeof(e.uuid));
+    e.spool = spool;
+    if (!storeAppendEvent(e)) return false;
+    maybeAutoEndAudit_();
     return true;
 }
 
@@ -1090,7 +1233,11 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
             sp.has = true;
         }
 
-        if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint) {
+        // Retire is a weigh reading of 0 (see applyInto_'s own comment on this) --
+        // it must move the group total and count as consumption the same way,
+        // or a spool's absence at audit time would silently vanish from both
+        // "is this still in stock" and "how popular is it".
+        if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
             SpoolState& sp = spools[e.spool];
             if (!sp.has) { sp.has = true; sp.key = popKey_(e.vendor, e.material); }
             const float oldRem = sp.remaining;
@@ -1098,7 +1245,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
             if (qIndex.count(sp.key)) groupTotal[sp.key] += (newRem - oldRem);
             sp.remaining = newRem;
 
-            if (e.ev == StoreEv::Weigh && windowEntered) {
+            if ((e.ev == StoreEv::Weigh || e.ev == StoreEv::Retire) && windowEntered) {
                 const float delta = oldRem - newRem;   // same "consumption" test store.cpp's own rollup uses
                 if (delta > 0.05f) {
                     auto it = qIndex.find(sp.key);
@@ -1322,6 +1469,7 @@ bool storeCompact() {
         c.dia = r.dia; c.empty_g = r.empty_g; c.nom_g = r.nom_g;
         c.needs_ob = r.needs_ob;
         c.foreign  = r.foreign;   // carry ownership through the fold
+        c.retired  = r.retired;   // carry disposal status through the fold
         c.product  = r.product;
         if (!emit(encodeLine(c))) { ok = false; break; }
     }

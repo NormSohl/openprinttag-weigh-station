@@ -22,6 +22,19 @@ enum class StoreEv : uint8_t {
     Checkpoint,  // compaction summary: one spool's full state, folds its history
     Usage,       // consumption rollup for one period+vendor+material; permanent
     Product,     // upsert of a product definition; permanent (see ProductRecord)
+    // Physical inventory audits (see storeAuditStart() and friends). A spool
+    // not seen during a complete audit and confirmed gone is Retire'd rather
+    // than deleted -- its history stays for analysis, only remaining_g and
+    // `retired` change. The four Audit* events are global markers (no uuid),
+    // carrying only ts, used purely to derive which phase an audit is in.
+    Retire,        // spool confirmed disposed: remaining_g -> 0, retired = true
+    Found,         // spool confirmed present during audit resolution; touches
+                   // only last_ts, same as any other event already does
+    AuditStart,    // Idle -> Scanning
+    AuditFinish,   // Scanning -> Resolving
+    AuditEnd,      // Resolving -> Idle: every not-found spool was resolved
+    AuditAbandon,  // Scanning/Resolving -> Idle: the audit itself is dropped,
+                   // but any spool already Retire'd/Found stays that way
     Unknown
 };
 
@@ -63,6 +76,11 @@ struct StoreEvent {
     // Established on the creating Onboard; a Reconcile leaves the record's value
     // untouched, so it need not be set on propagated Reconcile events.
     bool     foreign = false;
+
+    // Confirmed physically disposed (Retire/Checkpoint only). See
+    // SpoolRecord::retired -- carried through Checkpoint so a fold never
+    // silently un-retires a spool; never set or cleared by Onboard/Reconcile.
+    bool     retired = false;
 
     // Usage rollup (Usage). `ts` holds the period as "YYYY-MM" rather than a
     // timestamp; vendor + material are the grouping key.
@@ -106,6 +124,10 @@ struct SpoolRecord {
     // tags now match the OPT reference layout byte-for-byte, this ownership fact
     // can no longer be inferred from tag bytes — it must be carried on the record.
     bool     foreign = false;
+    // Confirmed physically disposed during a physical-inventory audit. Distinct
+    // from remaining_g happening to read near zero: this is a fact about
+    // disposal, not an inference from weight. Sticky -- nothing ever clears it.
+    bool     retired = false;
     char     last_ts[25] = {};
     bool     valid = false;
 
@@ -186,6 +208,40 @@ struct MatInventory {
     float    remaining_g = 0;
     uint16_t count = 0;      // spools with meaningful remaining
 };
+
+// ── Physical inventory audits ──────────────────────────────────────────────────
+// "We weigh and scan every reel in the library; anything not seen either got
+// missed or has been thrown away, and a human has to say which for each one."
+//
+// State is derived from the log, not held only in RAM — the four Audit* marker
+// events (global, no uuid) are the only place it lives, so a reboot mid-audit
+// loses nothing: storeBegin()'s normal replay reconstructs whichever phase the
+// last marker left it in. A spool counts as "found" this audit simply by
+// having last_ts >= the audit's start time — the same field every event
+// already updates, so weighing a spool normally already satisfies it; nothing
+// about weighing itself changes.
+enum class AuditPhase : uint8_t { Idle, Scanning, Resolving };
+AuditPhase storeAuditPhase();
+// "" when Idle. Callers scan for spools with last_ts before this to build the
+// not-found list -- ISO-8601 strings compare correctly as plain strings.
+void storeAuditStartTs(char* buf, size_t buflen);
+
+bool storeAuditStart();    // Idle -> Scanning. False if not Idle.
+bool storeAuditFinish();   // Scanning -> Resolving. False if not Scanning.
+// Drops the audit itself (back to Idle) without touching anything already
+// Retire'd/Found during it -- those are real, immediate actions the moment
+// they happen, not staged until the audit completes.
+bool storeAuditAbandon();
+
+// Confirmed disposed: a consumption delta from the spool's last known weight
+// down to 0 (same path a real weigh event takes -- "we don't throw away good
+// inventory", so its absence at audit time IS the evidence it was used up),
+// remaining_g -> 0, retired -> true. Auto-transitions Resolving -> Idle
+// (AuditEnd) if this was the last unresolved spool.
+bool storeAuditClose(uint32_t spool);
+// Confirmed present without a fresh weigh (e.g. seen but not moved yet).
+// Touches only last_ts. Same auto-end behaviour as storeAuditClose().
+bool storeAuditFound(uint32_t spool);
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 // Mount LittleFS, load the NVS counter, rebuild indices from the log.

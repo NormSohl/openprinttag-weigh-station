@@ -602,6 +602,59 @@ static void handleRoot(AsyncWebServerRequest* req) {
              "<b class='ob'>Scale not calibrated.</b> Weights will be wrong until "
              "you <a href='/calibrate' style='color:#fd6'>calibrate the scale</a>.</div>";
 
+    // ── Physical inventory audit ────────────────────────────────────────────
+    // "We weigh and scan every reel in the library" -- state lives entirely in
+    // the log (storeAuditPhase() derives it), so this bar is correct even right
+    // after a reboot mid-audit. A spool counts as found simply by having been
+    // weighed since audit_start; nothing about normal weighing changes.
+    const AuditPhase auditPhase = storeAuditPhase();
+    char auditStartTs[25] = {};
+    storeAuditStartTs(auditStartTs, sizeof(auditStartTs));
+
+    uint32_t auditTotal = 0, auditFound = 0, retiredCount = 0;
+    {
+        SpoolRecord rr;
+        for (size_t i = 0; i < storeSpoolCount(); i++) {
+            if (!storeSpoolAt(i, rr)) continue;
+            if (rr.retired) { retiredCount++; continue; }
+            if (rr.remaining_g <= 1.0f) continue;
+            if (auditPhase != AuditPhase::Idle) {
+                auditTotal++;
+                if (strcmp(rr.last_ts, auditStartTs) >= 0) auditFound++;
+            }
+        }
+    }
+
+    if (auditPhase == AuditPhase::Idle) {
+        p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
+             "<p class='muted'>Weigh and scan every reel in the library. Anything not "
+             "seen by the end gets reviewed before it's marked disposed.</p>"
+             "<form method='POST' action='/api/audit/start'>"
+             "<button type='submit'>Start audit</button></form></div>";
+    } else if (auditPhase == AuditPhase::Scanning) {
+        p += "<div class='card' style='border-color:#2a5'><label style='margin-top:0'>"
+             "Audit in progress</label><p><b>" + String(auditFound) + " of " + String(auditTotal)
+           + "</b> found so far. Weigh spools as normal &mdash; each expanded row below "
+             "shows found status.</p>"
+             "<form method='POST' action='/api/audit/finish' style='display:inline'>"
+             "<button type='submit'>Finish audit</button></form> "
+             "<form method='POST' action='/api/audit/abandon' style='display:inline' "
+             "onsubmit=\"return confirm('Abandon this audit? Nothing already found is "
+             "affected, but the audit itself ends with no review.')\">"
+             "<button type='submit' class='sec'>Abandon audit</button></form></div>";
+    } else {  // Resolving
+        uint32_t notFound = auditTotal - auditFound;
+        p += "<div class='card' style='border-color:#a70'><label style='margin-top:0'>"
+             "Audit &mdash; resolving</label><p><b class='ob'>" + String(notFound)
+           + " spool(s) not found.</b> Mark each Closed (confirmed disposed) or Found "
+             "below before this audit can complete. Still weighable normally &mdash; "
+             "weighing one resolves it too.</p>"
+             "<form method='POST' action='/api/audit/abandon' "
+             "onsubmit=\"return confirm('Abandon this audit? Nothing already closed or "
+             "found is affected, but the remaining not-found spools stay unresolved.')\">"
+             "<button type='submit' class='sec'>Abandon audit</button></form></div>";
+    }
+
     int cur = currentSpool();
     if (cur > 0) {
         SpoolRecord r;
@@ -657,6 +710,13 @@ static void handleRoot(AsyncWebServerRequest* req) {
     // remaining_g > 1 g, same as m.count itself, so the row count in the
     // summary always matches the number of rows revealed underneath it —
     // showing every last near-empty spool here would make that number lie.
+    const bool showRetired = req->hasParam("retired");
+    p += "<p class='muted'>" + String(retiredCount) + " spool(s) retired &mdash; "
+       + (showRetired
+           ? "<a href='/' style='color:#8f8'>hide</a>"
+           : "<a href='/?retired=1' style='color:#8f8'>show</a>")
+       + "</p>";
+
     p += "<h3>Inventory</h3><table>"
          "<tr><th style='width:2em'></th><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
@@ -666,27 +726,59 @@ static void handleRoot(AsyncWebServerRequest* req) {
         if (!storeInventoryAt(i, m)) continue;
         String label = m.vendor[0] ? String(m.vendor) + " " + m.material : String(m.material);
         String rowId = "inv-detail-" + String((unsigned)i);
-        p += "<tr class='inv-row' onclick=\"var d=document.getElementById('" + rowId + "');"
-             "var open=d.style.display=='table-row';d.style.display=open?'none':'table-row';"
-             "this.querySelector('.arrow').textContent=open?'\\u25b8':'\\u25be'\">"
-             "<td class='muted'><span class='arrow'>&#9656;</span></td><td>"
-           + swatch(m.rgba) + esc(label.c_str()) + "</td><td>" + String(m.count)
-           + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
 
-        p += "<tr id='" + rowId + "' style='display:none'><td></td><td colspan='3'>"
-             "<table style='margin:2px 0 10px'><tr><th>Spool #</th><th>Remaining</th><th></th></tr>";
+        // Build the detail rows first so the summary row above them can carry
+        // a "not found" badge -- needs to know before it renders, not after.
+        String detail = "<table style='margin:2px 0 10px'><tr><th>Spool #</th>"
+                         "<th>Remaining</th><th></th></tr>";
+        uint32_t bucketNotFound = 0;
         SpoolRecord r;
         size_t sn = storeSpoolCount();
         for (size_t k = 0; k < sn; k++) {
             if (!storeSpoolAt(k, r)) continue;
-            if (r.remaining_g <= 1.0f) continue;
             if (strcmp(r.vendor, m.vendor) != 0 || strcmp(r.material, m.material) != 0) continue;
-            p += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
-               + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>"
-               + String(r.remaining_g, 0) + " g</td><td>"
-               + (r.needs_ob ? "<span class='ob'>needs onboarding</span>" : "") + "</td></tr>";
+            if (r.retired) {
+                if (!showRetired) continue;
+                detail += "<tr style='opacity:.6'><td><a href='/spool?id=" + String((unsigned)r.spool)
+                        + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>0 g</td>"
+                          "<td class='muted'>retired</td></tr>";
+                continue;
+            }
+            if (r.remaining_g <= 1.0f) continue;
+            const bool found = (auditPhase == AuditPhase::Idle) ||
+                                (strcmp(r.last_ts, auditStartTs) >= 0);
+            if (!found) bucketNotFound++;
+            detail += "<tr><td><a href='/spool?id=" + String((unsigned)r.spool)
+                     + "' style='color:#8f8'>#" + String((unsigned)r.spool) + "</a></td><td>"
+                     + String(r.remaining_g, 0) + " g</td><td>";
+            if (r.needs_ob) detail += "<span class='ob'>needs onboarding</span> ";
+            if (auditPhase == AuditPhase::Scanning) {
+                detail += found ? "<span style='color:#8f8'>found</span>"
+                                : "<span class='muted'>not yet found</span>";
+            } else if (auditPhase == AuditPhase::Resolving && !found) {
+                detail += "<form method='POST' action='/api/audit/close' style='display:inline' "
+                           "onsubmit=\"return confirm('Confirm spool #" + String((unsigned)r.spool)
+                         + " is disposed? This cannot be undone.')\">"
+                           "<input type='hidden' name='spool' value='" + String((unsigned)r.spool) + "'>"
+                           "<button type='submit' style='background:#522;color:#eee;margin:0;padding:4px 10px;"
+                           "font-size:13px;border-radius:4px;border:0;cursor:pointer'>Close</button></form> "
+                           "<form method='POST' action='/api/audit/found' style='display:inline'>"
+                           "<input type='hidden' name='spool' value='" + String((unsigned)r.spool) + "'>"
+                           "<button type='submit' style='margin:0;padding:4px 10px;font-size:13px'>Found</button>"
+                           "</form>";
+            }
+            detail += "</td></tr>";
         }
-        p += "</table></td></tr>";
+        detail += "</table>";
+
+        p += "<tr class='inv-row' onclick=\"var d=document.getElementById('" + rowId + "');"
+             "var open=d.style.display=='table-row';d.style.display=open?'none':'table-row';"
+             "this.querySelector('.arrow').textContent=open?'\\u25b8':'\\u25be'\">"
+             "<td class='muted'><span class='arrow'>&#9656;</span></td><td>"
+           + swatch(m.rgba) + esc(label.c_str())
+           + (bucketNotFound ? " <span class='ob'>(" + String(bucketNotFound) + " not found)</span>" : "")
+           + "</td><td>" + String(m.count) + "</td><td>" + String(m.remaining_g, 0) + " g</td></tr>";
+        p += "<tr id='" + rowId + "' style='display:none'><td></td><td colspan='3'>" + detail + "</td></tr>";
     }
     p += "</table>";
     p += "<p class='muted'>" + String((unsigned)storeSpoolCount())
@@ -714,10 +806,42 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
            // null, not 0: a spool predating products has no product, which is
            // not the same as belonging to product zero.
            + ",\"product\":" + (r.product ? String((unsigned)r.product) : String("null"))
-           + ",\"needs_onboarding\":" + (r.needs_ob ? "true" : "false") + "}";
+           + ",\"needs_onboarding\":" + (r.needs_ob ? "true" : "false")
+           + ",\"retired\":" + (r.retired ? "true" : "false") + "}";
     }
     j += "]";
     req->send(200, "application/json", j);
+}
+
+// ── Physical inventory audit ────────────────────────────────────────────────
+static void handleApiAuditStart(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    storeAuditStart();
+    req->redirect("/");
+}
+static void handleApiAuditFinish(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    storeAuditFinish();
+    req->redirect("/");
+}
+static void handleApiAuditAbandon(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    storeAuditAbandon();
+    req->redirect("/");
+}
+static void handleApiAuditClose(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* ps = req->getParam("spool", true);
+    if (!ps) { req->send(400, "text/plain", "missing spool"); return; }
+    storeAuditClose((uint32_t)ps->value().toInt());
+    req->redirect("/");
+}
+static void handleApiAuditFound(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* ps = req->getParam("spool", true);
+    if (!ps) { req->send(400, "text/plain", "missing spool"); return; }
+    storeAuditFound((uint32_t)ps->value().toInt());
+    req->redirect("/");
 }
 
 // ── Products ──────────────────────────────────────────────────────────────────
@@ -2546,6 +2670,11 @@ void webAppBegin() {
     sServer.on("/",            HTTP_GET,  handleRoot);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
+    sServer.on("/api/audit/start",   HTTP_POST, handleApiAuditStart);
+    sServer.on("/api/audit/finish",  HTTP_POST, handleApiAuditFinish);
+    sServer.on("/api/audit/abandon", HTTP_POST, handleApiAuditAbandon);
+    sServer.on("/api/audit/close",   HTTP_POST, handleApiAuditClose);
+    sServer.on("/api/audit/found",   HTTP_POST, handleApiAuditFound);
     sServer.on("/products",     HTTP_GET,  handleProducts);
     sServer.on("/product",      HTTP_GET,  handleProductDetail);
     sServer.on("/api/products", HTTP_GET,  handleApiProducts);
