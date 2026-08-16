@@ -61,7 +61,7 @@ struct OptMain {
 
     // ── Verbatim passthrough of Main keys this firmware does not model ────────
     //
-    // We encode 16 of the spec's 61 Main keys. Without this, rewriting Main on a
+    // We encode 20 of the spec's 61 Main keys. Without this, rewriting Main on a
     // compliant vendor tag would DESTROY every other field it carried — GTIN,
     // the four UUIDs, manufactured and expiry dates, density, drying and chamber
     // temperatures, certifications, RAL reference, secondary colours — silently
