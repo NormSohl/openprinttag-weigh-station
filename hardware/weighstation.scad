@@ -8,7 +8,8 @@
 //   adapter screw holes added (matches porch-tft-adapter.scad).
 //   plat_gap 2->5: raises the platform so it clears the adapter's top
 //   edge (with plate_y=63) — boss grows ~3mm (see fastener note).
-//   VERIFY the reinforcement in a render and tune to the physical fix.
+//   Reinforcement render- and print-verified 2026-08-16 — see
+//   printed-parts-issues.md.
 // =============================================================
 // Parts: set `part` below (or via -D part="...") and export STL.
 //   "platform"  — weighing disc + antenna pocket (prints top-face-down)
@@ -407,8 +408,12 @@ module base() {
   //   - forward (+X) buttress toward the free end, capped lc_beam_gap
   //     below the bar (z = lc_boss_h - lc_beam_gap) so the beam still
   //     deflects freely.
-  // Only the load-cell beam should move. VERIFY in a render (expect
-  // Volumes: 1) and tune the params.
+  // Only the load-cell beam should move. Render-verified 2026-08-16:
+  // `openscad -D part="base" --render` reports Simple: yes, Volumes: 2 --
+  // a single connected solid (CGAL's Nef count always includes the
+  // unbounded exterior as an extra volume, so 2 is correct for one real
+  // part, not 1 -- see printed-parts-issues.md). Buttress-to-post
+  // clearance ~16.5mm, computed from lc_x0/lc_len/lc_boss_fwd above.
   lc_boss_ext  = 10;   // rearward (-X) extension (full height)
   lc_boss_fwd  = 15;   // forward (+X) extension toward the free end
   lc_boss_wide = 3;    // extra width per ±Y side

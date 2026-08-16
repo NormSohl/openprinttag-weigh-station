@@ -49,6 +49,17 @@ compliant element in the load path. Cross-ref the load-cell install guide
 ([`docs/datasheets/load-cell-install-guide.md`](../docs/datasheets/load-cell-install-guide.md))
 — "force direction perpendicular, rigid mount" — satisfied.
 
+**Render-verified (2026-08-16, OpenSCAD 2021.01, headless):** `openscad -D
+part="base" --render` reports `Simple: yes`, `Volumes: 2` — a single
+connected manifold solid, not the disconnected-sheet failure this note
+originally warned about. (The "expect Volumes: 1" comment above was itself
+wrong: CGAL's Nef-polyhedron count always includes the unbounded exterior as
+an extra volume, confirmed by rendering a plain merged two-cube test case
+alongside a genuinely disconnected one — a single real part always reports
+2, not 1.) Buttress-to-post clearance computed directly from the SCAD
+variables (`lc_x0=-27.5`, buttress far edge at X=1.5, overload-stop post
+near edge at X=18): **16.5 mm**, matching the "~16 mm" estimate.
+
 ---
 
 ## 2. Porch TFT adapter — window size and pocket depth
@@ -86,3 +97,9 @@ lip, adds 10 mm of wall to house the soldered header). The design now
 - Screws pass through 15 mm of plate now — use M3×20+ (noted in the SCAD
   header). Confirmed on the printed part.
 - Printed and test-fit against the board and bezel — fits as designed.
+
+**Render-verified (2026-08-16, OpenSCAD 2021.01, headless):** `openscad
+--render` reports `Simple: yes`, `Volumes: 2` (single connected solid, same
+CGAL convention as the base part above). `win_x`/`win_y`/`pocket_clr`/
+`plate_t`/`pocket_d`/`plate_y`/`sd_slot_offset`/`sd_slot_w` all confirmed
+present in the SCAD exactly as described above.
