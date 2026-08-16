@@ -1439,6 +1439,28 @@ bool storeCompact() {
         if (!emit(encodeLine(x))) { ok = false; break; }
     }
 
+    // Audit state, same reasoning as Products above: re-emitted from the LIVE
+    // sAuditPhase/sAuditStartTs, not carried through the fold. The four Audit*
+    // markers have no uuid, so applyInto_()'s fold replay (which only ever
+    // touches spool-keyed records) silently drops them -- without this, an
+    // audit mid-flight when compaction runs would revert to Idle on the next
+    // reboot, discarding the audit's progress bookkeeping (though not any
+    // spool already Retire'd/Found -- those are independent, already-durable
+    // events). Confirmed on hardware: compact + reboot lost a Scanning audit
+    // before this fix.
+    if (ok && sAuditPhase != AuditPhase::Idle) {
+        StoreEvent x;
+        x.ev = StoreEv::AuditStart;
+        strlcpy(x.ts, sAuditStartTs[0] ? sAuditStartTs : "1970-01-01T00:00:00Z", sizeof(x.ts));
+        if (!emit(encodeLine(x))) ok = false;
+        if (ok && sAuditPhase == AuditPhase::Resolving) {
+            StoreEvent y;
+            y.ev = StoreEv::AuditFinish;
+            strlcpy(y.ts, x.ts, sizeof(y.ts));
+            if (!emit(encodeLine(y))) ok = false;
+        }
+    }
+
     // Usage next: it is independent of spool state, and putting it at the head
     // keeps it obvious in an exported file.
     if (ok) for (const auto& u : foldUsage) {
