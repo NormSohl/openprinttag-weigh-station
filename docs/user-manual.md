@@ -27,7 +27,7 @@ The 3.5" screen shows one of these, depending on what's happening:
 |---|---|
 | <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Idle, ready** — place a spool to begin |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing** — reading the load cell |
-| <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Saved locally"> | **Done** — spool number, material, and remaining weight recorded locally |
+| <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done** — spool number, material, and remaining weight recorded locally |
 | <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered** — scan the QR or visit the **Onboard** page to fill in the material details (see *New Spools* below) |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
@@ -83,10 +83,20 @@ right away if the spool is still on the scale, or the next time it's placed.
 
 1. With the spool on the scale, browse to `http://weighstation.local/` on any
    phone or laptop on the same network.
-2. Open **Onboard**. Pick the **vendor**, **material**, **color**, and **spool
-   profile** (the profile fills in the empty-spool tare and nominal weight). You
-   can also capture the tare from a matching empty spool with **Capture tare**.
-3. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
+2. Open **Onboard**. If this is another spool of something already on file,
+   pick **another spool of X** — it inherits the vendor, material, colour and
+   tare with nothing to retype. For something new, choose **a new product**.
+3. **Search the catalog first.** Typing a vendor or material name searches the
+   published OpenPrintTag catalog directly; picking a real result fills in the
+   brand, material, colour, print temperatures, and the manufacturer's own
+   identifiers — the same data a genuine vendor tag carries. If the filament
+   isn't in the catalog, expand **Enter details manually** and pick the
+   **vendor**, **material**, **color**, and **spool profile** (the profile
+   fills in the empty-spool tare and nominal weight) from the lab's own lists.
+   Any of those four fields has a **+ Add new** option if it isn't in the list
+   yet — no need to visit Settings first to add it. You can also capture the
+   tare from a matching empty spool with **Capture tare**.
+4. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
    weights) is written to the tag and the record is saved.
 
 ### Applying an NFC tag to a new spool
@@ -148,7 +158,7 @@ calibrated"** until you do this:
 <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code">
 
 1. With the spool on/off as directed, browse to `http://weighstation.local/` and
-   open **Calibrate**.
+   open **Settings → Calibrate**.
 2. **Step 1 — Zero:** clear the scale, then click **Zero (tare)**.
 3. **Step 2 — Calibrate:** place a known weight, type its exact mass in grams,
    then **Set calibration**.
@@ -164,14 +174,78 @@ still work as a fallback.)
 
 `http://weighstation.local/` provides:
 
-- **Inventory** — remaining filament by material; the spool currently on the scale.
-- **Spools** — the full list; click a spool for its weigh history + a remaining-over-time sparkline (with CSV export).
-- **Onboard** — fill in details for a new/blank spool.
-- **Usage** — how much filament the lab actually consumes, per material and per month; CSV download.
-- **Reorder** — standard-stock items at or below threshold; download a CSV to place the order.
-- **Config** — edit the vendor/material/color/spool-profile/stock-item tables.
-- **Backup** — download the event log; restore from an uploaded backup.
-- **Calibrate** — the scale calibration workflow above.
+- **Inventory** — remaining filament by material, grouped by vendor. Click a
+  row to expand it and see the individual spools, or a spool number to open
+  its weigh history + a remaining-over-time sparkline (with CSV export). This
+  is also where a physical stock **audit** is started — see below.
+- **Onboard** — fill in details for a new/blank spool, or add another spool of
+  something already on file.
+- **Reorder** — Stock List items at or below threshold; download a CSV to
+  place the order.
+- **Stock List** (`/stock`) — the curated list of what the lab keeps in stock,
+  each with a 90-day popularity score, sorted so the least-popular (or
+  never-in-stock) items surface first — see *Deciding what to stock* below.
+- **Usage** — the lab's permanent consumption record: how much filament has
+  gone through the station, per material, broken down by year and by month,
+  all-time; CSV download. (For deciding what belongs on the Stock List, prefer
+  the Stock List page's popularity score — it corrects for spools that sold
+  out early, which this page's plain totals do not.)
+- **Settings** — edit the vendor/material/color/spool-profile/stock-item
+  tables, set the WiFi/API-key, choose the display timezone and 12/24-hour
+  clock format, rename the station (the idle screen's greeting — "Seattle
+  Makers" by default, but any lab running this can make it their own), and
+  reach **Calibrate**.
+- **Backup** — download the event log; restore from an uploaded backup. Also
+  where the separate Settings-table backup lives (see *Recalibrating /
+  backups* below).
+
+A product's own edit page (`/product?id=N`) isn't in the top nav — reach it by
+clicking a spool's material name on its detail page. Editing there updates
+every spool of that product and rewrites their tags automatically the next
+time each is placed on the scale.
+
+### Physical inventory audits
+
+Periodically (e.g. a monthly shelf count), do a physical audit: weigh and scan
+every spool the lab actually has, and let the station reconcile what wasn't
+seen.
+
+1. On the **Inventory** page, click **Start audit**. Spools weighed from this
+   point on are marked found automatically — no separate step needed for
+   normal weighing during the count.
+2. When every spool has been physically checked, click **Finish audit**. The
+   page now lists each spool that was never seen during the count, with two
+   buttons per row:
+   - **Found** — it's on the shelf but wasn't weighed (e.g. you eyeballed it
+     without placing it on the scale). No weight change.
+   - **Close** — it's genuinely gone. The station records its last known
+     weight as consumed (the same as a normal weigh-to-zero) and marks it
+     **retired**.
+3. Every not-found spool must be resolved one of these two ways before the
+   audit finishes — there's no way to leave some undecided. Once the last one
+   is resolved, the audit closes itself; there's no separate "finish resolving"
+   button.
+4. **Abandon audit** drops the audit at any point without undoing anything
+   already marked Found or Closed.
+
+**Retired spools are not deleted.** They stay in the inventory history (their
+consumption still counts toward Usage and Stock List popularity) but are
+hidden from the normal Inventory view by default — a count next to a
+**show/hide** toggle reveals them. If a spool marked retired is later found
+and weighed again, it's automatically un-retired and rejoins normal tracking
+with no extra step.
+
+### Deciding what to stock
+
+The **Stock List** page (`/stock`) is where the lab's day-to-day
+"what do we keep buying" decisions happen — it's a curated list, not a
+snapshot of everything currently on the shelf (that's Inventory). Each entry
+shows a **popularity score**: grams consumed over the trailing 90 days,
+corrected so a material that sold out early in that window isn't scored as
+if it sat unused the rest of the time. The list sorts lowest-popularity (and
+never-in-stock) first, since those are the candidates to reconsider. A
+material can be in the lab's inventory without being on the Stock List at
+all — that's normal for something being phased out, not an error.
 
 ### Changing the WiFi network
 
@@ -192,7 +266,7 @@ clears WiFi credentials.)
 
 ### Recalibrating / backups
 
-Recalibrate any time via the **Calibrate** page.
+Recalibrate any time via **Settings → Calibrate**.
 
 **Back up by downloading the event log** from the **Backup** page — that one
 file is the whole backup. It carries current spool state *and* the permanent
@@ -213,6 +287,14 @@ older than the retained tail — so if you want the complete weigh-by-weigh
 record long-term, download the log periodically. The **Backup** page shows the
 current log size and warns you if writes ever start failing.
 
+**The Settings tables (vendors/materials/colors/spool-profiles/Stock List)
+back up separately**, also from the **Backup** page: they download and
+restore as their own file, independent of the event log. Nothing in a spool's
+record points back into these tables by ID, so the two backups don't need to
+be kept in sync — and the Settings-only file is also the quick way to hand a
+second station the lab's picklists without dragging along this one's spool
+history.
+
 ---
 
 ## For Administrators: HTTP API
@@ -229,8 +311,11 @@ Read-only endpoints are open, so nothing needs configuring first:
 |---|---|
 | `/usage.csv` | Consumption per month per vendor + material — a spreadsheet file |
 | `/export` | The complete event log (the same file the Backup page downloads) |
+| `/config/export` | The Settings tables as one file (the separate backup mentioned above) |
 | `/api/status` | Everything at a glance: what the station is doing, what's on the scale, WiFi, storage health |
 | `/api/spools` | Every spool and its remaining filament, as JSON |
+| `/api/products` | Every product (filament SKU) the station knows about |
+| `/api/stock` | The Stock List with each item's 90-day popularity score |
 | `/api/usage` | The same data as `/usage.csv`, as JSON |
 
 Automated monthly consumption pull:
@@ -260,7 +345,7 @@ By default **anything on the network can change the station** — onboard spools
 edit the config tables, recalibrate the scale, replace the event log, reset
 WiFi. On a trusted lab network that's usually fine and keeps things simple.
 
-To require a password for those actions, set an **API key** on the **Config**
+To require a password for those actions, set an **API key** on the **Settings**
 page (bottom of the page, *API access*). Reading stays open; only changes need
 the key. The web app will prompt you for it the first time you save something.
 
@@ -328,8 +413,8 @@ understand, and reformatting is irreversible.
 
 ### Scale reads zero or wildly wrong values
 
-- Recalibrate: open **Calibrate**, **Zero** with the platform clear, then
-  **Set calibration** with a known weight.
+- Recalibrate: open **Settings → Calibrate**, **Zero** with the platform clear,
+  then **Set calibration** with a known weight.
 - Check that the load cell wiring hasn't shifted (particularly E+ / E− polarity).
 
 ### Display is blank
