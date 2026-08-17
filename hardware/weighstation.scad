@@ -105,6 +105,19 @@ base_w   = 140;
 base_h   = 60;
 wall     = 3;
 corner_r = 8;
+// Target width of the wall remaining around the deck once it's actually
+// installed (the deck rebate ledge's own inset, in base(), PLUS the
+// deck plate's 0.3mm fit clearance beyond that ledge -- see both use
+// sites). Was an uncancelled wall+0.3=3.3mm; set to exactly `wall` on
+// request so the deck's real edge measures the same 3mm as the general
+// wall thickness. Global, not local to base() or deck(), because both
+// modules need the identical number and are otherwise independent.
+deck_edge_w = wall;
+// Same idea, for the porch faceplate: disp_rim_w (below, near the
+// display-opening variables) is set to porch_edge_w-0.3 so the
+// faceplate's own installed edge also lands on exactly `wall`, matching
+// the deck's treatment above.
+porch_edge_w = wall;
 
 // ------------- electronics tray mounting -------------
 pcb_l = 80;  pcb_w = 50;   // tray fits the -Y half, clear of the central load-cell band
@@ -141,14 +154,50 @@ usb_w = 12;  usb_h = 7;            // rear cutout for USB-C breakout module
 // carrying the display on its sloped face, angled at the user.
 porch_len = 45;                    // how far the wedge extends (also = height drop @45)
 
-// Display opening through the slope wall: inset 15mm/side from the
-// adapter outline -> 110 (V) x 37 (U), centred on the face.
-disp_open_w = 110;                 // face-width (V) extent
-disp_open_u = 37;                  // up-slope   (U) extent
-disp_open_r = 3;                   // corner radius
-// Adapter screw pattern (matches porch-tft-adapter.scad hole_x/y_half):
-disp_screw_v = 60;                 // +-60 along face width (V)
-disp_screw_u = 23.5;               // +-23.5 along slope    (U)
+// Display opening through the slope wall -- large cutout, only a 1mm
+// structural rim left at the true outer edge; a thin faceplate
+// (porch-tft-faceplate.scad) drops in flush with the outer face and is
+// held by 4 corner screws into heat-set-insert bosses that project
+// sideways from the porch's own real side walls -- not a wall behind the
+// opening, so display wiring keeps a clear path through to the main
+// cavity. Replaces the old flush-mounted porch-tft-adapter.scad, which
+// covered nearly the whole face and fastened with long through-bolts into
+// nuts fished through the wiring passage.
+//
+// The wall here measures exactly 3mm perpendicular to the slope (= wall,
+// by design -- porch_drop below is wall*sqrt(2)), which is why the
+// shoulder this opening implies has no separate load-bearing floor: a
+// recess deep enough for the faceplate to sit flush (3mm) is the full
+// wall thickness. The 4 corner screws carry 100% of the retention load;
+// the opening's edge only registers the plate, it doesn't bear it.
+// U (up-slope, the rotated local X after rotate([0,-45,0])) runs ALONG
+// THE SLOPE SURFACE, not along the pre-rotation horizontal run -- it's a
+// rigid rotation, so the true available U length is the wedge's own
+// diagonal edge, porch_len*sqrt(2) (~63.6mm), not porch_len (45) itself.
+// Got this backwards on the first pass here: sized disp_open_u from
+// porch_len directly (43mm), which is SHORTER than the display's own
+// bezel window (win_y=56 in porch-tft-adapter.scad) -- the display
+// couldn't have physically fit through it. The OLD disp_open_u=37 never
+// exposed this, because the old adapter mounted proud on the outside with
+// its own independent bezel plane; the wall hole only ever needed to
+// clear the header/wires behind it, not the viewing area.
+// disp_rim_w is the CUTOUT's own rim, not the faceplate's final
+// installed edge -- the faceplate itself is 0.6mm smaller than the
+// cutout (0.3mm fit clearance per side, see porch-tft-faceplate.scad's
+// plate_v/plate_u), so its real edge lands 0.3mm further out than this.
+// Solving rim+0.3 = porch_edge_w (global, top of file) gives the -0.3
+// here -- on request, so the faceplate's final edge measures exactly
+// porch_edge_w (3mm), the same treatment given to the deck's edge.
+// disp_open_w/disp_open_u below (and everything that depends on them --
+// disp_boss_u/v, and porch-tft-faceplate.scad's own copies) shift with
+// it automatically.
+disp_rim_w    = porch_edge_w - 0.3;             // 2.7 -- cutout's own rim
+disp_slope_len = porch_len * sqrt(2);           // 63.64 -- true diagonal run
+disp_open_w   = base_w        - 2*disp_rim_w;   // 134.6   -- face-width (V)
+disp_open_u   = disp_slope_len - 2*disp_rim_w;  // 58.2396 -- up-slope   (U)
+disp_open_r   = corner_r - 1;               // 7 -- matches the deck's own corner radius, for visual consistency
+disp_boss_v   = disp_open_w/2 - 6;         // 61.3    -- corner boss position, face-width
+disp_boss_u   = disp_open_u/2 - 6;         // 23.1198 -- corner boss position, up-slope
 
 // ---------------- overload stop ----------------
 stop_bolt_d = 5;                   // M5 set bolt under free end
@@ -285,36 +334,10 @@ module base() {
                    [porch_x0 - porch_len, base_h - porch_len],
                    [porch_x0 - porch_len, 0]]);
 
-      // Small fillet at the bottom of the front-corner crevice. rrect()'s
-      // corner arc is TANGENT to the porch wedge's exposed front face at
-      // (porch_x0, base_w/2-corner_r) -- the arc is centred at
-      // (porch_x0+corner_r, base_w/2-corner_r), so at X=porch_x0 its
-      // tangent direction is vertical, exactly matching the porch's flat
-      // face there. A tangent meeting closes to zero width at that one
-      // point, which is a real void everywhere except the mathematical
-      // point itself -- no nozzle can resolve that, so it prints as a
-      // hairline crack (issue #4, printed-parts-issues.md). The crescent
-      // above/beside the cusp is deliberate (the look this corner is
-      // supposed to have) and stays untouched -- only the cusp itself gets
-      // a small radius, just enough to give it a printable minimum width.
-      //
-      // Centred at X=porch_x0+fillet_r, NOT on the boundary itself: the
-      // porch wedge's TOP edge is a 45-degree slope (its solid only
-      // reaches full height base_h exactly AT X=porch_x0, receding forward
-      // 1mm in Z for every 1mm forward in X past it). A cylinder centred
-      // ON X=porch_x0 straddles that boundary and pokes a stub through the
-      // receding slope near the rim -- caught visually before printing.
-      // Keeping the full cylinder at X >= porch_x0 (tangent to the
-      // boundary, not crossing it) stays entirely on the shell/void side,
-      // where nothing recedes with height, so it can safely run the full
-      // base_h without ever exceeding the porch's own envelope.
-      fillet_r = 1.5;
-      for (sy = [-1, 1])
-        translate([porch_x0 + fillet_r, sy*(base_w/2 - corner_r), 0])
-          cylinder(r=fillet_r, h=base_h);
-
-      // (ALL interior bosses — load cell, overload stop, tray, deck
-      // columns — are added AFTER the difference below. Inside this union
+      // (The front-corner fillet used to be added HERE. Moved below, after
+      // the difference() -- see that comment for why. ALL interior bosses
+      // — load cell, overload stop, tray, deck columns — are added AFTER
+      // the difference below for the identical reason. Inside this union
       // the full-height main cavity void would erase them, since they sit
       // within the cavity footprint. Only the shell + porch wedge, which
       // the cavity is meant to hollow, belong in here.)
@@ -325,9 +348,19 @@ module base() {
     // --- main cavity (open-topped; deck is a separate drop-in part) ---
     translate([0,0,wall])
       rrect(base_l - 2*wall - 5, base_w - 2*wall - 5, base_h, corner_r-1);
-    // deck rebate ledge
+    // deck rebate ledge. Inset is deck_edge_w-0.3, not the bare `wall`
+    // it used to be: the deck plate itself is cut 0.6mm smaller than
+    // whatever this ledge opening is (0.3mm fit clearance per side, see
+    // deck()'s own rrect a few hundred lines down), so the deck's own
+    // installed edge lands 0.3mm further out than this ledge's inset.
+    // Solving inset+0.3 = deck_edge_w gives the -0.3 here -- on request,
+    // to make the deck's final edge measure exactly deck_edge_w (3mm),
+    // matching the general wall thickness cleanly instead of the 3.3mm
+    // it worked out to before (wall + the fit clearance, uncancelled).
+    // deck_edge_w itself is global (top of file) -- deck()'s own plate
+    // rrect needs the identical number and can't see a local here.
     translate([0,0,base_h-wall])
-      rrect(base_l - 2*wall, base_w - 2*wall, wall+eps, corner_r-1);
+      rrect(base_l - 2*(deck_edge_w-0.3), base_w - 2*(deck_edge_w-0.3), wall+eps, corner_r-1);
 
     // --- porch cavity (inner hollow, OPEN toward main cavity) ---
     // The inner ceiling follows the true 45-deg slope up to JUST UNDER
@@ -386,22 +419,30 @@ module base() {
                base_h - 15])
       rotate([90,0,0]) cylinder(d=10, h=4*wall, center=true);
 
-    // --- UI cutouts on the 45-degree face ---
-    // Single TFT display opening + 4 adapter screw holes, centred on the
-    // face. Cut through the slope wall from the face center point.
+    // --- UI cutout on the 45-degree face ---
+    // Large display opening, cut through the slope wall from the face
+    // center point. The old design's separate 4x adapter screw
+    // clearance holes are gone -- the new faceplate mounts to corner
+    // bosses inside the cavity instead (see the interior-bosses section
+    // below), not through-bolts into nuts.
     // V = face width (world Y); U = up-slope (local X after the -45 tilt).
-    translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2]) {
-      // Display opening (inset 15mm/side from the adapter outline)
+    //
+    // Z-depth is deliberately TIGHT (wall+1, i.e. 0.5mm past the wall on
+    // each side) -- NOT the old small hole's blind 4*wall/-2*wall
+    // over-cut. That much overshoot was harmless when this was a small
+    // hole centred well clear of anything else, but this opening now
+    // reaches within a couple mm of the front-corner fillet (issue #4,
+    // printed-parts-issues.md) in world space -- a hand check on the
+    // corner nearest the fillet found only ~0.5mm of clearance between
+    // the OLD 6mm-deep overcut and the fillet cylinder at their closest
+    // approach. Left alone, that plausibly eats into the fillet or the
+    // corner's own wall material rather than stopping cleanly at the
+    // porch's 3mm wall -- reported back as a hairline crack and a hole at
+    // the top edge. Confirm with a render after this change.
+    translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2])
       rotate([0, -45, 0])
-        translate([0, 0, -2*wall])
-          rrect(disp_open_u, disp_open_w, 4*wall, disp_open_r);
-      // 4x M3 adapter screw clearance holes (Ø3.4; nuts inside the porch
-      // cavity). Match porch-tft-adapter.scad's ±60 (V) × ±23.5 (U).
-      for (sv = [-1, 1], su = [-1, 1])
-        translate([0, sv*disp_screw_v, 0]) rotate([0, -45, 0])
-          translate([su*disp_screw_u, 0, 0])
-            cylinder(d=3.4, h=4*wall, center=true);
-    }
+        translate([0, 0, -wall - 0.5])
+          rrect(disp_open_u, disp_open_w, wall + 1, disp_open_r);
 
     // --- floor cuts (these stay in the difference: they cut the shell) ---
     // overload stop adjustment bore through the floor: the post's own
@@ -424,6 +465,70 @@ module base() {
   // These all sit inside the main-cavity footprint, so they must be
   // unioned with the hollowed shell rather than placed in the difference
   // (where the cavity void would erase them). Each carries its own bore.
+
+  // Fillet at the front-corner crevice, sized and placed from the ACTUAL
+  // wall geometry rather than the idealised 2D arc-vs-square-corner
+  // picture. rrect()'s corner arc is TANGENT to the porch wedge's
+  // exposed front face at (porch_x0, base_w/2-corner_r) in that
+  // idealised picture -- but tracing the real cross-section (with the
+  // porch cavity's own cut factored in) found the true gap is Z-varying
+  // and, through most of the case's height, far wider than that single
+  // tangent point suggests: the porch cavity's ceiling recedes along a
+  // line PARALLEL to the wedge's own roof (X = Z-155.757 vs the wedge's
+  // X = Z-160), leaving only a 4.243mm sliver of the wedge's own rear
+  // wall standing, and that sliver's position slides with Z. The gap
+  // between it and the shell's own arc is 55.757-Z, i.e. ~42mm at the
+  // bottom of the sloped region, narrowing to 0 only around Z=55.757.
+  //
+  // Fix: instead of chasing that Z-varying boundary, anchor the fillet
+  // where two fixed planes meet: X = porch_x0 (the porch's own back
+  // face) and Y = base_w/2-wall-2.5 = 64.5 (the inside wall of the case
+  // -- the same plane the porch cavity's own width is centred against,
+  // "porch and body side walls are flush ... both at +-64.5"). Y=64.5 is
+  // exactly where the porch cavity's own Y-extent ends, so just past it
+  // the wedge's material is no longer cut by the cavity at all and
+  // meets the shell arc for real, not just in the idealised model.
+  // Confirmed by cross-section at several Z: this position closes the
+  // connection to the main wall solidly; a small remaining notch toward
+  // the disconnected wedge sliver shrank further after bumping the
+  // radius from 1.5 to 2.0mm (diameter 3mm -> 4mm).
+  //
+  // Two more cuts, both found necessary by direct review of a front
+  // render after the above: at this size and position the fillet's
+  // full-height cylinder pokes THROUGH the porch's own sloped face (it
+  // has no notion of the 45-degree roof) and into the shallow recess the
+  // display faceplate sits flush in.
+  //   1. Intersected with a half-space in the SAME rotated frame the
+  //      display cutout uses (translate to the porch's own pivot, then
+  //      rotate([0,-45,0])) -- in that frame local Z<=0 is "behind the
+  //      outer face" (0 = outer face, matching the cutout's own
+  //      convention), so a large slab spanning local Z from -2000 to 0
+  //      keeps only the part of the fillet on the solid side of the
+  //      roof, slicing off anything poking past it.
+  //   2. The exact same rrect(disp_open_u, disp_open_w, wall+1,
+  //      disp_open_r) cut used to make the real display opening (same
+  //      translate+rotate, same numbers) is subtracted from the fillet
+  //      too -- guarantees the fillet can never occupy space the plate's
+  //      own recess also occupies, without hand-picking a second set of
+  //      boundary numbers that could drift out of sync with the real
+  //      cutout.
+  fillet_r = 2.0;
+  fillet_wall_y = base_w/2 - wall - 2.5; // 64.5
+  for (sy = [-1, 1])
+    difference() {
+      intersection() {
+        translate([porch_x0, sy*fillet_wall_y, 0])
+          cylinder(r=fillet_r, h=base_h);
+        translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2])
+          rotate([0, -45, 0])
+            translate([-1000, -1000, -2000])
+              cube([2000, 2000, 2000]);
+      }
+      translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2])
+        rotate([0, -45, 0])
+          translate([0, 0, -wall - 0.5])
+            rrect(disp_open_u, disp_open_w, wall + 1, disp_open_r);
+    }
 
   // load cell fixed-end boss + cradle walls + M5 heat-set insert in top.
   // The M5 SHCS comes down through the load cell hole and the spacer pad
@@ -510,6 +615,83 @@ module base() {
         translate([0, 0, base_h - 3*wall - m3_ins_l])
           cylinder(d=m3_ins_d, h=m3_ins_l + eps);
       }
+
+  // porch display faceplate — 4 corner bosses for M3 heat-set inserts.
+  // Each sits near a corner of the display opening and picks up its
+  // support HORIZONTALLY, via an arm reaching to the porch's own real
+  // side wall (V ~64.5-70, ~5.5mm thick, already left standing by the
+  // porch cavity cut above) -- deliberately NOT a wall behind the
+  // opening, so display wiring keeps a clear path through to the main
+  // cavity. Local frame matches the display opening's own transform:
+  // U = up-slope (local X after the -45 tilt), V = face-width (world Y,
+  // untouched by the Y-axis rotation), local Z = depth through the wall
+  // (0 = outer face, -wall = inner cavity face, more negative = further
+  // into the cavity, where the side wall material actually is).
+  //
+  // Insert pocket MUST be cut from the union of boss+arm together, not
+  // from the boss alone with the arm unioned in after -- the arm starts
+  // right at the boss's own center and reaches across it, so cutting the
+  // pocket first and adding the (solid, un-holed) arm afterward silently
+  // fills back in whichever half of the round pocket the arm overlaps.
+  // Caught on the standalone prototype: half-moon pockets, not circles.
+  // No counterbore on the faceplate side (a real SHCS counterbore is
+  // 5.8dia x 3.5 deep -- more depth than the 3mm faceplate has to give;
+  // the deck solves the same problem with a reinforcing pad hung off its
+  // back, but that's not worth doing here for a screw head only ever
+  // seen at an angle -- head sits proud instead), so the boss top sits
+  // flush with the shoulder floor, not recessed below it.
+  disp_boss_d      = 8;
+  disp_boss_h      = m3_ins_l + 2;      // 8.2
+  disp_boss_top_z  = -wall;             // -3: flush with the shoulder floor
+  // Clipped flat at the porch's own rear face (world X = porch_x0, where
+  // it meets the main body) -- near-rim bosses (su=1) reach far enough
+  // in U that, un-clipped, the boss+arm solid poked straight out through
+  // the porch's back into the visible seam against the body. Found on
+  // direct review. The porch's rear boundary is a plane in WORLD X, not
+  // expressible simply in the boss's own rotated (U,V,W) frame, so the
+  // clip is applied as an intersection AFTER the translate+rotate below,
+  // in world space, rather than inside it.
+  intersection() {
+    translate([porch_x0 - porch_len/2, 0, base_h - porch_len/2])
+      rotate([0, -45, 0])
+        for (su = [-1, 1], sv = [-1, 1]) {
+          // Length, not position -- always positive regardless of sv.
+          // Reaches exactly to the real side wall's outer edge (V=base_w/2)
+          // -- the porch's own physical skin, matching the main shell's --
+          // NOT past it. An earlier +1 "for generous overlap" pushed the
+          // arm 1mm beyond that true surface, which has nothing outside it
+          // to overlap WITH; the excess showed up as a visible square nub
+          // poking out through the porch's own side wall. Found on direct
+          // review. Both the arm and the wall it reaches are solid, so a
+          // flush meeting unions cleanly without needing an overshoot the
+          // way a cut into a void would.
+          arm_reach = base_w/2 - disp_boss_v;
+          translate([su*disp_boss_u, sv*disp_boss_v, disp_boss_top_z - disp_boss_h])
+            difference() {
+              union() {
+                cylinder(d = disp_boss_d, h = disp_boss_h);
+                // Cube grows only in +Y from its translate origin, so the
+                // origin has to move to the FAR side of the boss when sv is
+                // negative -- verified this the hard way on the prototype.
+                translate([-disp_boss_d/2, sv > 0 ? 0 : -arm_reach, 0])
+                  cube([disp_boss_d, arm_reach, disp_boss_h]);
+              }
+              translate([0, 0, disp_boss_h - m3_ins_l])
+                cylinder(d = m3_ins_d, h = m3_ins_l + eps);
+            }
+        }
+    // +eps past porch_x0: the small corner fillet a few dozen lines up
+    // (fillet_r cylinder) is independently tangent to this exact same
+    // X=porch_x0 plane, and an exact coincident boundary between two
+    // otherwise-unrelated features is a real degenerate case for
+    // CGAL -- caught as a "may not be a valid 2-manifold" warning after
+    // that fillet was restored to its small-radius form. Cheap, safe
+    // margin: this clip only needs to keep the boss+arm out of the
+    // porch's receding slope, and eps of extra reach back toward the
+    // body changes nothing there.
+    translate([-1000, -1000, -1000])
+      cube([1000 + porch_x0 + eps, 2000, 2000]);
+  }
 
   // USB-C breakout floor bosses — two Ø8 posts rising from the floor,
   // X=75 (PCB -X edge ~72mm, connector +X edge reaches the inner rear wall at X=97),
@@ -614,7 +796,15 @@ module tray() {
 module deck() {
   difference() {
     union() {
-      rrect(base_l - 2*wall - 0.6, base_w - 2*wall - 0.6, wall, corner_r-1);
+      // deck_edge_w (global) already IS the target final-edge inset,
+      // ledge fit clearance included -- base_l/base_w - 2*deck_edge_w
+      // is the direct simplification of (ledge opening) - 0.6, since
+      // the ledge opening itself is sized as base_l - 2*(deck_edge_w -
+      // 0.3) in base(). Was base_l - 2*wall - 0.6 (3.3mm final edge,
+      // wall + an uncancelled 0.3mm clearance); on request, changed so
+      // the deck's real installed edge measures exactly deck_edge_w
+      // (3mm), matching the general wall thickness.
+      rrect(base_l - 2*deck_edge_w, base_w - 2*deck_edge_w, wall, corner_r-1);
       // reinforcing pads UNDER the deck at each corner screw (hang into the
       // rebate gap, not up toward the platform) for solid countersink body
       for (sx=[-1,1], sy=[-1,1])
