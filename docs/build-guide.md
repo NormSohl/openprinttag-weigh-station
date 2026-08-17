@@ -1,5 +1,7 @@
 # Build Guide
 
+![The assembled weigh station on the workbench](images/device-full.jpg)
+
 Everything needed to build your own Weigh Station, start to finish: what it
 is, what to buy, what to print, how to wire it, how to flash it, and how to
 confirm it actually works before you trust it with your filament.

@@ -1,5 +1,7 @@
 # Weigh Station — User Manual
 
+![The assembled weigh station on the workbench](images/device-full.jpg)
+
 The Weigh Station is a self-contained filament inventory tool for the Seattle
 Makers 3D-printing lab. Place a spool on the scale; it reads the NFC tag, weighs
 the spool, and records the remaining filament **on the device**. A built-in web
@@ -20,6 +22,8 @@ That's it — the reading is saved locally, and a weigh entry is added to the
 spool's history.
 
 ### What the display shows
+
+![The idle screen in person: Seattle Makers, Place spool to begin, the web app address, and a QR code](images/device-idle-screen.jpg)
 
 The 3.5" screen shows one of these, depending on what's happening:
 

@@ -1,5 +1,7 @@
 # HTTP API
 
+![The assembled weigh station on the workbench](images/device-full.jpg)
+
 The station serves its web app and a small JSON API from the same server on
 port 80. Base URL is `http://weighstation.local/` — or the raw IP, which is
 worth preferring for anything automated, since mDNS is unreliable across VLANs

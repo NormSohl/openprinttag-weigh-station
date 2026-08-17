@@ -1,5 +1,7 @@
 # Development & flashing
 
+![The assembled weigh station on the workbench](docs/images/device-full.jpg)
+
 This is a [PlatformIO](https://platformio.org/) project. The toolchain, the
 ESP32 platform, and every library install themselves on the first build — you
 don't hand-install any of that. The same build runs in CI on every push, so a

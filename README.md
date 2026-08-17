@@ -1,5 +1,10 @@
 # Filliment Scale
 
+<p>
+  <img src="docs/images/device-full.jpg" width="49%" alt="The assembled weigh station on the workbench: black enclosure, 3.5-inch display, and the round weighing platform with its orange centering spigot">
+  <img src="docs/images/device-idle-screen.jpg" width="49%" alt="The station's idle screen: Seattle Makers, Place spool to begin, the web app address, and a QR code">
+</p>
+
 Firmware for the Seattle Makers filament weigh station — a **self-contained**
 NFC + load-cell scale for the 3D-printing lab.
 
