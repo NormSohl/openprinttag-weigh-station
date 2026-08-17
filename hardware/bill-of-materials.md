@@ -24,6 +24,7 @@ Everything needed to build one weigh station, beyond the fasteners
 | Platform | PLA | Disc, Ø205mm, prints face-down |
 | Spigot | PLA | Centering cone |
 | Tray | PETG or PLA | Carries ESP32 + NAU7802 |
+| Porch display faceplate | PETG | `porch-tft-faceplate.scad`; thin retainer plate over the display opening, front face down, no supports |
 
 **Print envelope check:** platform Ø205mm fits the Prusa MK4S bed (210mm Y)
 with 2.5mm margin per side. Base footprint 200×140×60mm.
@@ -44,8 +45,9 @@ with 2.5mm margin per side. Base footprint 200×140×60mm.
 ## Fasteners
 
 See `fastener-schedule.md` for the complete screw/insert/washer list
-(15 heat-set inserts, 23 screws, 23 washers, 8 nuts — incl. 4× M3×25 +
-nyloc for the display adapter and 4× M2.5×8 + nut for the display board).
+(19 heat-set inserts, 23 screws, 23 washers, 4 nuts — incl. 4× M3×10 into
+heat-set bosses for the display faceplate and 4× M2.5×8 + nut for the
+display board).
 
 ## OPT NFC Tags
 

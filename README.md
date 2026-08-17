@@ -17,6 +17,7 @@ event log in on-device flash.
 
 ## Docs
 
+- [`docs/build-guide.md`](docs/build-guide.md) — build one from scratch: parts, printing, wiring, flashing, first bring-up
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — set up, build, and flash
 - [`docs/user-manual.md`](docs/user-manual.md) — operation (members + admins)
 - [`hardware/netlist.md`](hardware/netlist.md) — wiring diagram + pinout

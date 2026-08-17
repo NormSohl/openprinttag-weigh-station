@@ -16,6 +16,14 @@
 // Dimensions here MUST match weighstation.scad's disp_* variables and
 // the ILI9488 board geometry -- kept in sync by hand, not shared code,
 // same as porch-tft-adapter.scad's screw pattern always was.
+//
+// Print: PETG, 3-4 walls, 15-20% infill, FRONT FACE DOWN on bed (flat,
+// no supports needed -- same convention as porch-tft-adapter.scad).
+// Corner screws: 4x M3x10 SHCS + M3 washer, straight into the porch's
+// heat-set-insert bosses -- no nut, nothing reached through the porch
+// wiring passage (that was the old adapter's M3x25+nyloc pattern; this
+// plate doesn't use it). Board screws: 4x M2.5x8 SHCS + M2.5 washer +
+// M2.5 nyloc nut behind the board, same as the adapter used.
 // =============================================================
 
 $fn = 64;
