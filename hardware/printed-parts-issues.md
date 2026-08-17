@@ -1,20 +1,27 @@
 # 3D-Printed Parts — Known Issues / Errata
 
 Field-found problems with the printed parts, and the fixes made. Issues 1-3
-have been printed and verified as of 2026-08-16; issue 4 is fixed and
-render-verified (2026-08-16) but not yet printed. Kept here as the errata
-history — add a new row and update status the same way if a future print
-turns up a new issue.
+have been printed and verified as of 2026-08-16. Issues 4 and 5 are design
+fixes that exist only in SCAD — render-verified, never printed — and are
+**closed without a reprint as of 2026-08-17**: the current prototype was
+built from an earlier revision and is working fine as-is, and another
+costly print run isn't planned unless a second unit gets built. If that
+happens, pick these back up and validate on hardware before trusting them.
+Kept here as the errata history — add a new row and update status the same
+way if a future print turns up a new issue.
 
 Related files: [`weighstation.scad`](./weighstation.scad),
-[`porch-tft-adapter.scad`](./porch-tft-adapter.scad).
+[`porch-tft-adapter.scad`](./porch-tft-adapter.scad) (superseded — see
+issue 5, kept in the repo for reference),
+[`porch-tft-faceplate.scad`](./porch-tft-faceplate.scad).
 
 | # | Part | Severity | Status |
 |---|------|----------|--------|
 | 1 | Base — load-cell fixed-end boss | High (affects weighing accuracy) | **Fixed & verified** — reinforced boss printed, no visible deflection under load |
-| 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed & verified** — printed, fits as designed |
+| 2 | Porch TFT adapter — window + pocket depth | Medium (fit/assembly) | **Fixed & verified** — printed, fits as designed. Superseded in the source by issue 5 for any future unit; the current prototype keeps this printed adapter and is working fine |
 | 3 | TFT adapter top edge fouls the overhanging platform | High (blocks weighing) | **Fixed & verified** — plate_y 67→63 + plat_gap 2→5 (~3.1mm), printed and clears |
-| 4 | Base — hairline crack at the bottom of the front-corner crevice (rounded body meets porch wedge) | Low (unprintable cusp, not a structural issue) | **Fixed, render-verified** — small fillet at the cusp, not yet printed |
+| 4 | Base — hairline crack at the bottom of the front-corner crevice (rounded body meets porch wedge) | Low (unprintable cusp, not a structural issue) | **Closed, not printed** — final fillet design (repositioned + enlarged, sliced clean of the porch face and display recess) is render-verified only. Current prototype predates this fix and is working fine as printed; no reprint planned for this unit |
+| 5 | Porch TFT adapter → flush faceplate (mount redesign, not a defect) | — design change, not a fault | **Closed, not printed** — `porch-tft-faceplate.scad` replaces the adapter with a thin flush plate over an enlarged opening, held by 4 corner screws into heat-set bosses in the porch wall. Render-verified, mounting holes confirmed coaxial with the bosses. Current prototype keeps the printed adapter (issue 2) and is working fine; banked for the next unit built |
 
 ---
 
@@ -138,10 +145,10 @@ crevice. This closed the crack, but also squared off the whole notch,
 changing the corner's silhouette — not what was wanted. Reverted
 (`git revert`) in favour of the fix below.
 
-**Fix:** a small vertical cylinder (`fillet_r` = 1.5mm radius, full base
-height) at each front corner — not filling the crevice, just padding the
-point where it pinches to zero. The broader crescent shape stays exactly
-as it was.
+**Fix, first pass (superseded, see below):** a small vertical cylinder
+(`fillet_r` = 1.5mm radius, full base height) at each front corner — not
+filling the crevice, just padding the point where it pinches to zero. The
+broader crescent shape stays exactly as it was.
 
 > **First version of this fix was itself broken** — centred exactly on the
 > tangent point (X=`porch_x0`), which straddles the porch wedge's own
@@ -165,6 +172,69 @@ part="base" --render` reports `Simple: yes`, `Volumes: 2` — unchanged from
 both the original and the (reverted) gusset version, still one connected
 solid. The hairline seam is gone in the same exterior viewpoint used to
 find it, and the crescent notch's overall shape is visibly preserved (not
-squared off) compared side-by-side with the gusset version. **Not yet
-printed** — the fillet radius (1.5mm) is a starting estimate, not
-bench-confirmed; tune it up if it's still too fine to print cleanly.
+squared off) compared side-by-side with the gusset version.
+
+**Fix, final (2026-08-17) — the tangent-point fillet above undersold the
+real gap.** Tracing the actual cross-section showed the porch cavity's own
+cut leaves only a thin, Z-sliding sliver of the wedge's rear wall standing,
+so the true gap between the shell's rounded corner and the porch's back
+wall is far wider than a single tangent point through most of the case's
+height (derived exactly: `gap(Z) = 55.757 - Z` for Z in [13.757, 56.5]).
+The fillet is now anchored where two fixed planes meet instead — the
+porch's own back face (`X = porch_x0`) and the case's inside wall
+(`Y = 64.5`, the porch cavity's own Y-extent boundary) — confirmed solid by
+cross-section at multiple heights, radius bumped 1.5mm → 2.0mm, then
+sliced against the porch's own 45-degree roof plane and the real display
+cutout geometry so it can't poke through the sloped face or intrude on the
+faceplate's recess (this fix also caught and closed a related poke-through
+into the display pocket — see issue 5). Render-verified: `Simple: yes`,
+`Volumes: 2`, unchanged.
+
+**Closed 2026-08-17, not printed.** The current prototype was built before
+any of this section's fillet work and is working fine as printed — the
+crack was only ever seen in a render, never confirmed as a real defect on
+this unit. No reprint is planned to validate the fillet fix; if a second
+unit gets built, print it with the current SCAD and confirm the crevice is
+actually gone and the fillet doesn't foul the faceplate before trusting
+this closed.
+
+---
+
+## 5. Porch TFT adapter replaced by a flush faceplate
+
+**Files:** `porch-tft-faceplate.scad` (new); `weighstation.scad` — `base()`,
+"porch display faceplate" boss section.
+
+**This is a design change, not a fault fix** — logged here because it
+retires the part covered by issue 2 and shares the same corner-fillet
+history as issue 4 above. `porch-tft-adapter.scad` mounted the display
+proud, through-bolted, as a full-face panel; it's kept in the repo for
+reference but is no longer the intended part.
+
+**New design:** the display sits flat against the porch's own front face,
+in a large opening cut directly into `base()`. `porch-tft-faceplate.scad`
+is a thin retainer plate over that opening — a bezel window, held down by
+4 corner screws into heat-set-insert bosses that reach sideways to the
+porch's own real side walls (not a wall behind the opening, so display
+wiring keeps a clear path through). The board itself is still held by its
+own 4 screws through the plate into a nut behind it, the same mechanism
+the adapter used.
+
+**Mounting-hole coaxiality confirmed** (2026-08-17): the faceplate's
+corner screw holes (`boss_u`/`boss_v` in `porch-tft-faceplate.scad`) and
+the porch's heat-set bosses (`disp_boss_u`/`disp_boss_v` in
+`weighstation.scad`) are hand-copied between the two files, not shared
+code — checked by extracting the live values from both real files via
+OpenSCAD `echo()` rather than trusting the source comments: both resolve
+to identical U/V offsets (23.1198mm / 61.3mm). The two files code the
+local frame with X/Y transposed relative to each other, but the hole
+pattern is a symmetric `±U, ±V` rectangle, so that's immaterial — only the
+magnitudes matter, and they match exactly.
+
+**Closed 2026-08-17, not printed.** Render-verified only (`Simple: yes`,
+`Volumes: 2` for the base with the new boss geometry). The current
+prototype keeps the printed adapter from issue 2 and is working fine; this
+faceplate is banked for the next unit built, not scheduled for a reprint
+of this one. If a second unit gets built: print the faceplate, confirm all
+4 screws seat straight into their bosses with no binding, and confirm the
+board still clears the bezel window before trusting this closed.
