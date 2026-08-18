@@ -7,8 +7,9 @@ fixes that exist only in SCAD — render-verified, never printed — and are
 built from an earlier revision and is working fine as-is, and another
 costly print run isn't planned unless a second unit gets built. If that
 happens, pick these back up and validate on hardware before trusting them.
-Kept here as the errata history — add a new row and update status the same
-way if a future print turns up a new issue.
+**Issue 6 is OPEN** — a field workaround exists, but the SCAD itself still
+needs to be fixed. Kept here as the errata history — add a new row and
+update status the same way if a future print turns up a new issue.
 
 Related files: [`weighstation.scad`](./weighstation.scad),
 [`porch-tft-faceplate.scad`](./porch-tft-faceplate.scad).
@@ -23,6 +24,7 @@ reference, so those two entries describe a file that no longer exists.
 | 3 | TFT adapter top edge fouls the overhanging platform | High (blocks weighing) | **Fixed & verified** — plate_y 67→63 + plat_gap 2→5 (~3.1mm), printed and clears |
 | 4 | Base — hairline crack at the bottom of the front-corner crevice (rounded body meets porch wedge) | Low (unprintable cusp, not a structural issue) | **Closed, not printed** — final fillet design (repositioned + enlarged, sliced clean of the porch face and display recess) is render-verified only. Current prototype predates this fix and is working fine as printed; no reprint planned for this unit |
 | 5 | Porch TFT adapter → flush faceplate (mount redesign, not a defect) | — design change, not a fault | **Closed, not printed** — `porch-tft-faceplate.scad` replaces the adapter with a thin flush plate over an enlarged opening, held by 4 corner screws into heat-set bosses in the porch wall. Render-verified, mounting holes confirmed coaxial with the bosses. Current prototype keeps the printed adapter (issue 2) and is working fine; banked for the next unit built |
+| 6 | Base — load-cell fixed-end mount, fastener access | Medium (field workaround exists; not yet modeled) | **OPEN** — the built unit needed a hand-drilled, countersunk hole through the case underside to run a long screw up into the fixed-end mount. Works well as a physical fix, but hasn't been carried back into `weighstation.scad` |
 
 ---
 
@@ -243,3 +245,32 @@ faceplate is banked for the next unit built, not scheduled for a reprint
 of this one. If a second unit gets built: print the faceplate, confirm all
 4 screws seat straight into their bosses with no binding, and confirm the
 board still clears the bezel window before trusting this closed.
+
+---
+
+## 6. Load-cell fixed-end mount needed a field-drilled, countersunk access hole
+
+**File:** `weighstation.scad` — load-cell fixed-end boss (same area as
+issue 1's stiffening fix, but a different problem: this one is about the
+fastener's access path, not the boss's stiffness).
+
+**Symptom:** as printed, the boss didn't provide a workable way to
+actually drive the mounting screw into the strain gauge's fixed end. The
+designed path (per issue 1's fix and `fastener-schedule.md`: M5×30 SHCS
+down through the platform and load-cell bar into a top-of-boss insert)
+wasn't usable in practice on the built unit.
+
+**Field fix (2026-08-17):** drilled through the case from underneath and
+countersunk the hole, then ran a long screw up into the mount from below
+instead. Works well — the load cell is properly secured — but this was a
+hand-drilled modification to the physical part, not a SCAD change, so
+none of it is reflected in `weighstation.scad`.
+
+**Status: OPEN.** Not yet investigated in the model. Before designing a
+fix: pin down *why* the top-down path wasn't usable (tool/screwdriver
+clearance under the platform once assembled? insert depth or thread
+engagement issue? something else?), then model the underside access hole
+and countersink as a real feature — including whatever floor thickness
+and boss geometry changes that implies — so a future print doesn't need
+the same manual drill-and-countersink step. Not printed, not
+render-verified — this is only a written record of the field fix so far.
