@@ -6,8 +6,9 @@
   <img src="docs/images/device-idle-screen.jpg" width="320" alt="The station's idle screen: Seattle Makers, Place spool to begin, the web app address, and a QR code">
 </p>
 
-Firmware for the Seattle Makers filament weigh station — a **self-contained**
-NFC + load-cell scale for the 3D-printing lab.
+The Seattle Makers filament weigh station: a **self-contained** NFC +
+load-cell scale for the 3D-printing lab, and everything needed to build
+one — the 3D-printed enclosure, wiring, and firmware.
 
 Place a spool on the scale: it reads the OpenPrintTag (OPT) NFC tag, weighs the
 spool, and records the remaining filament **locally on the device** — no external
