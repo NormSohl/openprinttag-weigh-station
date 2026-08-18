@@ -2,6 +2,15 @@
 
 ![The assembled weigh station on the workbench](docs/images/device-full.jpg)
 
+> **Just want to flash a station, not modify the firmware?** Skip this
+> whole document — download the four files from the
+> [latest release](https://github.com/NormSohl/openprinttag-weigh-station/releases/latest)
+> and flash with `esptool` directly. See
+> [`docs/build-guide.md`](docs/build-guide.md#6-flashing-the-firmware) for
+> the exact command. Everything below is for building from source: making
+> firmware changes, or targeting a board/partition layout no release
+> covers yet.
+
 This is a [PlatformIO](https://platformio.org/) project. The toolchain, the
 ESP32 platform, and every library install themselves on the first build — you
 don't hand-install any of that. The same build runs in CI on every push, so a

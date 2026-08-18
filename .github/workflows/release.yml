@@ -1,0 +1,86 @@
+name: Release
+
+# Builds the firmware and publishes the four files a user needs to flash a
+# station with esptool alone -- no PlatformIO, no clone, no build toolchain.
+# Triggered by pushing a version tag (git tag v1.2.3 && git push --tags).
+# BUILD_VERSION (scripts/pre_build_version.py) is `git describe --tags`, so
+# fetch-depth: 0 is required -- a shallow clone can't see the tag and the
+# firmware would silently embed a bare commit hash instead of the version.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ hashFiles('platformio.ini') }}
+          restore-keys: platformio-
+
+      - name: Install PlatformIO
+        run: pip install --quiet platformio
+
+      - name: Build firmware
+        run: pio run -e weigh-station
+
+      - name: Stage flashable artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp .pio/build/weigh-station/bootloader.bin dist/
+          cp .pio/build/weigh-station/partitions.bin dist/
+          cp .pio/build/weigh-station/firmware.bin dist/
+          # boot_app0.bin ships inside the Arduino framework package, not this
+          # repo -- see partitions.csv's note on why it's flashed unconditionally
+          # at 0xE000 regardless of OTA use.
+          find ~/.platformio/packages/framework-arduinoespressif32 -iname boot_app0.bin -exec cp {} dist/boot_app0.bin \;
+          test -f dist/boot_app0.bin
+          ls -la dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Flashable build of the OpenPrintTag Weigh Station firmware. See
+            [`docs/build-guide.md`](https://github.com/${{ github.repository }}/blob/main/docs/build-guide.md#6-flashing-the-firmware)
+            for the full flashing walkthrough.
+
+            **Flash with [esptool](https://github.com/espressif/esptool)**
+            (`pip install esptool`), all four files in one command, from the
+            folder you downloaded them into:
+
+            ```
+            esptool.py --chip esp32s3 --port <PORT> --baud 921600 write_flash -z \
+              --flash_mode dio --flash_freq 80m --flash_size 4MB \
+              0x0000 bootloader.bin \
+              0x8000 partitions.bin \
+              0xe000 boot_app0.bin \
+              0x10000 firmware.bin
+            ```
+
+            Replace `<PORT>` with the board's serial port (`pio device list`,
+            Device Manager on Windows, or `ls /dev/tty.usbmodem*` on macOS).
+            **First flash on a fresh board:** hold **BOOT**, tap **RESET**,
+            release **BOOT**, *then* run the command above — the ESP32-S3's
+            native USB won't present a bootloader otherwise. Every flash
+            after that auto-resets on its own.
+
+            This only replaces the firmware — it does not touch the on-device
+            event log, config catalog, WiFi credentials, or calibration
+            (those live in LittleFS/NVS, outside the regions this command
+            writes).

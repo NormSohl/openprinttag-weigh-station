@@ -21,6 +21,16 @@ event log in on-device flash.
 - **Firmware:** PlatformIO + Arduino, FreeRTOS tasks (NFC / scale / display /
   sync + web app). Local storage on LittleFS + NVS.
 
+## Get it running
+
+Building the hardware? Start at [`docs/build-guide.md`](docs/build-guide.md).
+Already have a built station and just need firmware? Download the latest
+[**pre-built release**](https://github.com/NormSohl/openprinttag-weigh-station/releases/latest)
+and flash it with `esptool` — no PlatformIO or source checkout required; see
+the build guide's [flashing section](docs/build-guide.md#6-flashing-the-firmware)
+for the exact command. Building firmware from source is documented in
+[`DEVELOPMENT.md`](DEVELOPMENT.md) for anyone modifying it.
+
 ## Docs
 
 - [`docs/build-guide.md`](docs/build-guide.md) — build one from scratch: parts, printing, wiring, flashing, first bring-up

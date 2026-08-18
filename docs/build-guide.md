@@ -201,22 +201,51 @@ and corrupts every reading.
 
 ## 6. Flashing the firmware
 
-Full setup/build/flash walkthrough, including first-flash download-mode
-instructions and what a healthy boot log looks like:
-[`DEVELOPMENT.md`](../DEVELOPMENT.md).
+**Recommended: flash a pre-built release.** No PlatformIO, no cloning the
+repo, no build toolchain — just a serial-port tool and four downloaded
+files. This is the right choice unless you're modifying the firmware
+itself.
 
-Short version once the tools are installed:
+1. Install [esptool](https://github.com/espressif/esptool): `pip install esptool`.
+2. Download the four `.bin` files from the
+   [latest release](https://github.com/NormSohl/openprinttag-weigh-station/releases/latest)
+   into one folder: `bootloader.bin`, `partitions.bin`, `boot_app0.bin`,
+   `firmware.bin`.
+3. Plug the board in over USB-C.
+4. **First flash on a fresh board:** hold **BOOT**, tap **RESET**, release
+   **BOOT**, *then* run the command below — the S3's native USB won't
+   present a bootloader otherwise. Every flash after that auto-resets on
+   its own.
+5. From that folder, run (swap `<PORT>` for the board's serial port —
+   `pio device list`, Windows Device Manager, or `ls /dev/tty.usbmodem*`
+   on macOS):
+
+   ```
+   esptool.py --chip esp32s3 --port <PORT> --baud 921600 write_flash -z \
+     --flash_mode dio --flash_freq 80m --flash_size 4MB \
+     0x0000 bootloader.bin \
+     0x8000 partitions.bin \
+     0xe000 boot_app0.bin \
+     0x10000 firmware.bin
+   ```
+
+This writes only the firmware and partition table — it doesn't touch the
+event log, config catalog, WiFi credentials, or scale calibration, since
+those all live in LittleFS/NVS regions this command doesn't address. There
+is no separate filesystem image to flash: config tables seed themselves on
+first boot and the web UI is built into the firmware image.
+
+**Building from source instead** — only needed if you're modifying the
+firmware, or a release for your board revision doesn't exist yet. Full
+setup/build/flash walkthrough, including what a healthy boot log looks
+like: [`DEVELOPMENT.md`](../DEVELOPMENT.md). Short version once the tools
+are installed:
 
 1. `git clone` this repo, open the folder in VS Code with the PlatformIO
    extension.
 2. Plug the board in over USB-C.
-3. **First flash only:** hold **BOOT**, tap **RESET**, release **BOOT**,
-   *then* upload — the S3's native USB won't present a bootloader
-   otherwise. Every flash after the first one auto-resets on its own.
+3. **First flash only:** same BOOT/RESET dance as above, *then* upload.
 4. Click **Upload** (or `pio run -t upload`).
-
-There's no separate filesystem image to upload — config tables seed
-themselves on first boot and the web UI is built into the firmware image.
 
 ## 7. Testing your build
 
