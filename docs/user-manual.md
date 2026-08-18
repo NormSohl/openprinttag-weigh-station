@@ -105,9 +105,12 @@ right away if the spool is still on the scale, or the next time it's placed.
 
 ### Applying an NFC tag to a new spool
 
-Use an OpenPrintTag MK1 sticker. Peel and apply to the flat hub face of the
-spool — away from the filament windings, centered so it sits over the NFC reader
-when placed on the scale. Press firmly for 5 seconds.
+Use an OpenPrintTag MK1 sticker — sourced directly from
+[Prusa](https://www.prusa3d.com/), who created and promotes the OpenPrintTag
+format itself (see `docs/build-guide.md` if you need to reorder). Peel and
+apply to the flat hub face of the spool — away from the filament windings,
+centered so it sits over the NFC reader when placed on the scale. Press
+firmly for 5 seconds.
 
 **Do not reuse tags.** Peeling a tag risks cracking the foil antenna invisibly.
 New tag for every new spool.

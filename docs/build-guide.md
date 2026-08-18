@@ -28,8 +28,11 @@ come back to individual sections on a repeat build.
 ## 1. What you're building
 
 A **self-contained** NFC + load-cell filament scale: place a spool, it reads
-the spool's [OpenPrintTag](https://github.com/prusa3d/OpenPrintTag) NFC tag,
-weighs it, and records the remaining filament — all on the device itself,
+the spool's [OpenPrintTag](https://specs.openprinttag.org) (OPT) NFC
+tag — an open spool-identification standard created and promoted by
+[Prusa](https://www.prusa3d.com/), the project's namesake (spec source:
+[OpenPrintTag/openprinttag-specification](https://github.com/OpenPrintTag/openprinttag-specification))
+— weighs it, and records the remaining filament — all on the device itself,
 with no server, no cloud account, and no app to install. A built-in web
 page (open from any phone or laptop on the same network) handles inventory,
 onboarding new spools, low-stock reordering, backups, and calibration.
@@ -107,11 +110,18 @@ later:
 - **USB-C:** the ESP32-S3 board's *native* USB-C is the only port this
   design uses — for power, serial console, and flashing. No separate power
   input or USB bridge chip to source.
-- **NFC tags:** blank ISO15693 (ICODE SLIX2-compatible) tags. They need
-  NDEF formatting before the station can write OPT data to them — the
-  station itself formats blank tags automatically the first time you place
-  one (see step 7), so you don't need to pre-format anything, but the tags
-  themselves must be ISO15693, not NTAG/MIFARE.
+- **NFC tags:** genuine OpenPrintTag MK1 stickers, sourced directly from
+  Prusa — the format's own creator/promoter — are what this project
+  actually uses: [Blank OpenPrintTag, 10-pack](https://www.prusa3d.com/product/blank-openprinttag-10-nfc-tags/)
+  from Prusa's own store, or the same product from
+  [Printed Solid](https://www.printedsolid.com/products/original-prusa-blank-openprinttag-10-nfc-tags),
+  Prusa's official US distributor (acquired by Prusa Research in 2022; US
+  warehouse in Delaware) if you'd rather order domestically. See
+  `docs/user-manual.md` for how they're applied to a spool. If you'd
+  rather source your own, any blank ISO15693 (ICODE SLIX2-compatible) tag
+  works too — the station formats
+  a blank tag automatically the first time you place one (see step 7), so
+  nothing needs pre-formatting, but it must be ISO15693, not NTAG/MIFARE.
 
 ## 4. Printing the parts
 

@@ -208,7 +208,7 @@ static void seedMaterials() {
     sMaterials.clear();
     // Temps are eSun's published ranges (nozzle / bed). cls = OPT material_class
     // (key 8; 0 = FFF), type = OPT material_type (key 9; PLA 0, PETG 1, TPU 2 per
-    // prusa3d/OpenPrintTag). PLA+ has no distinct OPT type — it's a PLA variant —
+    // OpenPrintTag/openprinttag-specification). PLA+ has no distinct OPT type — it's a PLA variant —
     // so it maps to PLA (0) while the name keeps the "+".
     addMat("PLA",  "PLA",  0, 0, 1.75f, 190, 220, 45, 60);
     addMat("PLA+", "PLA+", 0, 0, 1.75f, 205, 225, 60, 80);

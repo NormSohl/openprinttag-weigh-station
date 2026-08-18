@@ -188,7 +188,7 @@ const OWNER="OpenPrintTag", REPO="openprinttag-database", BRANCH="main";
 const API=`https://api.github.com/repos/${OWNER}/${REPO}`;
 const RAW=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/data`;
 const PKG_PREFIX="data/material-packages/";
-const TYPE_ENUM_URL="https://raw.githubusercontent.com/prusa3d/OpenPrintTag/main/data/material_type_enum.yaml";
+const TYPE_ENUM_URL="https://raw.githubusercontent.com/OpenPrintTag/openprinttag-specification/main/data/material_type_enum.yaml";
 
 const $ = s => document.querySelector(s);
 const statusEl=$("#cat-status"), resolvedEl=$("#cat-resolved");
@@ -1343,7 +1343,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // Material — the "+ Add new" panel needs the full CfgMaterial shape
     // (class/type enums plus print/bed temps), not just a name: those are
     // exactly the fields that silently write 0 C onto a tag if skipped. The
-    // enum options below are a static copy of prusa3d/OpenPrintTag's
+    // enum options below are a static copy of OpenPrintTag/openprinttag-specification's
     // material_class_enum.yaml / material_type_enum.yaml — the same source
     // CATALOG_SCRIPT's type-token matching already uses — kept local so this
     // panel works with no network, matching the whole point of the manual

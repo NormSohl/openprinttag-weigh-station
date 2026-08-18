@@ -53,7 +53,8 @@ display board).
 
 | Item | Spec | Qty | Notes |
 |------|------|-----|-------|
-| Blank ISO15693 NFC tags | NTAG / ICODE-compatible | as needed | Require NDEF formatting via NFC Tools before OPT data can be written |
+| Blank OpenPrintTag (10 NFC tags) — MK1 sticker | Prusa's own tag product | as needed | What this project actually uses. From Prusa directly: [prusa3d.com](https://www.prusa3d.com/product/blank-openprinttag-10-nfc-tags/), $5.55/10-pack. From [Printed Solid](https://www.printedsolid.com/products/original-prusa-blank-openprinttag-10-nfc-tags), Prusa's **official US distributor** (Prusa Research acquired them in 2022; US-based warehouse in Delaware), $7.99/10-pack — check stock, this SKU sells out periodically. See `docs/user-manual.md` for how they're applied |
+| Blank ISO15693 NFC tags (alternative) | ICODE SLIX2-compatible — **not** NTAG (that's ISO14443A, incompatible) | as needed | The station formats a blank tag itself on first placement; no pre-formatting needed. NFC Tools app is only for manually formatting/testing tags outside the station's own flow |
 
 ## Open Items — Not Yet Specified
 

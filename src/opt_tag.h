@@ -8,7 +8,9 @@
 // OpenPrintTag CBOR/NDEF encode-decode.
 //
 // Wire format uses INTEGER CBOR keys (not strings).
-// Key numbers come from prusa3d/OpenPrintTag:
+// Key numbers come from OpenPrintTag/openprinttag-specification
+// (https://github.com/OpenPrintTag/openprinttag-specification, moved from
+// prusa3d/OpenPrintTag -- old URL still redirects but this is current):
 //   data/meta_fields.yaml, data/main_fields.yaml, data/aux_fields.yaml
 
 // ── Meta section (data/meta_fields.yaml) ─────────────────────────────────────

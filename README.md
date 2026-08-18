@@ -10,11 +10,21 @@ The Seattle Makers filament weigh station: a **self-contained** NFC +
 load-cell scale for the 3D-printing lab, and everything needed to build
 one — the 3D-printed enclosure, wiring, and firmware.
 
-Place a spool on the scale: it reads the OpenPrintTag (OPT) NFC tag, weighs the
-spool, and records the remaining filament **locally on the device** — no external
-server. A built-in web app handles inventory, onboarding new spools, reordering,
-backup/restore, and scale calibration; usage history is kept as an append-only
-event log in on-device flash.
+Place a spool on the scale: it reads the [OpenPrintTag](https://specs.openprinttag.org)
+(OPT) NFC tag, weighs the spool, and records the remaining filament
+**locally on the device** — no external server. A built-in web app handles
+inventory, onboarding new spools, reordering, backup/restore, and scale
+calibration; usage history is kept as an append-only event log in
+on-device flash.
+
+OpenPrintTag is an open spool-identification standard created and
+promoted by [Prusa](https://www.prusa3d.com/) — the project's namesake.
+Spec: [specs.openprinttag.org](https://specs.openprinttag.org) · reference
+implementation: [OpenPrintTag/openprinttag-specification](https://github.com/OpenPrintTag/openprinttag-specification)
+on GitHub. This station's own tags are genuine OpenPrintTag MK1 stickers sourced
+directly from Prusa (see the [BOM](hardware/bill-of-materials.md)), and it
+reads any other vendor's OPT-compliant tag (Prusament, eSun, etc.) the
+same way a Prusa printer would.
 
 - **Hardware:** SparkFun Thing Plus ESP32-S3, PN5180 NFC (ISO15693), NAU7802
   load-cell ADC, 3.5" ILI9488 SPI TFT (480×320), passive piezo buzzer, onboard
