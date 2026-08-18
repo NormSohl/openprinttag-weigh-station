@@ -249,14 +249,20 @@ are installed:
 
 ## 7. Testing your build
 
-Run through this once, in order, before putting the station into service.
-Each step below depends on the previous one succeeding.
+Run through this once, in order, before putting the station into service —
+this checklist is the same whether you flashed a downloaded release or
+built from source. Each step below depends on the previous one succeeding.
 
-1. **Power on, watch the serial monitor** (`pio device monitor -b 115200`).
-   You should see the store, config, and WiFi-manager come up as
-   independent lines — a missing line points at exactly which subsystem
-   didn't start (see the "healthy boot" example in `DEVELOPMENT.md`). The
-   TFT should light up and show a WiFi-setup screen.
+1. **Power on.** The TFT should light up and show a WiFi-setup screen —
+   that alone confirms the board booted and the display is wired
+   correctly. Watching the boot log over serial is optional but catches
+   problems earlier and more specifically (a missing line points at
+   exactly which subsystem didn't start — see the "healthy boot" example
+   in `DEVELOPMENT.md`); any 115200-baud serial terminal works, no
+   PlatformIO required — `python -m serial.tools.miniterm <PORT> 115200`
+   (pyserial ships with esptool, so nothing extra to install) or
+   `pio device monitor -b 115200` if you already have PlatformIO from a
+   source build.
 2. **Join it to WiFi.** On first boot it opens a `WeighStation-Setup`
    access point — connect to it from your phone and enter your lab's
    WiFi. It then reboots and joins as `weighstation.local`. If it can't
