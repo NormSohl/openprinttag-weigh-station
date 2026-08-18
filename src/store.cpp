@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #include "store.h"
 #include "config.h"
 #include "display_tz.h"   // tzGet24Hour() for storeLocalizeIso()

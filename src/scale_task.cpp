@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include <SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h>

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Fuzz optDecode() against malformed OpenPrintTag data, natively.
 //
 // Why this exists: tinycbor reports precondition violations with cbor_assert(),

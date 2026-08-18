@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Drives src/store.cpp natively. Modes:
 //
 //   store_test <serial command> ...   — runs commands through the real

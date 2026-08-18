@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #pragma once
 
 // Built-in web app (redesign Phase 4+). Replaces Spoolman's web UI with a

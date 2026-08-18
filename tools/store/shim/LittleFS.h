@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Host shim: LittleFS over a real directory tree, rooted at $STORE_TEST_ROOT
 // (default ./fsroot). Enough of File/FS for src/store.cpp.
 #pragma once

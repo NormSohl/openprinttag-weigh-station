@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #pragma once
 #include "FreeRTOS.h"
 inline SemaphoreHandle_t xSemaphoreCreateMutex()             { return (SemaphoreHandle_t)1; }

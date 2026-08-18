@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #include "match_extract.h"
 #include <cstdio>
 static int fails = 0;

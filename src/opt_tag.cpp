@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 #include "opt_tag.h"
 #include <cbor.h>
 #include <string.h>

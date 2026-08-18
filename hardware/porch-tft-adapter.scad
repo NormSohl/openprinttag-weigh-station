@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // =============================================================
 // porch-tft-adapter.scad — ILI9488 3.5" TFT bezel / cradle plate
 // =============================================================

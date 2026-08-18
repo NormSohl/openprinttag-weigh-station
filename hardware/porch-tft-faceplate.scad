@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // =============================================================
 // porch-tft-faceplate.scad — thin retainer plate for the porch's TFT
 // window, replacing porch-tft-adapter.scad (kept in the repo for

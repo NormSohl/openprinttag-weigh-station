@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Exercises the exact version-selection logic now in drawQr(), against the real
 // encoder, for every payload length the firmware can produce.
 //

@@ -32,3 +32,16 @@ event log in on-device flash.
 > **History:** this project originally synced to Spoolman (and kept history in
 > Prometheus). It is now standalone — Spoolman and Prometheus have been removed
 > and replaced by on-device storage and the built-in web app.
+
+## License
+
+[GPL-3.0-or-later](LICENSE). Commercial use, including selling assembled
+units or a modified firmware, is fine — but any distributed derivative
+(firmware, the enclosure `.scad` files, or this repo's own docs) must stay
+under the same license and come with source. Firmware, tools, and hardware
+source files each carry an `SPDX-License-Identifier: GPL-3.0-or-later`
+header; that's the convention to follow in any new file.
+
+Third-party libraries pulled in via `platformio.ini` and the vendored copy
+of `lib/PN5180-Library` (LGPL-2.1) keep their own upstream licenses —
+check the library's own `LICENSE` before assuming GPL terms apply to it.

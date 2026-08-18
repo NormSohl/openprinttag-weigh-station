@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Native harness for the QR capacity table used by drawQr() in display_task.cpp.
 // Verifies two things I cannot check by compiling the firmware:
 //   1. each QR_CAPACITY[v] really is the largest byte-mode payload version v

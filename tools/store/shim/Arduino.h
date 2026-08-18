@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Norm Sohl
+
 // Host shim: just enough Arduino for src/store.cpp to compile and run natively.
 // See tools/store/README.md for why this exists.
 #pragma once
