@@ -3,8 +3,10 @@
 
 // =============================================================
 // porch-tft-faceplate.scad — thin retainer plate for the porch's TFT
-// window, replacing porch-tft-adapter.scad (kept in the repo for
-// reference until this one is confirmed correct on the bench).
+// window, replacing an earlier through-bolted adapter design (removed
+// from the repo -- note this design itself is still render-verified
+// only, not yet printed or fitted to real hardware; see
+// printed-parts-issues.md issue 5).
 // =============================================================
 // The display sits FLAT against the porch's own front face, directly in
 // the large opening cut in weighstation.scad's base() -- it is no longer
@@ -14,19 +16,19 @@
 // heat-set-insert bosses (see weighstation.scad, "porch display
 // faceplate" comment in base()'s interior-bosses section). The board
 // itself is still held by its own 4 screws through the plate into a nut
-// behind it, same mechanism porch-tft-adapter.scad used.
+// behind it, the same mechanism the old adapter used.
 //
 // Dimensions here MUST match weighstation.scad's disp_* variables and
 // the ILI9488 board geometry -- kept in sync by hand, not shared code,
-// same as porch-tft-adapter.scad's screw pattern always was.
+// same as the old adapter's screw pattern always was.
 //
 // Print: PETG, 3-4 walls, 15-20% infill, FRONT FACE DOWN on bed (flat,
-// no supports needed -- same convention as porch-tft-adapter.scad).
+// no supports needed -- same convention the old adapter used).
 // Corner screws: 4x M3x10 SHCS + M3 washer, straight into the porch's
 // heat-set-insert bosses -- no nut, nothing reached through the porch
 // wiring passage (that was the old adapter's M3x25+nyloc pattern; this
 // plate doesn't use it). Board screws: 4x M2.5x8 SHCS + M2.5 washer +
-// M2.5 nyloc nut behind the board, same as the adapter used.
+// M2.5 nyloc nut behind the board, same as the old adapter used.
 // =============================================================
 
 $fn = 64;
@@ -63,7 +65,7 @@ boss_u = 23.1198;   // disp_open_u/2 - 6
 m3_cl_d = 3.4;
 
 // ── Display bezel window ─────────────────────────────────────────────────
-// Unchanged from porch-tft-adapter.scad -- the viewable active area.
+// Unchanged from the old adapter design -- the viewable active area.
 win_v = 86;
 win_u = 56;
 
@@ -74,7 +76,7 @@ tft_pcb_v = 98.00;
 tft_pcb_u = 56.34;
 
 // ── Board mounting screws (plate -> board -> nut behind), same mechanism
-//    and same pattern as porch-tft-adapter.scad: cap proud on the front,
+//    and same pattern the old adapter used: cap proud on the front,
 //    shaft through the board's corner hole into a nut trapped behind it. ──
 brd_screw_v = 46;     // +-46mm (V), 92mm c-c
 brd_screw_u = 25;     // +-25mm (U), 50mm c-c

@@ -11,9 +11,10 @@ Kept here as the errata history — add a new row and update status the same
 way if a future print turns up a new issue.
 
 Related files: [`weighstation.scad`](./weighstation.scad),
-[`porch-tft-adapter.scad`](./porch-tft-adapter.scad) (superseded — see
-issue 5, kept in the repo for reference),
 [`porch-tft-faceplate.scad`](./porch-tft-faceplate.scad).
+`porch-tft-adapter.scad` (issues 2 and 3 below) is no longer in the repo
+— superseded by the faceplate (issue 5) and removed rather than kept for
+reference, so those two entries describe a file that no longer exists.
 
 | # | Part | Severity | Status |
 |---|------|----------|--------|
@@ -73,7 +74,9 @@ near edge at X=18): **16.5 mm**, matching the "~16 mm" estimate.
 
 ## 2. Porch TFT adapter — window size and pocket depth
 
-**File:** `porch-tft-adapter.scad`.
+**File:** `porch-tft-adapter.scad` — **removed from the repo**, superseded
+by `porch-tft-faceplate.scad` (issue 5). Entry kept as historical record
+of a real fit issue and its fix.
 
 **Change A — enlarge 0.5 mm PER SIDE, opening + surrounding shelf
 equally.** The 0.5 mm is per side (i.e. +1.0 mm on each overall
@@ -208,8 +211,10 @@ this closed.
 **This is a design change, not a fault fix** — logged here because it
 retires the part covered by issue 2 and shares the same corner-fillet
 history as issue 4 above. `porch-tft-adapter.scad` mounted the display
-proud, through-bolted, as a full-face panel; it's kept in the repo for
-reference but is no longer the intended part.
+proud, through-bolted, as a full-face panel; it has been **removed from
+the repo** (2026-08-17) now that this faceplate is the intended part —
+see issue 2 and the top-of-doc note for what that means for those
+historical entries.
 
 **New design:** the display sits flat against the porch's own front face,
 in a large opening cut directly into `base()`. `porch-tft-faceplate.scad`

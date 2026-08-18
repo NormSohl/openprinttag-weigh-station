@@ -13,8 +13,8 @@ below **is** our datasheet of record.
 
 **Mechanical (measured):** PCB 98 × 56.34 mm. Four corner mounting holes,
 **Ø≈2.75 mm**, pattern **92 mm × 50 mm** centre-to-centre (~3 mm inset
-from each edge). Takes M2.5 (an M3 will not pass). The printed adapter
-(`hardware/porch-tft-adapter.scad`) bolts the board via these with M2.5
+from each edge). Takes M2.5 (an M3 will not pass). The printed faceplate
+(`hardware/porch-tft-faceplate.scad`) bolts the board via these with M2.5
 front through-bolts into nuts behind — see `brd_screw_*`.
 
 ---

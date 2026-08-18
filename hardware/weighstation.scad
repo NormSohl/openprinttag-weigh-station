@@ -7,10 +7,13 @@
 // Rev — see printed-parts-issues.md:
 //   #1 load-cell fixed-end boss reinforced (fore-aft footprint widened;
 //      +X buttress capped below the bar so the beam still flexes).
-//   Porch UI reworked: OLED/button/LED removed; single TFT opening + 4
-//   adapter screw holes added (matches porch-tft-adapter.scad).
-//   plat_gap 2->5: raises the platform so it clears the adapter's top
-//   edge (with plate_y=63) — boss grows ~3mm (see fastener note).
+//   Porch UI reworked: OLED/button/LED removed; single TFT opening, now
+//   covered by a flush faceplate (porch-tft-faceplate.scad) on corner
+//   heat-set bosses inside the cavity -- superseded an earlier
+//   through-bolted adapter design, since removed from the repo.
+//   plat_gap 2->5: raises the platform so it clears the display
+//   mount's top edge (with plate_y=63) — boss grows ~3mm (see fastener
+//   note).
 //   Reinforcement render- and print-verified 2026-08-16 — see
 //   printed-parts-issues.md.
 // =============================================================
@@ -150,9 +153,9 @@ ant_pocket_dy = ant_clear_r + ant_w/2;      // pocket center offset along radius
 // ---------------- ports / UI ----------------
 usb_w = 12;  usb_h = 7;            // rear cutout for USB-C breakout module
 // The SSD1306 OLED, panel button, and status LED are REMOVED — replaced
-// by a single 3.5in ILI9488 TFT on a printed adapter (porch-tft-adapter.scad).
-// The adapter is 140 (face-width V) x 63 (up-slope U), centred on the
-// porch face and fastened with 4x M3.
+// by a single 3.5in ILI9488 TFT on a printed faceplate (porch-tft-faceplate.scad).
+// The faceplate is centred on the porch face and fastened with 4x M3
+// into heat-set bosses in the porch wall.
 // 45-degree UI porch: a wedge extending forward past the platform edge,
 // carrying the display on its sloped face, angled at the user.
 porch_len = 45;                    // how far the wedge extends (also = height drop @45)
@@ -163,9 +166,10 @@ porch_len = 45;                    // how far the wedge extends (also = height d
 // held by 4 corner screws into heat-set-insert bosses that project
 // sideways from the porch's own real side walls -- not a wall behind the
 // opening, so display wiring keeps a clear path through to the main
-// cavity. Replaces the old flush-mounted porch-tft-adapter.scad, which
-// covered nearly the whole face and fastened with long through-bolts into
-// nuts fished through the wiring passage.
+// cavity. Replaces an earlier through-bolted adapter design (since
+// removed from the repo) that covered nearly the whole face and
+// fastened with long through-bolts into nuts fished through the wiring
+// passage.
 //
 // The wall here measures exactly 3mm perpendicular to the slope (= wall,
 // by design -- porch_drop below is wall*sqrt(2)), which is why the
@@ -179,7 +183,7 @@ porch_len = 45;                    // how far the wedge extends (also = height d
 // diagonal edge, porch_len*sqrt(2) (~63.6mm), not porch_len (45) itself.
 // Got this backwards on the first pass here: sized disp_open_u from
 // porch_len directly (43mm), which is SHORTER than the display's own
-// bezel window (win_y=56 in porch-tft-adapter.scad) -- the display
+// bezel window (win_y=56 in the old adapter design) -- the display
 // couldn't have physically fit through it. The OLD disp_open_u=37 never
 // exposed this, because the old adapter mounted proud on the outside with
 // its own independent bezel plane; the wall hole only ever needed to
@@ -722,7 +726,7 @@ module base() {
 // Devkit is held by side rails (most S3 devkits have no mounting
 // holes); the NAU7802 and USB-C power breakout sit on standoff
 // pairs with parametric hole spacing — MEASURE your modules.
-// (The TFT mounts on the porch adapter, not internal standoffs.)
+// (The TFT mounts on the porch faceplate, not internal standoffs.)
 devkit_l = 71;   devkit_w = 26;   devkit_pcb_t = 1.6;   // MEASURE
 nau_hole_dx = 20.3; nau_hole_dy = 7.6;                  // MEASURE
 usbbo_hole_dx = 14; usbbo_hole_dy = 0;                  // MEASURE (0 = single pair)
