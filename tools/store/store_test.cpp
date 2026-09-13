@@ -271,7 +271,7 @@ static void auditTest() {
 
     // 4) Close is a real consumption event and retires the spool; resolving the
     //    LAST not-found spool must auto-complete the audit back to Idle.
-    CHECK(storeAuditClose(spC), "storeAuditClose should succeed for spool C");
+    CHECK(storeRetireSpool(spC), "storeRetireSpool should succeed for spool C");
     CHECK(storeAuditPhase() == AuditPhase::Idle,
           "resolving the last not-found spool must auto-end the audit");
     SpoolRecord sC;

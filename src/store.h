@@ -80,6 +80,14 @@ struct StoreEvent {
     // untouched, so it need not be set on propagated Reconcile events.
     bool     foreign = false;
 
+    // Physical NFC chip UID (16 lowercase hex chars), NOT the OPT instance_uuid
+    // above. Same lifecycle as `foreign`: set on the creating Onboard, carried
+    // through Checkpoint, untouched by Reconcile. Lets a rediscovered blank tag
+    // be matched back to whatever spool it used to be — see
+    // storeFindActiveByNfcUid() — regardless of how it was blanked (our own
+    // reuse flow, TAGFORMAT, or a third-party NFC tool).
+    char     nfc_uid[17] = {};
+
     // Confirmed physically disposed (Retire/Checkpoint only). See
     // SpoolRecord::retired -- carried through Checkpoint so a fold never
     // silently un-retires a spool; never set or cleared by Onboard/Reconcile.
@@ -127,6 +135,8 @@ struct SpoolRecord {
     // tags now match the OPT reference layout byte-for-byte, this ownership fact
     // can no longer be inferred from tag bytes — it must be carried on the record.
     bool     foreign = false;
+    // Physical NFC chip UID (16 lowercase hex chars). See StoreEvent::nfc_uid.
+    char     nfc_uid[17] = {};
     // Confirmed physically disposed during a physical-inventory audit. Distinct
     // from remaining_g happening to read near zero: this is a fact about
     // disposal, not an inference from weight. Cleared automatically by the
@@ -241,12 +251,19 @@ bool storeAuditAbandon();
 
 // Confirmed disposed: a consumption delta from the spool's last known weight
 // down to 0 (same path a real weigh event takes -- "we don't throw away good
-// inventory", so its absence at audit time IS the evidence it was used up),
-// remaining_g -> 0, retired -> true. Auto-transitions Resolving -> Idle
-// (AuditEnd) if this was the last unresolved spool.
-bool storeAuditClose(uint32_t spool);
+// inventory", so its absence IS the evidence it was used up), remaining_g ->
+// 0, retired -> true. If an audit is Resolving, auto-transitions it to Idle
+// (AuditEnd) when this was the last unresolved spool -- a no-op otherwise, so
+// this is safe to call outside an audit too.
+//
+// Two callers: the audit Close button, and syncTask's tag-reuse path, which
+// calls this the moment a physical tag it recognizes (by NFC UID) is
+// rediscovered blank -- see storeFindActiveByNfcUid(). Same action either way:
+// the material that spool held is gone, whether an audit said so or the tag
+// going blank did.
+bool storeRetireSpool(uint32_t spool);
 // Confirmed present without a fresh weigh (e.g. seen but not moved yet).
-// Touches only last_ts. Same auto-end behaviour as storeAuditClose().
+// Touches only last_ts. Same auto-end behaviour as storeRetireSpool().
 bool storeAuditFound(uint32_t spool);
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -353,6 +370,11 @@ bool storeCompact();
 // ── Queries (read-only, mutex-guarded snapshots) ──────────────────────────────
 bool   storeGetSpool(uint32_t id, SpoolRecord& out);
 bool   storeFindByUuid(const char* uuid, SpoolRecord& out);
+// The current (non-retired) spool record carrying this physical NFC chip UID,
+// if any. A retired spool never matches, even if its old UID is reused later
+// by a fresh onboarding of the same physical chip -- there is at most one
+// active record per physical tag at a time.
+bool   storeFindActiveByNfcUid(const char* nfcUid, SpoolRecord& out);
 size_t storeSpoolCount();
 bool   storeSpoolAt(size_t idx, SpoolRecord& out);
 size_t storeInventoryCount();

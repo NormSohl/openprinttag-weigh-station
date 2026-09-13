@@ -26,8 +26,11 @@ extern volatile DeviceState gState;
 extern SemaphoreHandle_t    gStateMutex;
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
+extern uint8_t              gTagUid[8];
 extern OptMain              gTagMain;
 extern SemaphoreHandle_t    gTagMutex;
+// Set here, consumed by nfcTask — see nfc_task.cpp.
+extern char                 gReuseTargetUid[17];
 extern volatile bool        gWriteMainPending;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
@@ -507,6 +510,7 @@ static String head(const char* title, const char* active = "") {
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
     navlink(h, "/onboard",   "Onboard",   active);
+    navlink(h, "/reuse",     "Reuse",     active);
     navlink(h, "/reorder",   "Reorder",   active);
     navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
@@ -838,7 +842,7 @@ static void handleApiAuditClose(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     const AsyncWebParameter* ps = req->getParam("spool", true);
     if (!ps) { req->send(400, "text/plain", "missing spool"); return; }
-    storeAuditClose((uint32_t)ps->value().toInt());
+    storeRetireSpool((uint32_t)ps->value().toInt());
     req->redirect("/");
 }
 static void handleApiAuditFound(AsyncWebServerRequest* req) {
@@ -1722,6 +1726,79 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     // confirmation that any of them took; the detail page shows the colour,
     // vendor, tare, nominal and weigh history for this exact record.
     req->redirect("/spool?id=" + String((unsigned)id));
+}
+
+// ── GET /reuse — clear a spent tag for reuse ──────────────────────────────────
+// Same "whatever's on the scale right now" shape as Onboard/Calibrate. Tags
+// are expensive enough that disposing of one with an empty reel is a real
+// cost, so this lets staff wipe it and send it back through the normal
+// blank-tag pipeline instead. No automatic near-empty detection — staff pull
+// spools they've judged empty into a physical bin and process them here as
+// time allows; see /api/reuse for what actually happens to the store record.
+static void handleReuseForm(AsyncWebServerRequest* req) {
+    String p = head("Reuse Tag", "/reuse");
+    int cur = currentSpool();
+
+    if (cur < 0) {
+        p += "<div class='card'><p>No spool is on the scale.</p>"
+             "<p class='muted'>Place an empty spool from the reuse bin, wait for "
+             "it to register, then reload this page.</p></div>";
+        p += FOOT;
+        req->send(200, "text/html", p);
+        return;
+    }
+
+    SpoolRecord r;
+    storeGetSpool((uint32_t)cur, r);
+
+    p += "<div class='card'>";
+    p += "<h3>Spool #" + String((unsigned)cur) + " — " + esc(r.vendor) + " "
+       + esc(r.material[0] ? r.material : "Unknown") + "</h3>";
+    p += "<p>Remaining: " + String(r.remaining_g, 0) + " g</p>";
+    p += "<p class='muted'>This retires spool #" + String((unsigned)cur) + " ("
+       + String(r.remaining_g, 0) + " g logged as consumed) and erases its tag "
+         "so it can be onboarded fresh. Leave the tag on the scale until it's "
+         "done — a few seconds.</p>";
+    p += "<form method='POST' action='/api/reuse' onsubmit=\"return confirm("
+         "'Retire spool #" + String((unsigned)cur) + " and erase its tag? "
+       + String(r.remaining_g, 0) + " g will be logged as consumed. "
+         "This cannot be undone.')\">";
+    p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
+    p += "<button type='submit' style='background:#522;color:#eee;padding:8px 16px;"
+         "font-size:14px;border-radius:4px;border:0;cursor:pointer'>"
+         "Erase &amp; retire this tag</button>";
+    p += "</form></div>";
+
+    if (req->hasParam("armed"))
+        p += "<p class='muted'>Reformat armed — leave the tag in place.</p>";
+
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+// ── POST /api/reuse — arm a one-shot reformat scoped to the tag on the scale ──
+// Retiring the store record happens automatically the moment nfcTask confirms
+// the tag actually went blank (sync_task.cpp's Resolving phase, matched by
+// physical NFC UID) — not here. That single mechanism also covers a tag wiped
+// by TAGFORMAT or a third-party NFC tool, so this handler's only job is to
+// arm the reformat for the exact physical tag that's on the scale right now.
+static void handleApiReuse(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* ps = req->getParam("id", true);
+    if (!ps) { req->send(400, "text/plain", "missing id"); return; }
+    int id = ps->value().toInt();
+    // Re-check against what's on the scale NOW, not what the page said when it
+    // loaded — the spool could have been swapped in between.
+    if (id <= 0 || id != currentSpool()) {
+        req->send(409, "text/plain", "that spool is no longer on the scale");
+        return;
+    }
+    uint8_t uid[8];
+    xSemaphoreTake(gTagMutex, portMAX_DELAY);
+    memcpy(uid, gTagUid, 8);
+    xSemaphoreGive(gTagMutex);
+    for (int i = 0; i < 8; i++) snprintf(gReuseTargetUid + i * 2, 3, "%02x", uid[i]);
+    req->redirect("/reuse?armed=1");
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
@@ -2837,6 +2914,8 @@ void webAppBegin() {
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
+    sServer.on("/reuse",       HTTP_GET,  handleReuseForm);
+    sServer.on("/api/reuse",   HTTP_POST, handleApiReuse);
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
     sServer.on("/stock",            HTTP_GET,  handleStockPage);
     sServer.on("/api/stock/add",    HTTP_POST, handleApiStockAdd);

@@ -180,6 +180,7 @@ static String encodeBody(const StoreEvent& e) {
     if (ident) {
         b += "\"needs_ob\":"; b += (e.needs_ob ? "true" : "false"); b += ",";
         b += "\"fgn\":"; b += (e.foreign ? "true" : "false"); b += ",";
+        b += "\"nfc_uid\":\""; b += e.nfc_uid; b += "\",";
     }
     if (e.ev == StoreEv::Product) {
         b += "\"puuid\":\""; b += jsonEsc(e.pkg_uuid);   b += "\",";
@@ -258,6 +259,10 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     // to write". Option A migration: pre-existing adopted-foreign records lose
     // read-only protection until re-adopted (see the commit that added this).
     if (ident) e.foreign = doc["fgn"] | false;
+    // Absent on every line written before tag reuse existed → "", which
+    // storeFindActiveByNfcUid() never matches -- pre-existing records simply
+    // aren't found by physical UID until they're next placed and re-onboarded.
+    if (ident) strlcpy(e.nfc_uid, doc["nfc_uid"] | "", sizeof(e.nfc_uid));
     if (e.ev == StoreEv::Product) {
         strlcpy(e.pkg_uuid,   doc["puuid"] | "", sizeof(e.pkg_uuid));
         strlcpy(e.mat_uuid,   doc["muuid"] | "", sizeof(e.mat_uuid));
@@ -474,7 +479,14 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             // foreign=false and would otherwise clear a read-only adopted tag. The
             // creating Onboard always precedes any Reconcile in the log, so the
             // value is set before it is ever skipped.
-            if (e.ev != StoreEv::Reconcile) r.foreign = e.foreign;
+            //
+            // The physical NFC UID is the same shape of fact for the same reason:
+            // it identifies the chip, not the material, so a product edit
+            // propagating down (a Reconcile) must not touch it either.
+            if (e.ev != StoreEv::Reconcile) {
+                r.foreign = e.foreign;
+                strlcpy(r.nfc_uid, e.nfc_uid, sizeof(r.nfc_uid));
+            }
             break;
         case StoreEv::Weigh:
             r.remaining_g = e.remaining_g;
@@ -699,7 +711,7 @@ static bool findAuditableSpoolUuid_(uint32_t spool, char* uuidOut, size_t uuidLe
     return false;
 }
 
-bool storeAuditClose(uint32_t spool) {
+bool storeRetireSpool(uint32_t spool) {
     char uuid[33] = {};
     if (!findAuditableSpoolUuid_(spool, uuid, sizeof(uuid))) return false;
     StoreEvent e;
@@ -709,7 +721,7 @@ bool storeAuditClose(uint32_t spool) {
     e.remaining_g = 0;
     e.retired = true;
     if (!storeAppendEvent(e)) return false;
-    maybeAutoEndAudit_();
+    maybeAutoEndAudit_();   // no-op unless an audit happens to be Resolving
     return true;
 }
 
@@ -792,6 +804,13 @@ bool storeFindByUuid(const char* uuid, SpoolRecord& out) {
     if (i < 0) return false;
     out = sSpools[i];
     return true;
+}
+bool storeFindActiveByNfcUid(const char* nfcUid, SpoolRecord& out) {
+    if (!nfcUid || !nfcUid[0]) return false;
+    Lock lk;
+    for (auto& r : sSpools)
+        if (r.valid && !r.retired && !strcmp(r.nfc_uid, nfcUid)) { out = r; return true; }
+    return false;
 }
 size_t storeSpoolCount() { Lock lk; return sSpools.size(); }
 bool storeSpoolAt(size_t idx, SpoolRecord& out) {
@@ -1561,6 +1580,7 @@ bool storeCompact() {
         c.dia = r.dia; c.empty_g = r.empty_g; c.nom_g = r.nom_g;
         c.needs_ob = r.needs_ob;
         c.foreign  = r.foreign;   // carry ownership through the fold
+        strlcpy(c.nfc_uid, r.nfc_uid, sizeof(c.nfc_uid));  // carry physical UID through the fold
         c.retired  = r.retired;   // carry disposal status through the fold
         c.product  = r.product;
         if (!emit(encodeLine(c))) { ok = false; break; }

@@ -48,6 +48,12 @@ volatile bool gWriteAuxPending  = false;
 // and stop decoding, so nothing else can get them back.
 volatile bool gTagForceFormat = false;
 
+// Set by POST /api/reuse: the physical NFC UID (16 lowercase hex chars) of the
+// exact tag to reformat, so a different tag placed on the scale afterward is
+// left untouched. "" = nothing armed. nfcTask clears it the moment it matches
+// (or is superseded by a new request) — one-shot, like gTagForceFormat.
+char gReuseTargetUid[17] = {};
+
 // SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
 // Both tasks must take this mutex before any SPI transaction.
 SemaphoreHandle_t gSpiMutex = nullptr;

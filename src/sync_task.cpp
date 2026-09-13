@@ -20,6 +20,7 @@ extern volatile DeviceState gState;
 extern SemaphoreHandle_t    gStateMutex;
 extern volatile float       gWeightGrams;
 extern SemaphoreHandle_t    gWeightMutex;
+extern uint8_t              gTagUid[8];
 extern OptMain              gTagMain;
 extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
@@ -61,6 +62,12 @@ static void generateUUIDv4(uint8_t* uuid) {
 static void uuidToHex32(const uint8_t* uuid, char* out33) {
     for (int i = 0; i < 16; i++)
         snprintf(out33 + i * 2, 3, "%02x", uuid[i]);
+}
+
+// 16 lowercase hex chars — the physical NFC chip UID, matching store's nfc_uid.
+static void uidToHex16(const uint8_t* uid, char* out17) {
+    for (int i = 0; i < 8; i++)
+        snprintf(out17 + i * 2, 3, "%02x", uid[i]);
 }
 
 // ── Tag ⇄ store field mapping ─────────────────────────────────────────────────
@@ -508,7 +515,9 @@ void syncTask(void* param) {
         if (sphase == SyncPhase::Resolving) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
+            uint8_t physUid[8]; memcpy(physUid, gTagUid, 8);
             xSemaphoreGive(gTagMutex);
+            char physHex[17]; uidToHex16(physUid, physHex);
 
             // "Foreign" (read-only) is an OWNERSHIP fact, decided when the record
             // was created and carried on the record — NOT inferred from tag bytes.
@@ -526,6 +535,17 @@ void syncTask(void* param) {
                 // local stub record. A person completes the details later in the
                 // web form (Phase 4); the reconcile loop writes them back to the
                 // tag while it's still on the scale.
+                // This physical chip may have carried a different spool's
+                // identity last time we saw it, if it's been blanked since —
+                // by our own reuse flow, TAGFORMAT, or a third-party NFC tool.
+                // Either way the material that record tracked is gone, so
+                // retire it now rather than leave it stuck showing stale
+                // remaining weight forever with nothing left to trigger a
+                // recheck.
+                SpoolRecord prior;
+                if (storeFindActiveByNfcUid(physHex, prior))
+                    storeRetireSpool(prior.spool);
+
                 generateUUIDv4(main.instance_uuid);
                 char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
@@ -535,6 +555,7 @@ void syncTask(void* param) {
                 strlcpy(e.material, "Unknown", sizeof(e.material));
                 e.needs_ob = true;
                 e.foreign  = false;   // we minted this tag — ours to write
+                strlcpy(e.nfc_uid, physHex, sizeof(e.nfc_uid));
                 e.spool = storeNextSpoolId();
                 storeAppendEvent(e);
 
@@ -602,7 +623,9 @@ void syncTask(void* param) {
         if (sphase == SyncPhase::Registering) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
+            uint8_t physUid[8]; memcpy(physUid, gTagUid, 8);
             xSemaphoreGive(gTagMutex);
+            char physHex[17]; uidToHex16(physUid, physHex);
 
             const bool wasNil = isNilUUID(main.instance_uuid);
             if (wasNil) generateUUIDv4(main.instance_uuid);
@@ -638,6 +661,7 @@ void syncTask(void* param) {
             identityFromMain(main, e);
             e.needs_ob = false;
             e.foreign  = sForeign;   // adopted from a vendor tag → read-only for life
+            strlcpy(e.nfc_uid, physHex, sizeof(e.nfc_uid));
             e.product  = pid;
             e.spool = storeNextSpoolId();
             storeAppendEvent(e);
