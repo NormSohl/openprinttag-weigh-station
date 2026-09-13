@@ -595,9 +595,19 @@ void syncTask(void* param) {
                 xSemaphoreGive(gTagMutex);
                 if (!sForeign) gWriteMainPending = true;
 
+                // A brand-new stub still needs its FIRST weigh, same as any
+                // other placement — skipping straight to Present/Holding here
+                // left remaining_g/gross_g stuck at the StoreEvent zero
+                // default forever, since nothing else ever weighs a spool
+                // that already has an identity match on a later placement.
+                // Found on the bench: onboarding a genuinely blank tag saved
+                // 0 g until the spool was physically removed and re-placed,
+                // which only worked because the SECOND placement takes the
+                // "known spool" branch below — the one branch that already
+                // did this correctly.
                 sSnapshot = main;
-                ctrlPost(CtrlEvent::StubReady);
-                sphase = SyncPhase::Holding;
+                ctrlPost(CtrlEvent::BeginWeigh);
+                sphase = SyncPhase::Weighing;
 
             } else {
                 char hex[33]; uuidToHex32(main.instance_uuid, hex);

@@ -70,8 +70,6 @@ void controllerTask(void* param) {
                 setState(DeviceState::TagReadError);            break;
 
             // Weigh/reconcile facts from syncTask -> the matching gState.
-            case CtrlEvent::StubReady:
-                setState(DeviceState::Present);                 break;
             case CtrlEvent::BeginWeigh:
                 setState(DeviceState::WeighingAndSync);         break;
             case CtrlEvent::SpoolForeign:

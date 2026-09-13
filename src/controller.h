@@ -30,7 +30,6 @@ enum class CtrlEvent : uint8_t {
     // Phase 4: syncTask reports weigh/reconcile facts; the controller writes the
     // matching gState. syncTask drives its own SyncPhase synchronously so it
     // never double-processes on gState lag.
-    StubReady,      // blank onboarded, stub record made  -> Present
     BeginWeigh,     // resolved to a known/registered spool-> WeighingAndSync
     SpoolForeign,   // valid tag, not in the store        -> ForeignTagFound
     ForeignRegistering, // adopting the foreign tag       -> RegisteringForeignTag
