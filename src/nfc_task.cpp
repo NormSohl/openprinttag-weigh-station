@@ -28,11 +28,10 @@ extern SemaphoreHandle_t    gSpiMutex;
 // present, regardless of how it currently classifies. The escape hatch for a
 // tag left half-written by a failed format.
 extern volatile bool        gTagForceFormat;
-// Set by POST /api/reuse: force a reformat of ONLY the tag whose physical UID
-// (16 lowercase hex chars) matches. "" = nothing armed. Unlike
-// gTagForceFormat this is scoped, so a different tag placed on the scale
-// afterward is left untouched.
-extern char                 gReuseTargetUid[17];
+// Set by the web /reuse page's Start/Stop buttons: while true, ANY freshly
+// placed tag is treated as blank regardless of its actual contents. See the
+// classification check below and sync_task.cpp's Resolving phase.
+extern volatile bool        gReuseModeActive;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
@@ -405,24 +404,6 @@ void nfcTask(void* param) {
                 continue;
             }
 
-            // Web-armed reuse: reformat only the specific physical tag that was
-            // on the scale when the request was made, so a different tag placed
-            // here afterward — before this one ever gets reformatted — is left
-            // alone rather than silently wiped. Checked ahead of classification,
-            // same reasoning as gTagForceFormat below.
-            if (gReuseTargetUid[0]) {
-                char uidHex[17];
-                for (int i = 0; i < 8; i++) snprintf(uidHex + i * 2, 3, "%02x", uid[i]);
-                if (!strcmp(gReuseTargetUid, uidHex)) {
-                    gReuseTargetUid[0] = 0;
-                    Serial.println("[nfc] reuse: forcing a reformat of the requested tag");
-                    ctrlPost(CtrlEvent::FormatConfirmed);
-                    phase = NfcPhase::Formatting;
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-            }
-
             // Forced reformat wins over classification: the whole point is to
             // recover a tag whose current contents we cannot make sense of.
             if (gTagForceFormat) {
@@ -434,7 +415,15 @@ void nfcTask(void* param) {
                 continue;
             }
 
-            if (optIsBlank(sRawBuf, sRawLen)) {
+            // Reuse mode (armed from the web /reuse page): treat ANY freshly
+            // placed tag as blank, not just a genuinely empty one. That's the
+            // whole point — burn through a bin of already-decided-empty spools
+            // one placement at a time, each one getting the exact same
+            // countdown/cancel-by-removal confirmation a real blank tag
+            // already gets, with no extra per-tag step. See sync_task.cpp's
+            // Resolving phase for what happens once it's actually formatted
+            // (retire the old record, mint nothing new).
+            if (gReuseModeActive || optIsBlank(sRawBuf, sRawLen)) {
                 ctrlPost(CtrlEvent::TagBlank);
                 phase = NfcPhase::BlankDetected;
             } else {
@@ -677,6 +666,19 @@ void nfcTask(void* param) {
             continue;
         }
         missCount = 0;
+
+        // TAGFORMAT can be armed while this exact tag is already sitting
+        // Held. Reuse mode does NOT need the same catch here: it only ever
+        // takes effect on a fresh placement (the classification check
+        // above), by design — see gReuseModeActive's declaration.
+        if (gTagForceFormat) {
+            gTagForceFormat = false;
+            Serial.println("[nfc] TAGFORMAT: forcing a reformat of the tag already on the scale");
+            ctrlPost(CtrlEvent::FormatConfirmed);
+            phase = NfcPhase::Formatting;
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
 
         // Write Aux when syncTask has updated gTagAux (after weighing)
         if (gWriteAuxPending) {

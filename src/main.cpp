@@ -48,11 +48,14 @@ volatile bool gWriteAuxPending  = false;
 // and stop decoding, so nothing else can get them back.
 volatile bool gTagForceFormat = false;
 
-// Set by POST /api/reuse: the physical NFC UID (16 lowercase hex chars) of the
-// exact tag to reformat, so a different tag placed on the scale afterward is
-// left untouched. "" = nothing armed. nfcTask clears it the moment it matches
-// (or is superseded by a new request) — one-shot, like gTagForceFormat.
-char gReuseTargetUid[17] = {};
+// Set by the web /reuse page's Start/Stop buttons. While true, nfcTask treats
+// any freshly placed tag as blank (reusing the same countdown/cancel-by-
+// removal UX a genuinely blank tag gets), and syncTask retires whatever
+// spool that physical chip previously carried without minting a new stub —
+// see nfc_task.cpp's classification check and sync_task.cpp's Resolving
+// phase. Deliberately a persistent mode, not a one-shot per-tag arm: the
+// whole point is processing a bin of tags back to back with no per-tag step.
+volatile bool gReuseModeActive = false;
 
 // SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
 // Both tasks must take this mutex before any SPI transaction.

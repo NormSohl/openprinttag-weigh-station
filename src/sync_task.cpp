@@ -26,6 +26,7 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
+extern volatile bool        gReuseModeActive;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
@@ -545,6 +546,26 @@ void syncTask(void* param) {
                 SpoolRecord prior;
                 if (storeFindActiveByNfcUid(physHex, prior))
                     storeRetireSpool(prior.spool);
+
+                // Reuse mode: the retire above is the entire store-side job.
+                // Deliberately mint NOTHING — no new instance_uuid, no stub
+                // record, no needs_onboarding — so the tag is left genuinely,
+                // fully blank and falls through this SAME isNilUUID path
+                // again next time it's placed for real, rather than leaving
+                // behind an "Unknown/Unknown, needs onboarding" placeholder
+                // for material nobody has loaded yet. gSpoolId<=0 is already
+                // a supported "nothing to reconcile" state for Holding below
+                // (see its `if (sSpoolId > 0)` guard) and Present's
+                // needs_ob==false branch in display_task.cpp, so this needs
+                // no new phase or display state — just don't take the
+                // mint-a-stub path at all.
+                if (gReuseModeActive) {
+                    sSpoolId = -1; gSpoolId = -1; gSpoolNeedsOnboarding = false;
+                    sSnapshot = {};
+                    ctrlPost(CtrlEvent::Weighed);   // -> Present, same as a normal weigh
+                    sphase = SyncPhase::Holding;
+                    continue;
+                }
 
                 generateUUIDv4(main.instance_uuid);
                 char hex[33]; uuidToHex32(main.instance_uuid, hex);

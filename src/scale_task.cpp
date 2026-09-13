@@ -220,8 +220,8 @@ static void dispatchCommand(const String& cmd, NAU7802& nau) {
         nfcDumpRaw();
     } else if (cmd.equalsIgnoreCase("TAGFORMAT")) {
         gTagForceFormat = true;
-        Serial.println("[nfc] TAGFORMAT armed — place the tag (or leave it in "
-                       "place and lift/replace it) to reformat it.");
+        Serial.println("[nfc] TAGFORMAT armed — place the tag, or leave one "
+                       "already on the scale, to reformat it.");
     } else if (cmd.equalsIgnoreCase("STACK")) {
         reportStacks();
     } else if (cmd.equalsIgnoreCase("APIKEY")) {

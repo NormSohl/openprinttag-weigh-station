@@ -29,8 +29,8 @@ extern SemaphoreHandle_t    gWeightMutex;
 extern uint8_t              gTagUid[8];
 extern OptMain              gTagMain;
 extern SemaphoreHandle_t    gTagMutex;
-// Set here, consumed by nfcTask — see nfc_task.cpp.
-extern char                 gReuseTargetUid[17];
+// Set here (Start/Stop on /reuse), consumed by nfcTask/syncTask — see main.cpp.
+extern volatile bool        gReuseModeActive;
 extern volatile bool        gWriteMainPending;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
@@ -1728,77 +1728,97 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     req->redirect("/spool?id=" + String((unsigned)id));
 }
 
-// ── GET /reuse — clear a spent tag for reuse ──────────────────────────────────
-// Same "whatever's on the scale right now" shape as Onboard/Calibrate. Tags
-// are expensive enough that disposing of one with an empty reel is a real
-// cost, so this lets staff wipe it and send it back through the normal
-// blank-tag pipeline instead. No automatic near-empty detection — staff pull
-// spools they've judged empty into a physical bin and process them here as
-// time allows; see /api/reuse for what actually happens to the store record.
+// ── GET /reuse — bulk tag-reuse mode ──────────────────────────────────────────
+// Tags are expensive enough that disposing of one with an empty reel is a
+// real cost. Deliberately NOT a per-tag confirm-and-click flow — staff have
+// already sorted a bin of spools they judge empty, so the friction that
+// matters is per-BATCH ("am I sure I want to start erasing"), not per-tag.
+// Turning reuse mode on reuses the exact same countdown/cancel-by-removal UX
+// a genuinely blank tag already gets (nfc_task.cpp's classification check),
+// for every tag placed while it's active: place, watch it count down on the
+// display, remove once done, place the next one. No automatic near-empty
+// detection — staff decide what's empty; this only automates what happens
+// once they've decided.
 static void handleReuseForm(AsyncWebServerRequest* req) {
     String p = head("Reuse Tag", "/reuse");
-    int cur = currentSpool();
 
-    if (cur < 0) {
-        p += "<div class='card'><p>No spool is on the scale.</p>"
-             "<p class='muted'>Place an empty spool from the reuse bin, wait for "
-             "it to register, then reload this page.</p></div>";
+    if (!gReuseModeActive) {
+        p += "<div class='card'><p>Reuse mode is off.</p>"
+             "<p class='muted'>Turning it on makes the station treat every tag "
+             "placed on the scale as ready to erase &mdash; no per-tag "
+             "confirmation. Only start it once the spools you're about to "
+             "place are ones you've already decided are empty.</p>"
+             "<form method='POST' action='/api/reuse/start' onsubmit=\"return "
+             "confirm('Start reuse mode? Every tag placed on the scale from now "
+             "on will be erased and its spool retired, until you stop it.')\">"
+             "<button type='submit' style='background:#522;color:#eee;padding:8px 16px;"
+             "font-size:14px;border-radius:4px;border:0;cursor:pointer'>"
+             "Start reuse mode</button></form></div>";
         p += FOOT;
         req->send(200, "text/html", p);
         return;
     }
 
-    SpoolRecord r;
-    storeGetSpool((uint32_t)cur, r);
+    p += "<div class='card'>"
+         "<p style='color:#f66'><strong>Reuse mode: ON</strong> &mdash; every tag "
+         "placed on the scale will be erased.</p>"
+         "<p class='muted' id='reuse-status'>Waiting for a tag&hellip;</p>"
+         "<form method='POST' action='/api/reuse/stop'>"
+         "<button type='submit' style='padding:8px 16px;font-size:14px;"
+         "border-radius:4px;cursor:pointer'>Stop reuse mode</button></form>"
+         "</div>";
 
-    p += "<div class='card'>";
-    p += "<h3>Spool #" + String((unsigned)cur) + " — " + esc(r.vendor) + " "
-       + esc(r.material[0] ? r.material : "Unknown") + "</h3>";
-    p += "<p>Remaining: " + String(r.remaining_g, 0) + " g</p>";
-    p += "<p class='muted'>This retires spool #" + String((unsigned)cur) + " ("
-       + String(r.remaining_g, 0) + " g logged as consumed) and erases its tag "
-         "so it can be onboarded fresh. Leave the tag on the scale until it's "
-         "done — a few seconds.</p>";
-    p += "<form method='POST' action='/api/reuse' onsubmit=\"return confirm("
-         "'Retire spool #" + String((unsigned)cur) + " and erase its tag? "
-       + String(r.remaining_g, 0) + " g will be logged as consumed. "
-         "This cannot be undone.')\">";
-    p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
-    p += "<button type='submit' style='background:#522;color:#eee;padding:8px 16px;"
-         "font-size:14px;border-radius:4px;border:0;cursor:pointer'>"
-         "Erase &amp; retire this tag</button>";
-    p += "</form></div>";
-
-    if (req->hasParam("armed"))
-        p += "<p class='muted'>Reformat armed — leave the tag in place.</p>";
+    // Polls the device's own state machine rather than tracking anything
+    // page-side, so this reads correctly even if reuse mode was turned on
+    // from a different browser/tab, or a tag was already mid-countdown when
+    // this page loaded. BLANK_TAG_CONFIRM_SEC is hardcoded to 2 here to match
+    // config.h -- purely cosmetic (the real cancel window is enforced on the
+    // device regardless of what this countdown displays).
+    p += "<script>(function(){"
+         "var el=document.getElementById('reuse-status');"
+         "var countdownFrom=null;"
+         "function poll(){"
+           "fetch('/api/status').then(function(r){return r.json();}).then(function(d){"
+             "var s=d.state;"
+             "if(s==='idle'||s==='idle_no_wifi'){"
+               "countdownFrom=null;"
+               "el.textContent='Waiting for a tag\\u2026';el.style.color='';"
+             "}else if(s==='blank_tag_found'||s==='awaiting_format_confirm'){"
+               "if(countdownFrom===null)countdownFrom=Date.now();"
+               "var left=Math.max(0,Math.ceil(2-(Date.now()-countdownFrom)/1000));"
+               "el.textContent='Tag placed \\u2014 erasing in '+left+'\\u2026';"
+               "el.style.color=left<=1?'#f66':'';"
+             "}else if(s==='formatting_and_registering'){"
+               "el.textContent='Erasing\\u2026';el.style.color='';"
+             "}else if(s==='present'){"
+               "countdownFrom=null;"
+               "el.textContent='Done \\u2713 \\u2014 remove tag, place the next one';"
+               "el.style.color='#8f8';"
+             "}else{"
+               "el.textContent='Working\\u2026';el.style.color='';"
+             "}"
+           "}).catch(function(){});"
+         "}"
+         "poll();setInterval(poll,400);"
+         "})();</script>";
 
     p += FOOT;
     req->send(200, "text/html", p);
 }
 
-// ── POST /api/reuse — arm a one-shot reformat scoped to the tag on the scale ──
-// Retiring the store record happens automatically the moment nfcTask confirms
-// the tag actually went blank (sync_task.cpp's Resolving phase, matched by
-// physical NFC UID) — not here. That single mechanism also covers a tag wiped
-// by TAGFORMAT or a third-party NFC tool, so this handler's only job is to
-// arm the reformat for the exact physical tag that's on the scale right now.
-static void handleApiReuse(AsyncWebServerRequest* req) {
+// ── POST /api/reuse/start, /api/reuse/stop — toggle bulk reuse mode ───────────
+// Retiring each old record happens automatically in sync_task.cpp's Resolving
+// phase (matched by physical NFC UID) the moment a tag actually goes blank —
+// these handlers only flip the mode flag nfcTask checks on every placement.
+static void handleApiReuseStart(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    const AsyncWebParameter* ps = req->getParam("id", true);
-    if (!ps) { req->send(400, "text/plain", "missing id"); return; }
-    int id = ps->value().toInt();
-    // Re-check against what's on the scale NOW, not what the page said when it
-    // loaded — the spool could have been swapped in between.
-    if (id <= 0 || id != currentSpool()) {
-        req->send(409, "text/plain", "that spool is no longer on the scale");
-        return;
-    }
-    uint8_t uid[8];
-    xSemaphoreTake(gTagMutex, portMAX_DELAY);
-    memcpy(uid, gTagUid, 8);
-    xSemaphoreGive(gTagMutex);
-    for (int i = 0; i < 8; i++) snprintf(gReuseTargetUid + i * 2, 3, "%02x", uid[i]);
-    req->redirect("/reuse?armed=1");
+    gReuseModeActive = true;
+    req->redirect("/reuse");
+}
+static void handleApiReuseStop(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    gReuseModeActive = false;
+    req->redirect("/reuse");
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
@@ -2914,8 +2934,9 @@ void webAppBegin() {
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
-    sServer.on("/reuse",       HTTP_GET,  handleReuseForm);
-    sServer.on("/api/reuse",   HTTP_POST, handleApiReuse);
+    sServer.on("/reuse",             HTTP_GET,  handleReuseForm);
+    sServer.on("/api/reuse/start",   HTTP_POST, handleApiReuseStart);
+    sServer.on("/api/reuse/stop",    HTTP_POST, handleApiReuseStop);
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
     sServer.on("/stock",            HTTP_GET,  handleStockPage);
     sServer.on("/api/stock/add",    HTTP_POST, handleApiStockAdd);
