@@ -742,11 +742,19 @@ void displayTask(void* param) {
             if (countdown < 0) countdown = 0;
 
             if (countdown != lastCount) {
-                // Size-8 digit: 48x64px per char; center at x≈216 for single digit.
                 spiBusTakeTft();
+                // Last second before the write: swap the digit to red and
+                // replace "Registering in:" with an explicit warning, rather
+                // than relying on the shrinking number alone. The 2 s window
+                // (down from 5 s) leaves little margin to notice the countdown
+                // at all if attention was elsewhere when the tag landed.
+                const bool  finalSec = (countdown <= 1);
+                const uint16_t digitColor = finalSec ? TFT_RED : tft.color565(220, 140, 0);
+                if (finalSec) row(3, "Writing tag now!", TFT_RED);
+                // Size-8 digit: 48x64px per char; center at x≈216 for single digit.
                 tft.fillRect(0, 160, 480, 100, TFT_BLACK);
                 tft.setTextSize(8);
-                tft.setTextColor(tft.color565(220, 140, 0), TFT_BLACK);
+                tft.setTextColor(digitColor, TFT_BLACK);
                 tft.setCursor(216, 168);
                 tft.print(countdown);
                 spiBusGive();
