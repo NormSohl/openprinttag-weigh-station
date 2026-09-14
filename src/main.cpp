@@ -12,6 +12,7 @@
 #include "api_key.h"        // shared secret for mutating HTTP endpoints
 #include "display_tz.h"     // display-only local timezone (TFT clock, web app)
 #include "station_name.h"   // Idle screen's configurable greeting
+#include "last_onboard.h"   // Onboard page's remembered last vendor/material/color/profile
 #include "controller.h"     // single owner of the WiFi/idle gState group
 
 // ── Shared state ──────────────────────────────────────────────
@@ -182,6 +183,8 @@ void setup() {
 
     stationNameBegin();
     Serial.printf("[station] name: %s\n", stationNameGet());
+
+    lastOnboardBegin();
 
     Serial.printf("[store] filesystem: %u kB free / %u kB\n",
                   (unsigned)(storeFreeBytes() >> 10), (unsigned)(storeTotalBytes() >> 10));

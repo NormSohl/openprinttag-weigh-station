@@ -20,6 +20,7 @@
 #include "api_key.h"
 #include "display_tz.h"
 #include "station_name.h"
+#include "last_onboard.h"
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -1331,12 +1332,18 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
                        "this.value=='__new__'?'block':'none'\"";
     };
 
-    // Vendor
+    // Vendor — defaults to whatever was picked last time (see last_onboard.h):
+    // a batch of new stock from one supplier is usually many spools in a row
+    // of the same vendor, so retyping/reselecting it every time is pure
+    // friction. Falls back to the browser's own default (first option) when
+    // nothing's been remembered yet, or the remembered name no longer exists.
+    const char* lastVendor = lastOnboardVendor();
     p += "<label>Vendor</label><select name='vendor'" + revealOnchange("vendor-new-wrap") + ">";
     char vbuf[64];
     for (size_t i = 0; i < cfgVendorCount(); i++)
         if (cfgVendorAt(i, vbuf, sizeof(vbuf)))
-            p += "<option>" + esc(vbuf) + "</option>";
+            p += String("<option") + (strcmp(vbuf, lastVendor) == 0 ? " selected" : "")
+               + ">" + esc(vbuf) + "</option>";
     p += "<option value='__new__'>&plus; Add new vendor&hellip;</option>";
     p += "</select>";
     p += "<div id='vendor-new-wrap' style='display:none;margin-top:8px'>"
@@ -1352,11 +1359,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // CATALOG_SCRIPT's type-token matching already uses — kept local so this
     // panel works with no network, matching the whole point of the manual
     // fallback.
+    const char* lastMaterial = lastOnboardMaterial();
     p += "<label>Material</label><select name='material'" + revealOnchange("material-new-wrap") + ">";
     CfgMaterial m;
     for (size_t i = 0; i < cfgMaterialCount(); i++)
         if (cfgMaterialAt(i, m))
-            p += "<option>" + esc(m.name) + "</option>";
+            p += String("<option") + (strcmp(m.name, lastMaterial) == 0 ? " selected" : "")
+               + ">" + esc(m.name) + "</option>";
     p += "<option value='__new__'>&plus; Add new material&hellip;</option>";
     p += "</select>";
     p += "<div id='material-new-wrap' style='display:none;margin-top:8px'>"
@@ -1388,11 +1397,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "</div>";
 
     // Color
+    const char* lastColor = lastOnboardColor();
     p += "<label>Color</label><select name='color'" + revealOnchange("color-new-wrap") + ">";
     CfgColor c;
     for (size_t i = 0; i < cfgColorCount(); i++)
         if (cfgColorAt(i, c))
-            p += "<option>" + esc(c.name) + "</option>";
+            p += String("<option") + (strcmp(c.name, lastColor) == 0 ? " selected" : "")
+               + ">" + esc(c.name) + "</option>";
     p += "<option value='__new__'>&plus; Add new colour&hellip;</option>";
     p += "</select>";
     p += "<div id='color-new-wrap' style='display:none;margin-top:8px'>"
@@ -1402,11 +1413,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "</div>";
 
     // Spool profile (fills nominal-full + empty tare)
+    const char* lastProfile = lastOnboardProfile();
     p += "<label>Spool profile</label><select name='profile'" + revealOnchange("profile-new-wrap") + ">";
     CfgProfile pr;
     for (size_t i = 0; i < cfgProfileCount(); i++)
         if (cfgProfileAt(i, pr))
-            p += "<option>" + esc(pr.label) + "</option>";
+            p += String("<option") + (strcmp(pr.label, lastProfile) == 0 ? " selected" : "")
+               + ">" + esc(pr.label) + "</option>";
     p += "<option value='__new__'>&plus; Add new spool profile&hellip;</option>";
     p += "</select>";
     p += "<div id='profile-new-wrap' style='display:none;margin-top:8px'>"
@@ -1610,6 +1623,12 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
             for (size_t i = 0; i < cfgProfileCount(); i++)
                 if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
         }
+
+        // Remember these four for next time's dropdown defaults — see
+        // last_onboard.h. vendor/matName/colName/profName are all final
+        // resolved names by this point, whether picked from the list or just
+        // created via "+ Add new ...".
+        lastOnboardSet(vendor.c_str(), matName.c_str(), colName.c_str(), profName.c_str());
 
         nominal = havePr ? pr.nominal_full_g : 0.0f;
         empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);
