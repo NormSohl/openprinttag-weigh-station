@@ -214,6 +214,15 @@ See `docs/design/tft-display-states.md` for the display content per state (`disp
 
 See `hardware/netlist.md` for the wiring diagram, pin assignments, and connector details.
 
+See `docs/user-manual.md` for the full member/admin manual, and
+`docs/quickref-weighing.md` / `docs/quickref-onboarding.md` /
+`docs/quickref-inventorying.md` for the printable one-page cheat sheets
+covering the lab's three active daily workflows. `docs/quickref-tag-reuse.md`
+documents the reuse feature but is deliberately not linked into the other
+three or the manual's main flow: reuse isn't part of the active workflow for
+now, on direct user decision (2026-09-15), even though the code and API
+endpoints stay in place.
+
 ## Runtime Configuration
 
 All runtime settings survive power cycles via ESP32 NVS (flash key-value store).
