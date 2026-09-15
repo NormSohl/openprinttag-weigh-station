@@ -8,6 +8,13 @@ the spool, and records the remaining filament **on the device**. A built-in web
 app (`http://weighstation.local/`) shows inventory and history, onboards new
 spools, flags reorders, and takes backups. There is no external server.
 
+**Printable one-page quick references**, for posting at the station itself:
+[Weighing a spool](quickref-weighing.md) ·
+[Onboarding a new spool](quickref-onboarding.md) ·
+[Inventorying](quickref-inventorying.md). (There's also a
+[Tag Reuse](quickref-tag-reuse.md) one-pager, but that workflow isn't in
+active use right now — see that page for why.)
+
 ---
 
 ## For Members: Weighing a Spool
@@ -60,12 +67,14 @@ The 3.5" screen shows one of these, depending on what's happening:
 
 When you place a spool with a **blank NFC tag** on the scale:
 
-1. The display shows a **5-second countdown** — "New tag found / Remove to
-   cancel / Registering in: 5…"
+1. The display shows a **2-second countdown** — "New tag found / Remove to
+   cancel / Registering in: 2…". The window is short, so in the last second
+   the digit turns red and the text switches to "Writing tag now!" as a final
+   heads-up.
 
    <img src="images/lcd/new-tag-countdown.svg" width="300" alt="New tag found screen with a large countdown digit">
 
-2. **Remove the spool within 5 seconds** to cancel, or **leave it in place** to
+2. **Remove the spool within 2 seconds** to cancel, or **leave it in place** to
    proceed.
 3. The station formats the tag and creates a placeholder record on the device.
    The display shows `Registered!`, the spool number, and **NEEDS ONBOARDING**
@@ -96,10 +105,13 @@ right away if the spool is still on the scale, or the next time it's placed.
    identifiers — the same data a genuine vendor tag carries. If the filament
    isn't in the catalog, expand **Enter details manually** and pick the
    **vendor**, **material**, **color**, and **spool profile** (the profile
-   fills in the empty-spool tare and nominal weight) from the lab's own lists.
-   Any of those four fields has a **+ Add new** option if it isn't in the list
-   yet — no need to visit Settings first to add it. You can also capture the
-   tare from a matching empty spool with **Capture tare**.
+   fills in the empty-spool tare and nominal weight) from the lab's own lists
+   — each of the four picklists defaults to whichever choice was used last, so
+   onboarding a batch of the same shipment doesn't mean re-picking the same
+   vendor for every spool. Any of those four fields has a **+ Add new** option
+   if it isn't in the list yet — no need to visit Settings first to add it.
+   You can also capture the tare from a matching empty spool with
+   **Capture tare**.
 4. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
    weights) is written to the tag and the record is saved.
 

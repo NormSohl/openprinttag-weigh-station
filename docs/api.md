@@ -166,6 +166,8 @@ These change state and are guarded once an API key is set.
 | `POST /api/audit/abandon` | Drop the audit itself, from either phase, without undoing anything already Closed/Found |
 | `POST /api/audit/close` | Confirm a spool disposed (form field `spool`, the local id) — see below |
 | `POST /api/audit/found` | Confirm a spool present without a fresh weigh (form field `spool`) |
+| `POST /api/reuse/start` | Turn on bulk tag-reuse mode (Idle → armed) — see below |
+| `POST /api/reuse/stop` | Turn off bulk tag-reuse mode |
 | `POST /api/apikey` | Set or clear the API key (needs the *current* key) |
 | `POST /api/tz` | Set the display timezone (form field `tz`, one of a fixed zone-id list) and/or the 12/24-hour clock format (form field `h24`, `"0"`/`"1"`) — see below |
 | `POST /api/station-name` | Rename the idle screen's greeting (form field `name`, 1–20 characters) — see below |
@@ -181,6 +183,14 @@ discarded with material still in it. The record stays (`retired: true` on
 `/api/spools`, `remaining_g: 0`) for historical analysis; nothing is deleted.
 A genuine reweigh later clears `retired` automatically, so a spool that
 reappears just rejoins normal tracking with no separate reactivation step.
+
+`gReuseModeActive` is a persistent flag, not a one-shot action: once started with
+`/api/reuse/start`, **any** tag placed on the scale is treated as blank
+(regardless of its actual contents) and enters the same confirm-by-inaction
+countdown a genuinely blank tag gets, erasing it on expiry rather than minting
+a new spool record. `/api/reuse/stop` (or the Settings-page equivalent) turns
+that back off. Not currently part of the lab's day-to-day workflow — see the
+Tag Reuse one-pager if the mode is turned on.
 
 `GET /config/export` and `POST /config/import` back up the Config catalog
 (vendors/materials/spool-profiles/colors/stock-items) as one JSON file,
