@@ -137,6 +137,11 @@
 // display_tz.h/.cpp, picked on the Settings page and persisted to NVS.
 
 #define BLANK_TAG_CONFIRM_SEC     2  // countdown before auto-format proceeds
+// Auto-off for erase mode: no tag placed/erased for this long while the
+// mode is on turns it back off automatically -- a station left armed and
+// unattended would otherwise erase the next tag anyone places on it, with
+// no time limit at all. See gEraseModeActivityMs in main.cpp.
+#define ERASE_MODE_IDLE_TIMEOUT_SEC 600  // 10 minutes
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing
 // Calibration factor for NAU7802 → grams conversion (raw counts per gram).

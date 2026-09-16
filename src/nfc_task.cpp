@@ -32,6 +32,7 @@ extern volatile bool        gTagForceFormat;
 // placed tag is erased immediately, no countdown -- see the classification
 // check below and sync_task.cpp's Resolving phase.
 extern volatile bool        gEraseModeActive;
+extern volatile uint32_t    gEraseModeActivityMs;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
@@ -364,6 +365,16 @@ void nfcTask(void* param) {
 
         // ── Waiting for a tag (controller shows Idle / IdleNoWiFi) ────────────
         if (phase == NfcPhase::Waiting) {
+            // Erase mode's idle auto-off: checked here, not just on
+            // placement, because the risk is a station left armed with
+            // NOTHING on the scale at all -- someone walked away, not
+            // merely "no tag between placements." See gEraseModeActivityMs's
+            // declaration in main.cpp for why this isn't tab-visibility-based.
+            if (gEraseModeActive &&
+                (millis() - gEraseModeActivityMs) > (ERASE_MODE_IDLE_TIMEOUT_SEC * 1000UL)) {
+                gEraseModeActive = false;
+                Serial.println("[erase] auto-off: idle timeout with no tag processed");
+            }
             if (tagPresent) {
                 memcpy(uid, detectedUid, 8);
                 numBlocks    = detectedNumBlocks;

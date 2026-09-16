@@ -56,7 +56,17 @@ volatile bool gTagForceFormat = false;
 // classification check and sync_task.cpp's Resolving phase. Deliberately a
 // persistent mode, not a one-shot per-tag arm: the whole point is processing
 // a bin of tags back to back with no per-tag step.
-volatile bool gEraseModeActive = false;
+//
+// Nothing about this mode requires a browser tab to stay open or focused --
+// it is a server-side flag, so the real risk is not "the tab changed," it's
+// "a person walked away from the physical station and left it armed." A
+// tab-visibility check would not catch that at all. gEraseModeActivityMs
+// instead tracks wall-clock time since the mode was turned on or last
+// actually erased a tag; nfc_task.cpp's idle (Waiting) loop auto-clears
+// gEraseModeActive after ERASE_MODE_IDLE_TIMEOUT_SEC of no activity, on
+// direct user request after a live test raised exactly this concern.
+volatile bool     gEraseModeActive     = false;
+volatile uint32_t gEraseModeActivityMs = 0;
 
 // SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
 // Both tasks must take this mutex before any SPI transaction.

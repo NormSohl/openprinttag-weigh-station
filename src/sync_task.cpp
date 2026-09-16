@@ -27,6 +27,7 @@ extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
 extern volatile bool        gEraseModeActive;
+extern volatile uint32_t    gEraseModeActivityMs;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
@@ -562,6 +563,7 @@ void syncTask(void* param) {
                 if (gEraseModeActive) {
                     sSpoolId = -1; gSpoolId = -1; gSpoolNeedsOnboarding = false;
                     sSnapshot = {};
+                    gEraseModeActivityMs = millis();   // reset the idle auto-off clock
                     ctrlPost(CtrlEvent::Weighed);   // -> Present, same as a normal weigh
                     sphase = SyncPhase::Holding;
                     continue;
