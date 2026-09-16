@@ -25,7 +25,9 @@ retires them properly instead of leaving the count wrong forever.
 1. On **Inventory**, click **Start audit**.
 2. **Weigh every spool as you normally would** while doing the count — a
    normal weigh during the audit window marks that spool "found"
-   automatically, no extra step.
+   automatically, no extra step. **Leave the Inventory page open while you
+   work** — the found count updates itself live as each spool is weighed, no
+   manual refresh needed.
 3. When every spool has been checked, click **Finish audit**. The page now
    lists every spool that was *not* seen, each with two buttons:
    - **Found** — it's physically there but you didn't weigh it (eyeballed it

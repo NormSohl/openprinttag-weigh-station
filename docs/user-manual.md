@@ -12,7 +12,7 @@ spools, flags reorders, and takes backups. There is no external server.
 [Weighing a spool](quickref-weighing.md) ·
 [Onboarding a new spool](quickref-onboarding.md) ·
 [Inventorying](quickref-inventorying.md). (There's also a
-[Tag Reuse](quickref-tag-reuse.md) one-pager, but that workflow isn't in
+[Tag Erase](quickref-tag-erase.md) one-pager, but that workflow isn't in
 active use right now — see that page for why.)
 
 ---

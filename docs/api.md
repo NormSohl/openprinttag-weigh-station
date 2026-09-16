@@ -30,6 +30,7 @@ work with no configuration.
 | `GET /api/storage` | JSON | Log size, free space, compaction due, write-failure flag |
 | `GET /export` | NDJSON | The complete raw event log — the full backup artifact |
 | `GET /config/export` | JSON | The Config catalog (vendors/materials/spool-profiles/colors/stock-items) as one file — a separate backup from `/export`; see below |
+| `GET /events` | `text/event-stream` | Server-Sent Events push — see below |
 
 > **`color` is `null` when no colour has been assigned**, on both `/api/spools` and
 > `/api/status` — it is not `"000000"`. A spool onboarded before its colour was
@@ -138,11 +139,42 @@ which commit is actually flashed on this unit, distinct from `firmware`
 (a hand-maintained semver that doesn't move on every commit). A `-dirty`
 suffix means the working tree had uncommitted changes when it was built.
 
+### GET /events
+
+A persistent Server-Sent Events stream the built-in web app uses to update
+itself live (see `CLAUDE.md`'s *Live page updates (Server-Sent Events)*
+section for which pages watch it and why). Each message is:
+
+```
+event: state
+data: <spool id>,<needs_onboarding 0/1>,<audit phase 0/1/2>,<audit found>,<audit total>
+```
+
+`<spool id>` is `-1` when nothing is on the scale; audit phase is
+`0` Idle / `1` Scanning / `2` Resolving. A message is sent on every device
+state change, on every audit start/finish/abandon/close/found action, and
+once immediately to every client the instant it (re)connects — so a client
+that only just opened the connection, or reconnected after a drop, is caught
+up without needing a follow-up request.
+
+**Don't react to a message by fetching more detail.** An earlier version of
+this stream sent a bare "something changed" ping and expected listeners to
+`fetch('/api/status')` to find out what — found on hardware to silently
+stall under load, because this server holds very few concurrent connections
+(see *Polling* below) and that fetch was racing the already-open SSE
+connection for one. The message body above carries everything a listener
+should need instead.
+
+This is a genuine long-lived connection, unlike everything else in this
+document — count it against the "few concurrent connections" budget
+mentioned below if you're also polling other endpoints from the same client.
+
 ### Polling
 
 `ESPAsyncWebServer` holds few concurrent connections. Poll on the order of
 seconds, one client at a time; don't point a multi-worker scraper at it.
 `/api/status` exists precisely so a dashboard needs one request, not six.
+`/events` is the exception to "poll" — open it once and listen.
 
 ---
 
@@ -166,8 +198,8 @@ These change state and are guarded once an API key is set.
 | `POST /api/audit/abandon` | Drop the audit itself, from either phase, without undoing anything already Closed/Found |
 | `POST /api/audit/close` | Confirm a spool disposed (form field `spool`, the local id) — see below |
 | `POST /api/audit/found` | Confirm a spool present without a fresh weigh (form field `spool`) |
-| `POST /api/reuse/start` | Turn on bulk tag-reuse mode (Idle → armed) — see below |
-| `POST /api/reuse/stop` | Turn off bulk tag-reuse mode |
+| `POST /api/erase/start` | Turn on bulk tag-erase mode (Idle → armed) — see below |
+| `POST /api/erase/stop` | Turn off bulk tag-erase mode |
 | `POST /api/apikey` | Set or clear the API key (needs the *current* key) |
 | `POST /api/tz` | Set the display timezone (form field `tz`, one of a fixed zone-id list) and/or the 12/24-hour clock format (form field `h24`, `"0"`/`"1"`) — see below |
 | `POST /api/station-name` | Rename the idle screen's greeting (form field `name`, 1–20 characters) — see below |
@@ -184,13 +216,13 @@ discarded with material still in it. The record stays (`retired: true` on
 A genuine reweigh later clears `retired` automatically, so a spool that
 reappears just rejoins normal tracking with no separate reactivation step.
 
-`gReuseModeActive` is a persistent flag, not a one-shot action: once started with
-`/api/reuse/start`, **any** tag placed on the scale is treated as blank
-(regardless of its actual contents) and enters the same confirm-by-inaction
-countdown a genuinely blank tag gets, erasing it on expiry rather than minting
-a new spool record. `/api/reuse/stop` (or the Settings-page equivalent) turns
-that back off. Not currently part of the lab's day-to-day workflow — see the
-Tag Reuse one-pager if the mode is turned on.
+`gEraseModeActive` is a persistent flag, not a one-shot action: once started
+with `/api/erase/start`, **any** tag placed on the scale is treated as blank
+(regardless of its actual contents) and erased immediately — no countdown,
+same as a forced `TAGFORMAT` — rather than minting a new spool record.
+`/api/erase/stop` (or the web page's own button) turns that back off. Not
+currently part of the lab's day-to-day workflow — see the Tag Erase one-pager
+if the mode is turned on.
 
 `GET /config/export` and `POST /config/import` back up the Config catalog
 (vendors/materials/spool-profiles/colors/stock-items) as one JSON file,

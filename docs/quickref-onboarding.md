@@ -22,18 +22,23 @@ the station before.
    and a QR code. The spool is now trackable but has no material data yet.
 5. **Scan the QR code** (or browse to `weighstation.local/onboard` on any
    device on the network) while the spool is still on the scale.
-6. On the **Onboard** page:
-   - Already have this exact product on file? Pick **"another spool of X"** —
-     it inherits vendor/material/colour/tare with nothing to retype.
-   - New product? Choose **"a new product"**, then **search the catalog
-     first** — picking a real result fills in brand, material, colour, print
-     temps, and vendor identifiers automatically.
+6. On the **Onboard** page, the "This spool is…" dropdown defaults to
+   **"a new product"**:
+   - Already have this exact product on file? **Deliberately reselect
+     "another spool of X"** from the dropdown — it inherits vendor/material/
+     colour/tare with nothing to retype.
+   - New product (the default)? **Search the catalog first** — picking a
+     real result fills in brand, material, colour, print temps, and vendor
+     identifiers automatically.
    - Not in the catalog? Expand **Enter details manually**. Vendor, material,
      colour, and spool profile each default to whatever you picked last time,
      and each has a **+ Add new** option if it's not in the list yet.
 7. Click **Save & write tag.** The full data is written to the tag.
 
-Done — the tag now carries real identity, and the spool is in inventory.
+Done — the tag now carries real identity, and the spool is in inventory. The
+page you land on updates itself: **place the next spool and it carries you
+straight into the next onboarding form**, no need to click the Onboard nav
+link again — handy for working through a stack of new reels back to back.
 
 ## If it goes wrong
 
