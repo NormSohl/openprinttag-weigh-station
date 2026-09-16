@@ -49,14 +49,14 @@ volatile bool gWriteAuxPending  = false;
 // and stop decoding, so nothing else can get them back.
 volatile bool gTagForceFormat = false;
 
-// Set by the web /reuse page's Start/Stop buttons. While true, nfcTask treats
-// any freshly placed tag as blank (reusing the same countdown/cancel-by-
-// removal UX a genuinely blank tag gets), and syncTask retires whatever
-// spool that physical chip previously carried without minting a new stub —
-// see nfc_task.cpp's classification check and sync_task.cpp's Resolving
-// phase. Deliberately a persistent mode, not a one-shot per-tag arm: the
-// whole point is processing a bin of tags back to back with no per-tag step.
-volatile bool gReuseModeActive = false;
+// Set by the web /erase page's Start/Stop buttons. While true, nfcTask
+// erases any freshly placed tag immediately -- no countdown, same as a
+// forced TAGFORMAT -- and syncTask retires whatever spool that physical
+// chip previously carried without minting a new stub. See nfc_task.cpp's
+// classification check and sync_task.cpp's Resolving phase. Deliberately a
+// persistent mode, not a one-shot per-tag arm: the whole point is processing
+// a bin of tags back to back with no per-tag step.
+volatile bool gEraseModeActive = false;
 
 // SPI bus mutex — nfcTask (Core 1) and displayTask (Core 0) share the bus.
 // Both tasks must take this mutex before any SPI transaction.

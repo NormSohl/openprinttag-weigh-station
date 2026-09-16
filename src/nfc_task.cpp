@@ -28,10 +28,10 @@ extern SemaphoreHandle_t    gSpiMutex;
 // present, regardless of how it currently classifies. The escape hatch for a
 // tag left half-written by a failed format.
 extern volatile bool        gTagForceFormat;
-// Set by the web /reuse page's Start/Stop buttons: while true, ANY freshly
-// placed tag is treated as blank regardless of its actual contents. See the
-// classification check below and sync_task.cpp's Resolving phase.
-extern volatile bool        gReuseModeActive;
+// Set by the web /erase page's Start/Stop buttons: while true, ANY freshly
+// placed tag is erased immediately, no countdown -- see the classification
+// check below and sync_task.cpp's Resolving phase.
+extern volatile bool        gEraseModeActive;
 
 // Raw ISO15693 block dump for the spool currently on the scale.
 // An ICODE SLIX2 reports 80 blocks x 4 B = 320 B; 512 leaves headroom for
@@ -415,15 +415,25 @@ void nfcTask(void* param) {
                 continue;
             }
 
-            // Reuse mode (armed from the web /reuse page): treat ANY freshly
-            // placed tag as blank, not just a genuinely empty one. That's the
-            // whole point — burn through a bin of already-decided-empty spools
-            // one placement at a time, each one getting the exact same
-            // countdown/cancel-by-removal confirmation a real blank tag
-            // already gets, with no extra per-tag step. See sync_task.cpp's
-            // Resolving phase for what happens once it's actually formatted
+            // Erase mode (armed from the web /erase page): wins over
+            // classification the same way a forced TAGFORMAT does, and for
+            // the same reason -- launch immediately, no countdown. A
+            // genuine blank tag gets the confirm-by-inaction window because
+            // someone might not be watching when it lands; erase mode is the
+            // opposite case, staff already sorted a bin of decided-empty
+            // spools and are standing there feeding them through one at a
+            // time, so the wait is pure friction. See sync_task.cpp's
+            // Resolving phase for what happens once it's actually erased
             // (retire the old record, mint nothing new).
-            if (gReuseModeActive || optIsBlank(sRawBuf, sRawLen)) {
+            if (gEraseModeActive) {
+                Serial.println("[nfc] erase mode: erasing this tag now");
+                ctrlPost(CtrlEvent::FormatConfirmed);
+                phase = NfcPhase::Formatting;
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+
+            if (optIsBlank(sRawBuf, sRawLen)) {
                 ctrlPost(CtrlEvent::TagBlank);
                 phase = NfcPhase::BlankDetected;
             } else {
@@ -668,9 +678,9 @@ void nfcTask(void* param) {
         missCount = 0;
 
         // TAGFORMAT can be armed while this exact tag is already sitting
-        // Held. Reuse mode does NOT need the same catch here: it only ever
+        // Held. Erase mode does NOT need the same catch here: it only ever
         // takes effect on a fresh placement (the classification check
-        // above), by design — see gReuseModeActive's declaration.
+        // above), by design — see gEraseModeActive's declaration.
         if (gTagForceFormat) {
             gTagForceFormat = false;
             Serial.println("[nfc] TAGFORMAT: forcing a reformat of the tag already on the scale");

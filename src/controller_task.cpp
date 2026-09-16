@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "device_state.h"
 #include "controller.h"
+#include "web_app.h"
 
 // ── Shared globals (defined in main.cpp) ─────────────────────────────────────
 extern volatile DeviceState gState;
@@ -19,12 +20,19 @@ QueueHandle_t gCtrlQueue = nullptr;
 // group, this is the ONLY one that runs.
 static void setState(DeviceState s) {
     xSemaphoreTake(gStateMutex, portMAX_DELAY);
+    bool changed = (gState != s);
 #ifdef STATE_TRACE
-    if (gState != s)
+    if (changed)
         Serial.printf("[ctrl] %s -> %s\n", deviceStateName(gState), deviceStateName(s));
 #endif
     gState = s;
     xSemaphoreGive(gStateMutex);
+    // Push, not poll: a page like /onboard needs to know the instant what's
+    // on the scale changes (currentSpool() in web_app.cpp is a function of
+    // this state plus gSpoolId), not up to a poll-interval late. Outside the
+    // mutex -- sEvents.send() touches the network stack and must never be
+    // called while holding gStateMutex.
+    if (changed) webAppNotifyStateChanged();
 }
 
 void ctrlPost(CtrlEvent e) {

@@ -30,8 +30,8 @@ extern SemaphoreHandle_t    gWeightMutex;
 extern uint8_t              gTagUid[8];
 extern OptMain              gTagMain;
 extern SemaphoreHandle_t    gTagMutex;
-// Set here (Start/Stop on /reuse), consumed by nfcTask/syncTask — see main.cpp.
-extern volatile bool        gReuseModeActive;
+// Set here (Start/Stop on /erase), consumed by nfcTask/syncTask — see main.cpp.
+extern volatile bool        gEraseModeActive;
 extern volatile bool        gWriteMainPending;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
@@ -44,6 +44,66 @@ extern char                 gApSsid[24];
 extern volatile bool        gClockSet;
 
 static AsyncWebServer sServer(80);
+
+// Forward decl -- defined below, needed by the SSE push logic here so both
+// the broadcast (webAppNotifyStateChanged) and the per-client catch-up
+// (sEvents.onConnect(), registered in webAppBegin()) can send the SAME
+// authoritative value.
+static int currentSpool();
+
+// Server-push channel for state changes, so a page like /onboard, a spool's
+// detail page, or the Inventory page can react the instant something changes
+// instead of polling. The message body carries the values a listener needs
+// to decide for itself, not a bare ping -- a live test found that a bare
+// ping requiring a follow-up fetch('/api/status') could silently stall: this
+// server holds very few concurrent connections, and the fetch was losing the
+// race against the already-open SSE stream for one. Format:
+// "<spool id>,<needs_onboarding>,<audit phase 0/1/2>,<audit found>,<audit total>"
+// (spool id -1 when nothing is on the scale). Each listener reads only the
+// fields it cares about: /onboard and /spool watch the id; the Inventory
+// page also watches the audit fields, and skips reloading entirely when
+// none of the fields it cares about actually changed -- a live test found
+// that reloading the whole page on every push (including ones that changed
+// nothing this page shows, like reweighing an already-found spool during an
+// audit) made a full-page flash on every placement, fighting anyone trying
+// to scroll the list.
+static AsyncEventSource sEvents("/events");
+
+// Shared with handleRoot()'s own audit banner render, so the two can never
+// silently drift into disagreeing about what "found" means.
+static void auditSummary(AuditPhase& phase, uint32_t& total, uint32_t& found) {
+    phase = storeAuditPhase();
+    total = 0; found = 0;
+    if (phase == AuditPhase::Idle) return;
+    char startTs[25] = {};
+    storeAuditStartTs(startTs, sizeof(startTs));
+    SpoolRecord rr;
+    for (size_t i = 0; i < storeSpoolCount(); i++) {
+        if (!storeSpoolAt(i, rr)) continue;
+        if (rr.retired || rr.remaining_g <= 1.0f) continue;
+        total++;
+        if (strcmp(rr.last_ts, startTs) >= 0) found++;
+    }
+}
+
+static String currentScaleSpoolPayload() {
+    int id = currentSpool();
+    bool needsOb = false;
+    if (id > 0) {
+        SpoolRecord r;
+        if (storeGetSpool((uint32_t)id, r)) needsOb = r.needs_ob;
+    }
+    AuditPhase phase; uint32_t total, found;
+    auditSummary(phase, total, found);
+    return String(id) + "," + (needsOb ? "1" : "0") + ","
+         + String((int)phase) + "," + String(found) + "," + String(total);
+}
+
+void webAppNotifyStateChanged() {
+    auto st = sEvents.send(currentScaleSpoolPayload().c_str(), "state");
+    Serial.printf("[sse] state-change push: %u client(s), status=%d\n",
+                  (unsigned)sEvents.count(), (int)st);
+}
 
 // ── Small HTML helpers ────────────────────────────────────────────────────────
 
@@ -511,10 +571,10 @@ static String head(const char* title, const char* active = "") {
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
     navlink(h, "/onboard",   "Onboard",   active);
-    navlink(h, "/reuse",     "Reuse",     active);
     navlink(h, "/reorder",   "Reorder",   active);
     navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
+    navlink(h, "/erase",     "Erase Tag", active);
     navlink(h, "/config",    "Settings",  active);
     navlink(h, "/backup",    "Backup",    active);
     h += "</nav></header><main>";
@@ -617,22 +677,19 @@ static void handleRoot(AsyncWebServerRequest* req) {
     // the log (storeAuditPhase() derives it), so this bar is correct even right
     // after a reboot mid-audit. A spool counts as found simply by having been
     // weighed since audit_start; nothing about normal weighing changes.
-    const AuditPhase auditPhase = storeAuditPhase();
+    AuditPhase auditPhase; uint32_t auditTotal, auditFound;
+    auditSummary(auditPhase, auditTotal, auditFound);
     char auditStartTs[25] = {};
     storeAuditStartTs(auditStartTs, sizeof(auditStartTs));
 
-    uint32_t auditTotal = 0, auditFound = 0, retiredCount = 0;
+    // retiredCount is unrelated to the audit fold above, so it's a separate
+    // pass rather than folded into auditSummary() -- keeps that helper's
+    // contract to exactly what the /events payload needs.
+    uint32_t retiredCount = 0;
     {
         SpoolRecord rr;
-        for (size_t i = 0; i < storeSpoolCount(); i++) {
-            if (!storeSpoolAt(i, rr)) continue;
-            if (rr.retired) { retiredCount++; continue; }
-            if (rr.remaining_g <= 1.0f) continue;
-            if (auditPhase != AuditPhase::Idle) {
-                auditTotal++;
-                if (strcmp(rr.last_ts, auditStartTs) >= 0) auditFound++;
-            }
-        }
+        for (size_t i = 0; i < storeSpoolCount(); i++)
+            if (storeSpoolAt(i, rr) && rr.retired) retiredCount++;
     }
 
     if (auditPhase == AuditPhase::Idle) {
@@ -794,6 +851,44 @@ static void handleRoot(AsyncWebServerRequest* req) {
     p += "<p class='muted'>" + String((unsigned)storeSpoolCount())
        + " spools tracked &middot; " + String((unsigned)storeLogLineCount())
        + " log entries</p>";
+    // This page has no live-refresh of its own, so an audit's found/not-found
+    // counts (and everything else here) just sit stale in an open tab while
+    // spools are weighed elsewhere -- found on a live audit test where the
+    // counts genuinely were updating, just not on screen without a manual
+    // reload. Listen on the same /events channel every other page uses.
+    //
+    // Reloading on every push (as a first cut did) meant a full-page flash
+    // on every placement, including ones that changed nothing this page
+    // shows -- reweighing an already-found spool during an audit still
+    // fired a push, since the push is keyed on device state, not on this
+    // page's content. Compare the fields that actually appear here (the
+    // audit phase/found/total, and whatever's on the scale) against what
+    // was true when this page was rendered, and only reload when one of
+    // them actually differs. Debounced too: a fast run of several state
+    // changes in a row (e.g. a blank-tag registration) collapses into one
+    // reload after things settle, rather than reloading this page's full
+    // (and comparatively heavy) inventory table once per intermediate state.
+    //
+    // A plain reload always lands back at the top -- confirmed on a live
+    // audit test to make scrolling through the list fight the page every few
+    // seconds. Stash the scroll position in sessionStorage right before
+    // reloading and restore it on the next load, so a reload someone doesn't
+    // even need to notice doesn't yank them back to row one.
+    p += "<script>(function(){"
+         "var Y='invScrollY',y=sessionStorage.getItem(Y);"
+         "if(y!==null){window.scrollTo(0,parseInt(y,10));sessionStorage.removeItem(Y);}"
+         "var base='" + String(cur) + "," + String((int)auditPhase) + ","
+                       + String(auditFound) + "," + String(auditTotal) + "';"
+         "var t=null;"
+         "new EventSource('/events').addEventListener('state',function(e){"
+           "var f=e.data.split(',');"
+           "var sig=f[0]+','+f[2]+','+f[3]+','+f[4];"
+           "if(sig===base)return;"
+           "clearTimeout(t);t=setTimeout(function(){"
+             "sessionStorage.setItem(Y,window.scrollY);location.reload();"
+           "},400);"
+         "});"
+         "})();</script>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -824,19 +919,27 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
 }
 
 // ── Physical inventory audit ────────────────────────────────────────────────
+// Each of these changes the audit phase/found/total signature the Inventory
+// page's live-refresh compares against, but none goes through controller_
+// task.cpp's setState() (they're store events, not device states) -- so
+// without an explicit push here, that comparison would have nothing to
+// react to until an unrelated weigh happened to fire one.
 static void handleApiAuditStart(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     storeAuditStart();
+    webAppNotifyStateChanged();
     req->redirect("/");
 }
 static void handleApiAuditFinish(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     storeAuditFinish();
+    webAppNotifyStateChanged();
     req->redirect("/");
 }
 static void handleApiAuditAbandon(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     storeAuditAbandon();
+    webAppNotifyStateChanged();
     req->redirect("/");
 }
 static void handleApiAuditClose(AsyncWebServerRequest* req) {
@@ -844,6 +947,7 @@ static void handleApiAuditClose(AsyncWebServerRequest* req) {
     const AsyncWebParameter* ps = req->getParam("spool", true);
     if (!ps) { req->send(400, "text/plain", "missing spool"); return; }
     storeRetireSpool((uint32_t)ps->value().toInt());
+    webAppNotifyStateChanged();
     req->redirect("/");
 }
 static void handleApiAuditFound(AsyncWebServerRequest* req) {
@@ -851,6 +955,7 @@ static void handleApiAuditFound(AsyncWebServerRequest* req) {
     const AsyncWebParameter* ps = req->getParam("spool", true);
     if (!ps) { req->send(400, "text/plain", "missing spool"); return; }
     storeAuditFound((uint32_t)ps->value().toInt());
+    webAppNotifyStateChanged();
     req->redirect("/");
 }
 
@@ -1216,19 +1321,63 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
            + (s.retired[k] ? "<span class='ob'>closed &mdash; audit</span>" : "") + "</td></tr>";
     p += "</table>";
     p += "<p class='muted'><a href='/' style='color:#8f8'>&larr; back</a></p>";
+    // Onboarding a stack of new spools lands here after each Save & write
+    // tag (see the comment on the h3 above) -- staff working through the
+    // stack place the next spool right from this page, and shouldn't have to
+    // find the Onboard nav link again for every single one. Listen for the
+    // same /events push the Onboard page does and jump there the instant a
+    // spool needing onboarding shows up, whatever spool this page happens to
+    // be showing.
+    p += "<script>new EventSource('/events').addEventListener('state',function(e){"
+         "if(e.data.split(',')[1]==='1')location.href='/onboard';"
+         "});</script>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
 
 // ── Onboarding form ───────────────────────────────────────────────────────────
+// The page below is a one-shot server render keyed on whatever's on the
+// scale AT REQUEST TIME (`cur`). Someone can leave the tab open, walk back
+// to the station, place a spool, and watch the device register it and point
+// back at this very page -- but the open tab has no way to know that
+// happened until told. Listen on the /events SSE channel: every message
+// (broadcast on a device-state change, or sent straight to a client the
+// instant it connects/reconnects -- see webAppNotifyStateChanged() and
+// sEvents.onConnect() in webAppBegin()) carries "<id>,<needs_onboarding>" as
+// its body, so the page can decide to reload from the message alone (this
+// page only cares about id; needs_onboarding is for the spool detail page's
+// watcher below). An earlier
+// version sent a bare ping and reacted by fetching /api/status to find out
+// what changed -- found on hardware to sometimes silently stall, because
+// this server holds very few concurrent connections and that fetch was
+// racing the already-open SSE stream for one. Carrying the value directly
+// needs no second connection at all. Reload the instant that id differs from
+// the id this page was rendered for, whichever direction (none -> a spool,
+// or spool A -> spool B); deliberately keyed on id change alone so mid-edit
+// typing on the CURRENT spool's form is never interrupted by an unrelated
+// status change (e.g. a Main-section reconcile write-back).
+static String onboardWatchScript(int baselineId) {
+    String s = "<script>(function(){"
+               "var baseline=";
+    s += String(baselineId);
+    s += ";"
+         "new EventSource('/events').addEventListener('state',function(e){"
+           "var id=parseInt(e.data.split(',')[0],10);"
+           "if(id!==baseline)location.reload();"
+         "});"
+         "})();</script>";
+    return s;
+}
+
 static void handleOnboardForm(AsyncWebServerRequest* req) {
     String p = head("Onboard", "/onboard");
     int cur = currentSpool();
 
     if (cur < 0) {
         p += "<div class='card'><p>No spool is on the scale.</p>"
-             "<p class='muted'>Place a spool, wait for it to register, then reload "
-             "this page to fill in its details.</p></div>";
+             "<p class='muted'>Place a spool and this page will update on its "
+             "own once it's registered.</p></div>";
+        p += onboardWatchScript(-1);
         p += FOOT;
         req->send(200, "text/html", p);
         return;
@@ -1251,6 +1400,15 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         p += "<label>This spool is&hellip;</label><select name='product' id='prod' "
              "onchange=\"document.getElementById('newprod').style.display="
              "this.value=='0'?'block':'none'\">";
+        // "A new product" listed FIRST and left as the browser's default
+        // selection, not appended after the MRU list -- on direct user
+        // correction. With it at the bottom, the unlabeled default was
+        // whichever product happened to sort first in the store (an
+        // unrelated leftover from an earlier onboarding), so onboarding a
+        // genuinely new reel without deliberately reselecting "a new
+        // product" first would silently attribute it to that stale product
+        // instead.
+        p += "<option value='0'>&mdash; A new product &mdash;</option>";
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
@@ -1260,11 +1418,11 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
                + (q.provisional ? " (provisional)" : "")
                + "</option>";
         }
-        p += "<option value='0'>&mdash; A new product &mdash;</option>";
         p += "</select>";
-        // Default to the first existing product, so the common case is one
-        // control and a submit; the detail fields start hidden to match.
-        p += "<div id='newprod' style='display:none'>";
+        // The default selection is now "a new product", so the detail
+        // fields start visible to match -- they hide once an existing
+        // product is actually picked (the onchange handler above).
+        p += "<div id='newprod'>";
     } else {
         // Nothing stocked yet, so there is no "another spool of X" to offer.
         p += "<input type='hidden' name='product' value='0'>";
@@ -1442,6 +1600,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "</form>";
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
+    p += onboardWatchScript(cur);
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -1747,70 +1906,62 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     req->redirect("/spool?id=" + String((unsigned)id));
 }
 
-// ── GET /reuse — bulk tag-reuse mode ──────────────────────────────────────────
+// ── GET /erase — bulk tag-erase mode ──────────────────────────────────────────
 // Tags are expensive enough that disposing of one with an empty reel is a
 // real cost. Deliberately NOT a per-tag confirm-and-click flow — staff have
 // already sorted a bin of spools they judge empty, so the friction that
 // matters is per-BATCH ("am I sure I want to start erasing"), not per-tag.
-// Turning reuse mode on reuses the exact same countdown/cancel-by-removal UX
-// a genuinely blank tag already gets (nfc_task.cpp's classification check),
-// for every tag placed while it's active: place, watch it count down on the
-// display, remove once done, place the next one. No automatic near-empty
+// Turning erase mode on makes the station erase every tag placed while it's
+// active IMMEDIATELY, no countdown (nfc_task.cpp's classification check wins
+// over the confirm-by-inaction path the same way a forced TAGFORMAT does):
+// place, it's gone, remove and place the next one. No automatic near-empty
 // detection — staff decide what's empty; this only automates what happens
-// once they've decided.
-static void handleReuseForm(AsyncWebServerRequest* req) {
-    String p = head("Reuse Tag", "/reuse");
+// once they've decided. The device screen shows "ERASE MODE" in red on Idle
+// the instant this mode is toggled on, so it's obvious from across the room.
+static void handleEraseForm(AsyncWebServerRequest* req) {
+    String p = head("Erase Tag", "/erase");
 
-    if (!gReuseModeActive) {
-        p += "<div class='card'><p>Reuse mode is off.</p>"
-             "<p class='muted'>Turning it on makes the station treat every tag "
-             "placed on the scale as ready to erase &mdash; no per-tag "
-             "confirmation. Only start it once the spools you're about to "
+    if (!gEraseModeActive) {
+        p += "<div class='card'><p>Erase mode is off.</p>"
+             "<p class='muted'>Turning it on makes the station erase every tag "
+             "placed on the scale immediately &mdash; no per-tag confirmation, "
+             "no countdown. Only start it once the spools you're about to "
              "place are ones you've already decided are empty.</p>"
-             "<form method='POST' action='/api/reuse/start' onsubmit=\"return "
-             "confirm('Start reuse mode? Every tag placed on the scale from now "
-             "on will be erased and its spool retired, until you stop it.')\">"
+             "<form method='POST' action='/api/erase/start' onsubmit=\"return "
+             "confirm('Start erase mode? Every tag placed on the scale from now "
+             "on will be erased immediately and its spool retired, until you "
+             "stop it.')\">"
              "<button type='submit' style='background:#522;color:#eee;padding:8px 16px;"
              "font-size:14px;border-radius:4px;border:0;cursor:pointer'>"
-             "Start reuse mode</button></form></div>";
+             "Start erase mode</button></form></div>";
         p += FOOT;
         req->send(200, "text/html", p);
         return;
     }
 
     p += "<div class='card'>"
-         "<p style='color:#f66'><strong>Reuse mode: ON</strong> &mdash; every tag "
-         "placed on the scale will be erased.</p>"
-         "<p class='muted' id='reuse-status'>Waiting for a tag&hellip;</p>"
-         "<form method='POST' action='/api/reuse/stop'>"
+         "<p style='color:#f66'><strong>Erase mode: ON</strong> &mdash; every tag "
+         "placed on the scale will be erased immediately.</p>"
+         "<p class='muted' id='erase-status'>Waiting for a tag&hellip;</p>"
+         "<form method='POST' action='/api/erase/stop'>"
          "<button type='submit' style='padding:8px 16px;font-size:14px;"
-         "border-radius:4px;cursor:pointer'>Stop reuse mode</button></form>"
+         "border-radius:4px;cursor:pointer'>Stop erase mode</button></form>"
          "</div>";
 
     // Polls the device's own state machine rather than tracking anything
-    // page-side, so this reads correctly even if reuse mode was turned on
-    // from a different browser/tab, or a tag was already mid-countdown when
-    // this page loaded. BLANK_TAG_CONFIRM_SEC is hardcoded to 2 here to match
-    // config.h -- purely cosmetic (the real cancel window is enforced on the
-    // device regardless of what this countdown displays).
+    // page-side, so this reads correctly even if erase mode was turned on
+    // from a different browser/tab. No countdown to render -- the device
+    // jumps straight from a placed tag to formatting_and_registering.
     p += "<script>(function(){"
-         "var el=document.getElementById('reuse-status');"
-         "var countdownFrom=null;"
+         "var el=document.getElementById('erase-status');"
          "function poll(){"
            "fetch('/api/status').then(function(r){return r.json();}).then(function(d){"
              "var s=d.state;"
              "if(s==='idle'||s==='idle_no_wifi'){"
-               "countdownFrom=null;"
                "el.textContent='Waiting for a tag\\u2026';el.style.color='';"
-             "}else if(s==='blank_tag_found'||s==='awaiting_format_confirm'){"
-               "if(countdownFrom===null)countdownFrom=Date.now();"
-               "var left=Math.max(0,Math.ceil(2-(Date.now()-countdownFrom)/1000));"
-               "el.textContent='Tag placed \\u2014 erasing in '+left+'\\u2026';"
-               "el.style.color=left<=1?'#f66':'';"
              "}else if(s==='formatting_and_registering'){"
-               "el.textContent='Erasing\\u2026';el.style.color='';"
+               "el.textContent='Erasing\\u2026';el.style.color='#f66';"
              "}else if(s==='present'){"
-               "countdownFrom=null;"
                "el.textContent='Done \\u2713 \\u2014 remove tag, place the next one';"
                "el.style.color='#8f8';"
              "}else{"
@@ -1825,19 +1976,19 @@ static void handleReuseForm(AsyncWebServerRequest* req) {
     req->send(200, "text/html", p);
 }
 
-// ── POST /api/reuse/start, /api/reuse/stop — toggle bulk reuse mode ───────────
+// ── POST /api/erase/start, /api/erase/stop — toggle bulk erase mode ──────────
 // Retiring each old record happens automatically in sync_task.cpp's Resolving
 // phase (matched by physical NFC UID) the moment a tag actually goes blank —
 // these handlers only flip the mode flag nfcTask checks on every placement.
-static void handleApiReuseStart(AsyncWebServerRequest* req) {
+static void handleApiEraseStart(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    gReuseModeActive = true;
-    req->redirect("/reuse");
+    gEraseModeActive = true;
+    req->redirect("/erase");
 }
-static void handleApiReuseStop(AsyncWebServerRequest* req) {
+static void handleApiEraseStop(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    gReuseModeActive = false;
-    req->redirect("/reuse");
+    gEraseModeActive = false;
+    req->redirect("/erase");
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
@@ -2938,6 +3089,20 @@ void webAppBegin() {
         req->send(204);
     });
 
+    // Send the current value straight to each newly (re)connected client --
+    // covers both the page's very first load AND any silent reconnect after
+    // a dropped connection, with no follow-up fetch needed either way. A
+    // client that connects mid-onboard-flow (or reconnects after a blip)
+    // gets caught up on this one message alone.
+    sEvents.onConnect([](AsyncEventSourceClient* client) {
+        Serial.println("[sse] client connected");
+        client->send(currentScaleSpoolPayload().c_str(), "state", millis());
+    });
+    sEvents.onDisconnect([](AsyncEventSourceClient*) {
+        Serial.println("[sse] client disconnected");
+    });
+    sServer.addHandler(&sEvents);
+
     sServer.on("/",            HTTP_GET,  handleRoot);
     sServer.on("/spool",       HTTP_GET,  handleSpoolDetail);
     sServer.on("/api/spools",  HTTP_GET,  handleApiSpools);
@@ -2953,9 +3118,9 @@ void webAppBegin() {
     sServer.on("/onboard",     HTTP_GET,  handleOnboardForm);
     sServer.on("/api/tare",    HTTP_POST, handleApiTare);
     sServer.on("/api/onboard", HTTP_POST, handleApiOnboard);
-    sServer.on("/reuse",             HTTP_GET,  handleReuseForm);
-    sServer.on("/api/reuse/start",   HTTP_POST, handleApiReuseStart);
-    sServer.on("/api/reuse/stop",    HTTP_POST, handleApiReuseStop);
+    sServer.on("/erase",             HTTP_GET,  handleEraseForm);
+    sServer.on("/api/erase/start",   HTTP_POST, handleApiEraseStart);
+    sServer.on("/api/erase/stop",    HTTP_POST, handleApiEraseStop);
     sServer.on("/reorder",     HTTP_GET,  handleReorder);
     sServer.on("/stock",            HTTP_GET,  handleStockPage);
     sServer.on("/api/stock/add",    HTTP_POST, handleApiStockAdd);

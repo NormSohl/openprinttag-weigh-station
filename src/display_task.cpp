@@ -30,6 +30,7 @@ extern char                 gApSsid[24];
 extern volatile int         gPortalSecsLeft;
 extern volatile bool        gScaleCalibrated;
 extern volatile bool        gClockSet;
+extern volatile bool        gEraseModeActive;
 
 // TFT_eSPI configured via -D flags in platformio.ini (ILI9488, 480x320).
 // Landscape (TFT_ROTATION in config.h): width=480, height=320.
@@ -343,6 +344,7 @@ void displayTask(void* param) {
     TickType_t  lastBlink  = 0;
     int         lastCount  = -1;
     bool        lastCal    = gScaleCalibrated;
+    bool        lastErase  = gEraseModeActive;
     bool        lastWrFail = storeWriteFailed();
     char        lastClock[CLOCK_CHARS + 1] = {};
     char        lastStationName[STATION_NAME_MAX_LEN + 1];
@@ -390,6 +392,20 @@ void displayTask(void* param) {
         bool calNow = gScaleCalibrated;
         if (calNow != lastCal) {
             lastCal = calNow;
+            spiBusTakeTft();
+            cls();
+            spiBusGive();
+            rendered = false;
+            clsHappened = true;
+        }
+
+        // Erase mode is toggled from the web /erase page, with no tag
+        // involved at all -- someone standing at the station needs to see it
+        // engage the instant they click Start, not wait for the next tag
+        // placement to notice. Same force-redraw pattern as calibration.
+        bool eraseNow = gEraseModeActive;
+        if (eraseNow != lastErase) {
+            lastErase = eraseNow;
             spiBusTakeTft();
             cls();
             spiBusGive();
@@ -479,8 +495,18 @@ void displayTask(void* param) {
                 break;
 
             case DeviceState::Idle:
-                title(stationNameGet(), TFT_GREEN);
-                row(2, "Place spool to begin", TFT_WHITE);
+                // Erase mode is a persistent flag toggled from the web /erase
+                // page and has no device state of its own -- it rides on top
+                // of Idle/IdleNoWiFi so whoever's standing at the station
+                // sees it engage immediately, not only once a tag is placed
+                // and the (now countdown-free) erase flow kicks in.
+                if (gEraseModeActive) {
+                    title("ERASE MODE", TFT_RED);
+                    row(2, "Place tag to erase", TFT_WHITE);
+                } else {
+                    title(stationNameGet(), TFT_GREEN);
+                    row(2, "Place spool to begin", TFT_WHITE);
+                }
                 if (storeWriteFailed()) {
                     row(3, "STORAGE FULL - not", TFT_RED);
                     row(4, "recording weighs!", TFT_RED);
@@ -500,19 +526,25 @@ void displayTask(void* param) {
                     snprintf(url, sizeof(url), "http://%s/", gWebAddr);
                     drawQr(url, QR_X, QR_Y, QR_BOX);   // IP, not mDNS: must just work
                 }
-                pixelColor = pixel.Color(0, 20, 0);
+                pixelColor = gEraseModeActive ? pixel.Color(80, 0, 80) : pixel.Color(0, 20, 0);
                 break;
 
             case DeviceState::IdleNoWiFi:
-                title("Weigh Station", tft.color565(220, 140, 0));
                 // Row 1 is free here (only Present's wide header uses it) --
                 // name the cause. Reaching this state always means the setup
                 // portal was offered and closed without new credentials being
                 // entered, whether this is a first join or a previously-saved
                 // network that dropped and fell back to a retry portal — see
                 // runConfigPortal() in sync_task.cpp.
-                row(1, "Setup timed out", TFT_SILVER);
-                row(2, "Place spool to weigh", TFT_WHITE);
+                if (gEraseModeActive) {
+                    title("ERASE MODE", TFT_RED);
+                    row(1, "Setup timed out", TFT_SILVER);
+                    row(2, "Place tag to erase", TFT_WHITE);
+                } else {
+                    title("Weigh Station", tft.color565(220, 140, 0));
+                    row(1, "Setup timed out", TFT_SILVER);
+                    row(2, "Place spool to weigh", TFT_WHITE);
+                }
                 if (storeWriteFailed())
                     row(3, "STORAGE FULL - not saving", TFT_RED);
                 else if (!gScaleCalibrated)
@@ -545,7 +577,7 @@ void displayTask(void* param) {
                     snprintf(join, sizeof(join), "WIFI:S:%s;T:nopass;;", gApSsid);
                     drawQr(join, QR_X, QR_Y, QR_BOX);
                 }
-                pixelColor = pixel.Color(40, 15, 0);
+                pixelColor = gEraseModeActive ? pixel.Color(80, 0, 80) : pixel.Color(40, 15, 0);
                 break;
 
             case DeviceState::TagReadError:
@@ -561,6 +593,10 @@ void displayTask(void* param) {
                 break;
 
             case DeviceState::AwaitingFormatConfirm:
+                // Erase mode bypasses this state entirely (nfc_task.cpp jumps
+                // straight to Formatting, no countdown) -- gEraseModeActive
+                // is never true here, so this screen is unconditionally the
+                // real-blank-tag one.
                 title("New tag found", tft.color565(220, 140, 0));
                 row(2, "Remove to cancel", TFT_WHITE);
                 row(3, "Registering in:", TFT_WHITE);
@@ -568,7 +604,8 @@ void displayTask(void* param) {
                 break;
 
             case DeviceState::FormattingAndRegistering:
-                title("Registering...", tft.color565(0, 100, 220));
+                title(gEraseModeActive ? "Erasing tag..." : "Registering...",
+                      tft.color565(0, 100, 220));
                 row(2, "Please wait", TFT_WHITE);
                 pixelColor = pixel.Color(0, 0, 80);
                 break;
@@ -651,6 +688,19 @@ void displayTask(void* param) {
                         drawQr(url, QR_X, QR_Y, QR_BOX);
                     }
                     pixelColor = pixel.Color(50, 50, 0);
+                } else if (spoolId <= 0) {
+                    // Erase mode's own "nothing to reconcile" outcome (see
+                    // sync_task.cpp's isNilUUID branch): the tag was erased
+                    // and deliberately given no new identity, so there is no
+                    // spool to render. Falling through to the generic identity
+                    // block below used to print "Unknown / 0 grams remaining /
+                    // Weight recorded" here -- indistinguishable from a broken
+                    // record. Say what actually happened, matching the
+                    // /erase web page's "Done" wording for the same event.
+                    title("Tag erased", TFT_GREEN);
+                    row(2, "Remove tag,", TFT_WHITE);
+                    row(3, "place the next one", TFT_WHITE);
+                    pixelColor = pixel.Color(0, 80, 0);
                 } else {
                     // Identity on the full-width header band: spool number,
                     // product name and brand on one line, wrapping to a second

@@ -26,7 +26,7 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gWriteAuxPending;
-extern volatile bool        gReuseModeActive;
+extern volatile bool        gEraseModeActive;
 extern volatile int         gSpoolId;
 extern volatile bool        gSpoolNeedsOnboarding;
 extern char                 gWebAddr[48];
@@ -538,7 +538,7 @@ void syncTask(void* param) {
                 // tag while it's still on the scale.
                 // This physical chip may have carried a different spool's
                 // identity last time we saw it, if it's been blanked since —
-                // by our own reuse flow, TAGFORMAT, or a third-party NFC tool.
+                // by our own erase flow, TAGFORMAT, or a third-party NFC tool.
                 // Either way the material that record tracked is gone, so
                 // retire it now rather than leave it stuck showing stale
                 // remaining weight forever with nothing left to trigger a
@@ -547,7 +547,7 @@ void syncTask(void* param) {
                 if (storeFindActiveByNfcUid(physHex, prior))
                     storeRetireSpool(prior.spool);
 
-                // Reuse mode: the retire above is the entire store-side job.
+                // Erase mode: the retire above is the entire store-side job.
                 // Deliberately mint NOTHING — no new instance_uuid, no stub
                 // record, no needs_onboarding — so the tag is left genuinely,
                 // fully blank and falls through this SAME isNilUUID path
@@ -556,10 +556,10 @@ void syncTask(void* param) {
                 // for material nobody has loaded yet. gSpoolId<=0 is already
                 // a supported "nothing to reconcile" state for Holding below
                 // (see its `if (sSpoolId > 0)` guard) and Present's
-                // needs_ob==false branch in display_task.cpp, so this needs
+                // spoolId<=0 branch in display_task.cpp, so this needs
                 // no new phase or display state — just don't take the
                 // mint-a-stub path at all.
-                if (gReuseModeActive) {
+                if (gEraseModeActive) {
                     sSpoolId = -1; gSpoolId = -1; gSpoolNeedsOnboarding = false;
                     sSnapshot = {};
                     ctrlPost(CtrlEvent::Weighed);   // -> Present, same as a normal weigh

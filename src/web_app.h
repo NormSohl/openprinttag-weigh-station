@@ -12,3 +12,9 @@
 //
 // Started from syncTask once the network (station or SoftAP) is up.
 void webAppBegin();
+
+// Pushed by controller_task.cpp's setState() on every device-state change, so
+// pages watching what's on the scale (currently just /onboard) can react the
+// instant it actually changes instead of polling on a timer. Cheap to call
+// unconditionally -- a no-op when nothing has an /events connection open.
+void webAppNotifyStateChanged();
