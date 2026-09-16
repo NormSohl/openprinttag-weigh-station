@@ -2,31 +2,39 @@
 
 *Print this page and keep it at the station. Full detail: [user-manual.md](user-manual.md).*
 
-Do this once per **new, untagged** spool — a fresh reel that's never touched
-the station before.
+Mainly for processing new stock as it arrives from a vendor — once per new,
+untagged reel.
 
 ## Steps
 
-1. **Apply an OpenPrintTag sticker** to the spool's flat hub face — away from
-   the windings, centered so it lands over the reader. Press firmly for 5
-   seconds.
+1. **Apply an OpenPrintTag sticker** to the spool's flat hub face — centered
+   so it lands over the reader. Press firmly.
 2. **Place the spool on the scale.**
-3. The display shows **"New tag found / Remove to cancel / Registering in:
-   2…"** — a 2-second window. In the last second the digit turns **red** and
-   the text switches to **"Writing tag now!"**.
-   - **Remove the spool** within the window to cancel (e.g. it landed on the
-     scale by accident).
+3. The display shows a 2-second countdown, then in the last second the digit
+   turns **red** and the text switches to **"Writing tag now!"**:
+
+   > New tag found
+   > Remove to cancel
+   > Registering in: 2…
+
+   - **Remove the spool** within the countdown to cancel (e.g. it landed on
+     the scale by accident).
    - **Leave it in place** to confirm — the station formats the tag and
      assigns a spool number.
-4. Display shows **"Registered! / NEEDS ONBOARDING"** with the spool number
-   and a QR code. The spool is now trackable but has no material data yet.
-5. **Scan the QR code** (or browse to `weighstation.local/onboard` on any
-   device on the network) while the spool is still on the scale.
+4. Display shows the spool number and a QR code:
+
+   > Registered!  Spool #58  212 g
+   > NEEDS ONBOARDING
+
+   The spool is now trackable but has no material data yet.
+5. **Enter data for the new spool from any web browser.** Scan the QR code
+   with your phone or tablet, or browse to `weighstation.local/onboard` on
+   any device on the same network, while the spool is still on the scale.
 6. On the **Onboard** page, the "This spool is…" dropdown defaults to
    **"a new product"**:
-   - Already have this exact product on file? **Deliberately reselect
-     "another spool of X"** from the dropdown — it inherits vendor/material/
-     colour/tare with nothing to retype.
+   - Already have this exact product on file? **Scroll down to select
+     "another spool of X"** — it inherits vendor/material/colour/tare with
+     nothing to retype.
    - New product (the default)? **Search the catalog first** — picking a
      real result fills in brand, material, colour, print temps, and vendor
      identifiers automatically.
@@ -35,19 +43,17 @@ the station before.
      and each has a **+ Add new** option if it's not in the list yet.
 7. Click **Save & write tag.** The full data is written to the tag.
 
-Done — the tag now carries real identity, and the spool is in inventory. The
-page you land on updates itself: **place the next spool and it carries you
-straight into the next onboarding form**, no need to click the Onboard nav
-link again — handy for working through a stack of new reels back to back.
+Done — the tag now carries real identity, and the spool is in inventory.
+**Place the next spool** and the page carries you straight into *its*
+onboarding form — no need to click the Onboard nav link again. Handy for
+working through a stack of new reels back to back.
 
 ## If it goes wrong
 
-**Tag stuck on "Read Error"** after a registration that failed partway (tag is
-half-written — no longer blank, but not valid either): connect over USB
-serial (115200 baud) and run:
+**Tag stuck on "Read Error"** after a registration that failed partway (tag
+is half-written — no longer blank, but not valid either): open the
+**Erase Tag** page, start erase mode, then place the stuck spool — it erases
+immediately, same recovery as before, no serial cable needed.
 
-```
-TAGFORMAT
-```
-
-Then lift and re-place the spool — it registers from scratch.
+**Stop erase mode** once it's done, then place the spool again — it
+registers from scratch.
