@@ -2224,18 +2224,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     CfgStock editRow{};
     bool haveEdit = editIdx >= 0 && cfgStockAt((size_t)editIdx, editRow);
 
-    p += "<h3>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
-    p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
-         "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
-    p += "<div class='card'>";
-    p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "'>";
-    if (haveEdit) p += "<input type='hidden' name='index' value='" + String((long)editIdx) + "'>";
-    stockFormFields(p, editRow);
-    p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
-    if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
-    p += "</div></form></div>";
-
-    p += "<h3>Currently tracked</h3>";
+    p += "<h3>Currently stocked</h3>";
     p += "<p class='muted'>Sorted by popularity, lowest first &mdash; the top of this "
          "list is where to look for items to remove. Popularity is grams consumed per "
          "day the material was actually IN STOCK over the last " + String(STOCK_POPULARITY_WINDOW_DAYS)
@@ -2297,7 +2286,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + "</form></td></tr>";
     }
     if (n == 0)
-        p += "<tr><td colspan='8' class='muted'>Nothing tracked yet &mdash; add one above.</td></tr>";
+        p += "<tr><td colspan='8' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
     p += "</table>";
     if (n && earliestTs[0]) {
         char local[32];
@@ -2305,6 +2294,18 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<p class='muted'>Popularity data available since "
            + esc(local[0] ? local : earliestTs) + ".</p>";
     }
+
+    p += "<h3>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
+    p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
+         "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
+    p += "<div class='card'>";
+    p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "'>";
+    if (haveEdit) p += "<input type='hidden' name='index' value='" + String((long)editIdx) + "'>";
+    stockFormFields(p, editRow);
+    p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
+    if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
+    p += "</div></form></div>";
+
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
          "on the <a href='/config' style='color:#8f8'>Settings</a> and "
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
