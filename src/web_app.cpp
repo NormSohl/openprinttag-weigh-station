@@ -2294,6 +2294,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<p class='muted'>Popularity data available since "
            + esc(local[0] ? local : earliestTs) + ".</p>";
     }
+    p += "<p><a href='/stock.csv'><button type='button'>Download CSV</button></a></p>";
 
     p += "<h3>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
     p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
@@ -2406,6 +2407,27 @@ static void handleApiStock(AsyncWebServerRequest* req) {
     }
     j += "]}";
     req->send(200, "application/json", j);
+}
+
+// Plain line-by-line export of just the Stock List -- for comparing against
+// physical library bins/tags by eye, not the JSON /api/stock (which also
+// carries popularity) or /config/export (which bundles all five Config
+// tables together). Same pattern as /usage.csv.
+static void handleStockCsv(AsyncWebServerRequest* req) {
+    String c = "vendor,material,color,dia,sku,gtin,pack_qty,min_spools,min_grams\n";
+    const size_t n = cfgStockCount();
+    CfgStock s;
+    for (size_t i = 0; i < n; i++) {
+        if (!cfgStockAt(i, s)) continue;
+        // Quote the free-text columns; vendor/material/color/sku can contain commas.
+        c += "\"" + String(s.vendor) + "\",\"" + String(s.material) + "\",\""
+           + String(s.color) + "\"," + String(s.dia, 2) + ",\"" + String(s.sku)
+           + "\",\"" + String(s.gtin) + "\"," + String(s.pack_qty) + ","
+           + String(s.min_spools) + "," + String(s.min_grams, 1) + "\n";
+    }
+    AsyncWebServerResponse* r = req->beginResponse(200, "text/csv", c);
+    r->addHeader("Content-Disposition", "attachment; filename=\"stock.csv\"");
+    req->send(r);
 }
 
 // ── Config catalog editor (raw-JSON round-trip per table) ─────────────────────
@@ -3175,6 +3197,7 @@ void webAppBegin() {
     sServer.on("/api/stock/update", HTTP_POST, handleApiStockUpdate);
     sServer.on("/api/stock/delete", HTTP_POST, handleApiStockDelete);
     sServer.on("/api/stock",        HTTP_GET,  handleApiStock);
+    sServer.on("/stock.csv",        HTTP_GET,  handleStockCsv);
     // These two MUST be registered before "/config": ESPAsyncWebServer's
     // default URI matching is "backward compatible" (WebServer.cpp,
     // AsyncURIMatcher::matches, Type::BackwardCompatible) -- a plain string

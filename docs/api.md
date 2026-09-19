@@ -23,6 +23,7 @@ work with no configuration.
 | `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag, retired flag |
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
 | `GET /api/stock` | JSON | Every Stock List item (what to keep + its reorder threshold), each with its 90-day popularity |
+| `GET /stock.csv` | CSV | Every Stock List item, no popularity — plain line-by-line list for comparing against physical bins/tags |
 | `GET /reorder?format=csv` | CSV | Stock items below threshold |
 | `GET /api/usage` | JSON | Consumption per month per vendor+material (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
