@@ -1996,16 +1996,27 @@ struct OnHand { uint16_t count; float grams; uint32_t product; };
 
 // Sum the active spools a stock item stands for.
 //
-// PREFERRED: resolve the stock item to a product and count spools by product
-// id. That is an exact lookup, and it is colour- and size-specific — "we keep
-// four Prusament PETG Orange 1 kg" stops being answered by a shelf of Prusament
-// PETG in four other colours. The probe composes `material` the same way the
-// onboard form does ("PETG" + " " + "Orange"), because that is what the OPT
-// display string holds and what products are keyed on.
+// BEST: the stock item was picked from an existing product at add/edit time
+// (CfgStock::product, set by stockFormFields()/parseStockForm()) — an exact
+// FK, so this needs no name recomposition at all and survives a later
+// product rename via /product?id=N.
 //
-// FALLBACK, when no product matches: the original vendor + abbreviation match,
-// so stock items that predate products keep working exactly as before rather
-// than silently reading zero on hand and demanding a reorder of everything.
+// PREFERRED, for older stock rows with no product id yet: resolve by probing
+// vendor+material+nom_g against the product table, same as the FK case would
+// have matched. Colour- and size-specific — "we keep four Prusament PETG
+// Orange 1 kg" stops being answered by a shelf of Prusament PETG in four
+// other colours. The probe composes `material` the same way the onboard form
+// does ("PETG" + " " + "Orange"), because that is what the OPT display
+// string holds and what products are keyed on. This is exactly the path that
+// silently misses when a stock row's typed material+colour don't happen to
+// reconstruct a real product's actual name (e.g. a vendor's own catalog name
+// carries more words, like "PLA Basic Fire Engine Red") — picking the
+// product directly avoids that, which is why it comes first.
+//
+// FALLBACK, when no product matches either way: the original vendor +
+// abbreviation match, so stock items that predate products keep working
+// exactly as before rather than silently reading zero on hand and demanding
+// a reorder of everything.
 //
 // The fallback matches on the record's ABBREVIATION, not r.material:
 // CfgStock.material is a bare type ("PLA") while r.material carries the display
@@ -2015,15 +2026,22 @@ struct OnHand { uint16_t count; float grams; uint32_t product; };
 static OnHand rollUp(const CfgStock& s) {
     OnHand oh{0, 0.0f, 0};
 
-    ProductRecord probe, found;
-    strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
-    String disp = s.material;
-    if (s.color[0]) disp += String(" ") + s.color;
-    strlcpy(probe.material, disp.c_str(), sizeof(probe.material));
-    strlcpy(probe.abbr, s.material, sizeof(probe.abbr));
-    probe.nom_g = s.spool_g;
-    if (s.gtin[0]) probe.gtin = strtoull(s.gtin, nullptr, 10);
-    if (storeFindProduct(probe, found)) oh.product = found.id;
+    if (s.product) {
+        // Picked directly at Stock List add/edit time (see stockFormFields()
+        // / parseStockForm()) -- an exact FK, immune to both the name-probe
+        // mismatch below and a later product rename via /product?id=N.
+        oh.product = s.product;
+    } else {
+        ProductRecord probe, found;
+        strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
+        String disp = s.material;
+        if (s.color[0]) disp += String(" ") + s.color;
+        strlcpy(probe.material, disp.c_str(), sizeof(probe.material));
+        strlcpy(probe.abbr, s.material, sizeof(probe.abbr));
+        probe.nom_g = s.spool_g;
+        if (s.gtin[0]) probe.gtin = strtoull(s.gtin, nullptr, 10);
+        if (storeFindProduct(probe, found)) oh.product = found.id;
+    }
 
     size_t n = storeSpoolCount();
     SpoolRecord r;
@@ -2077,9 +2095,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Download the CSV to place the order. Manage what's tracked (add, edit, "
-         "remove) on the <a href='/stock' style='color:#8f8'>Stock List</a> page. A row "
-         "matched by name rather than a product below means <a href='/products' "
-         "style='color:#8f8'>Products</a> is worth a look.</p>";
+         "remove) on the <a href='/stock' style='color:#8f8'>Stock List</a> page.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
          "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
     CfgStock s;
@@ -2112,10 +2128,10 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
     if (unmatched)
-        p += "<p class='muted'>" + String(unmatched) + " item(s) matched by name "
-             "rather than to a product, so their on-hand count includes every "
-             "colour of that vendor's material. Onboard a spool of each to make "
-             "the match exact.</p>";
+        p += "<p class='muted'>" + String(unmatched) + " item(s) matched by name, not "
+             "an exact product, so their on-hand count lumps every colour of that "
+             "vendor's material together. See <a href='/config' style='color:#8f8'>"
+             "Settings</a> for what that means.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -2127,7 +2143,36 @@ static void handleReorder(AsyncWebServerRequest* req) {
 // table's API — valid for the lifetime of one page load, which is fine here
 // since there is one operator at a time, not concurrent editors.
 static void stockFormFields(String& p, const CfgStock& s) {
-    p += "<label>Vendor</label><input type='text' name='vendor' value='" + esc(s.vendor) + "' required>";
+    // "Pick an existing product" vs. type it in — same reasoning as Onboard's
+    // "another spool of X": a stock row's vendor/material/color is free text
+    // independent of whatever a real product ended up named, so a retype is a
+    // fresh chance to silently miss it (e.g. "PLA" + "Fire Engine Red" typed
+    // here never matches a real product named "PLA Basic Fire Engine Red").
+    // Picking the product directly sidesteps that: rollUp() (below) matches
+    // by this id, not by recomposing a name.
+    const size_t np = storeProductCount();
+    if (np) {
+        p += "<label>Item is&hellip;</label><select name='product' id='sprod' "
+             "onchange=\"document.getElementById('stocknew').style.display="
+             "this.value=='0'?'block':'none'\">";
+        p += String("<option value='0'") + (s.product == 0 ? " selected" : "")
+           + ">&mdash; Type it in &mdash;</option>";
+        ProductRecord q;
+        for (size_t i = 0; i < np; i++) {
+            if (!storeProductAt(i, q)) continue;
+            p += "<option value='" + String((unsigned)q.id) + "'"
+               + (s.product == q.id ? " selected" : "") + ">"
+               + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
+               + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
+               + "</option>";
+        }
+        p += "</select>";
+        p += String("<div id='stocknew'") + (s.product != 0 ? " style='display:none'" : "") + ">";
+    } else {
+        p += "<input type='hidden' name='product' value='0'>";
+        p += "<div id='stocknew'>";
+    }
+    p += "<label>Vendor</label><input type='text' name='vendor' value='" + esc(s.vendor) + "'>";
     p += "<label>Material (bare type, e.g. PLA)</label>"
          "<input type='text' name='material' value='" + esc(s.material) + "'>";
     p += "<label>Color</label><input type='text' name='color' value='" + esc(s.color) + "'>";
@@ -2135,6 +2180,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='number' step='0.01' name='dia' value='" + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'>";
     p += "<label>Nominal spool weight (g)</label>"
          "<input type='number' step='0.1' name='spool_g' value='" + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'>";
+    p += "</div>";   // #stocknew
     p += "<label>Minimum spools to keep &mdash; 0 = use grams instead</label>"
          "<input type='number' name='min_spools' value='" + String(s.min_spools) + "'>";
     p += "<label>Minimum grams to keep &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
@@ -2252,12 +2298,28 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         return pp ? pp->value() : String();
     };
     CfgStock s{};
-    strlcpy(s.vendor,   arg("vendor").c_str(),   sizeof(s.vendor));
-    strlcpy(s.material, arg("material").c_str(), sizeof(s.material));
-    strlcpy(s.color,    arg("color").c_str(),    sizeof(s.color));
-    s.dia = arg("dia").toFloat();
-    if (s.dia <= 0.0f) s.dia = 1.75f;
-    s.spool_g    = arg("spool_g").toFloat();
+    uint32_t pid = (uint32_t)arg("product").toInt();
+    ProductRecord q;
+    if (pid && storeGetProduct(pid, q)) {
+        // Inherit the product's own identity exactly, ignoring whatever the
+        // (hidden) free-text fields carry -- same reasoning as Onboard's
+        // "another spool of X". color is left blank: q.material is already
+        // the full display string ("PLA Basic Fire Engine Red"), and
+        // rollUp() below matches by product id directly, so there is
+        // nothing left to recompose a name probe from.
+        s.product = pid;
+        strlcpy(s.vendor,   q.vendor,   sizeof(s.vendor));
+        strlcpy(s.material, q.material, sizeof(s.material));
+        s.dia     = q.dia > 0 ? q.dia : 1.75f;
+        s.spool_g = q.nom_g;
+    } else {
+        strlcpy(s.vendor,   arg("vendor").c_str(),   sizeof(s.vendor));
+        strlcpy(s.material, arg("material").c_str(), sizeof(s.material));
+        strlcpy(s.color,    arg("color").c_str(),    sizeof(s.color));
+        s.dia = arg("dia").toFloat();
+        if (s.dia <= 0.0f) s.dia = 1.75f;
+        s.spool_g = arg("spool_g").toFloat();
+    }
     s.min_spools = (uint16_t)arg("min_spools").toInt();
     s.min_grams  = arg("min_grams").toFloat();
     strlcpy(s.sku,  arg("sku").c_str(),  sizeof(s.sku));
@@ -2437,6 +2499,21 @@ static void handleConfig(AsyncWebServerRequest* req) {
         p += "<p><b class='ob'>Not calibrated.</b> Weights will be wrong until "
              "this is done.</p>";
     p += "<a href='/calibrate'><button type='button' class='sec'>Calibrate&hellip;</button></a></div>";
+
+    // Unlike Calibrate above, nothing else in the app proactively points here
+    // (see the "Matched by" caveat on /reorder, which just links to Settings)
+    // -- this card IS the explanation, not a shortcut to one already given
+    // elsewhere. A filament that resolves to two separate products (a
+    // placement's fields didn't quite match an existing one) silently
+    // undercounts on Reorder and in popularity, and this is the only page
+    // that would show the duplication.
+    p += "<h3>Products</h3><div class='card'>";
+    p += "<p class='muted'>Every filament SKU derived from your spools and tags &mdash; "
+       + String((unsigned)storeProductCount()) + " on file. The same filament showing "
+         "up as two products means a placement didn't match an existing one, which "
+         "undercounts it on Reorder and in popularity. Editing a product propagates "
+         "to every spool of it.</p>";
+    p += "<a href='/products'><button type='button' class='sec'>View products&hellip;</button></a></div>";
 
     // Display-only: the log itself always stores UTC (storeNowIso(), gmtime_r)
     // so it stays unambiguous and string-sortable across a DST transition —

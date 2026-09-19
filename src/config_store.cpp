@@ -148,6 +148,10 @@ static void parseStock(JsonArrayConst arr) {
         strlcpy(s.sku,  o["sku"]  | "", sizeof(s.sku));
         strlcpy(s.gtin, o["gtin"] | "", sizeof(s.gtin));
         s.pack_qty = o["pack_qty"] | 1;
+        // Absent on every row written before this existed -> 0, which reads
+        // as "free-typed, no product linked" -- exactly right, not a
+        // fabricated link to product #0.
+        s.product = o["product"] | 0;
         sStock.push_back(s);
     }
 }
@@ -159,6 +163,7 @@ static String serStock() {
         o["dia"] = s.dia; o["spool_g"] = s.spool_g;
         o["min_spools"] = s.min_spools; o["min_grams"] = s.min_grams;
         o["sku"] = s.sku; o["gtin"] = s.gtin; o["pack_qty"] = s.pack_qty;
+        o["product"] = s.product;
     }
     String s; serializeJson(d, s); return s;
 }

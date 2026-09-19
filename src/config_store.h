@@ -43,6 +43,19 @@ struct CfgStock {       // a standard-stock SKU to keep + reorder threshold
     char     sku[32];
     char     gtin[16];
     uint8_t  pack_qty;
+    // Which product this row was picked as, at add/edit time (0 = free-typed,
+    // no product on file yet). vendor/material/dia/spool_g above are still
+    // populated either way -- for display and CSV export -- but when this is
+    // set, rollUp() (web_app.cpp) matches spools by this id directly instead
+    // of recomposing vendor+material into a name probe. The probe is exactly
+    // what breaks silently: a Stock row's bare material ("PLA") + color
+    // ("Fire Engine Red") does not reconstruct a real product's actual name
+    // ("PLA Basic Fire Engine Red") if nobody ever typed "Basic" into the
+    // Stock List, even though it is the same filament on the same shelf.
+    // Picking the product directly is immune to that, and to any later
+    // rename via /product?id=N (the FK still resolves; a stale re-typed name
+    // would not).
+    uint32_t product;
 };
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
