@@ -20,6 +20,7 @@
 #include "display_tz.h"
 #include "station_name.h"
 #include "last_onboard.h"
+#include "last_stock.h"
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -1348,6 +1349,104 @@ static String onboardWatchScript(int baselineId) {
     return s;
 }
 
+// A static copy of OpenPrintTag/openprinttag-specification's
+// material_type_enum.yaml — the same source CATALOG_SCRIPT's type-token
+// matching already uses — kept local so the manual-entry "+ Add new
+// material" panel below works with no network. Shared by Onboard and Stock
+// List (see materialPickerField()), so it exists in exactly one place.
+static const struct { int8_t key; const char* abbr; } kMatTypes[] = {
+    {0,"PLA"},{1,"PETG"},{2,"TPU"},{3,"ABS"},{4,"ASA"},{5,"PC"},{6,"PCTG"},{7,"PP"},
+    {8,"PA6"},{9,"PA11"},{10,"PA12"},{42,"PA612"},{11,"PA66"},{12,"CPE"},{13,"TPE"},
+    {14,"HIPS"},{15,"PHA"},{16,"PET"},{17,"PEI"},{18,"PBT"},{19,"PVB"},{20,"PVA"},
+    {21,"PEKK"},{22,"PEEK"},{23,"BVOH"},{24,"TPC"},{25,"PPS"},{26,"PPSU"},{27,"PVC"},
+    {28,"PEBA"},{29,"PVDF"},{30,"PPA"},{31,"PCL"},{32,"PES"},{33,"PMMA"},{34,"POM"},
+    {35,"PPE"},{36,"PS"},{37,"PSU"},{38,"TPI"},{39,"SBS"},{40,"OBC"},{41,"EVA"},
+};
+
+// Vendor/Material/Color manual-entry picklists — shared by Onboard's manual
+// path and Stock List's manual fallback, so "+ Add new material" (which
+// needs the full CfgMaterial shape: class/type enums, print/bed temps, not
+// just a name) is defined in exactly one place. Skipping those fields
+// silently writes 0 C onto a tag later at Onboard time, so it matters that
+// both pages capture them the same way. Each `def*` is whatever should be
+// pre-selected: Onboard passes its own remembered last pick; Stock List
+// passes the row's current value when editing one, or ITS remembered last
+// pick otherwise (see stockFormFields()) -- two separate memories (see
+// last_stock.h), since the two pages are not necessarily the same session.
+// The onchange handler resets #cat-source to 'manual', same as the OpenPrintTag
+// catalog search's own picks do the opposite (CATALOG_SCRIPT's applyPick()),
+// so a catalog pick followed by a change of mind here doesn't silently
+// resubmit stale cat_* fields alongside freshly-typed ones.
+static void vendorPickerField(String& p, const char* defVendor) {
+    p += "<label>Vendor</label><select name='vendor' onchange=\""
+         "document.getElementById('cat-source').value='manual';"
+         "document.getElementById('vendor-new-wrap').style.display="
+         "this.value=='__new__'?'block':'none'\">";
+    char vbuf[64];
+    for (size_t i = 0; i < cfgVendorCount(); i++)
+        if (cfgVendorAt(i, vbuf, sizeof(vbuf)))
+            p += String("<option") + (strcmp(vbuf, defVendor) == 0 ? " selected" : "")
+               + ">" + esc(vbuf) + "</option>";
+    p += "<option value='__new__'>&plus; Add new vendor&hellip;</option>";
+    p += "</select>";
+    p += "<div id='vendor-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New vendor name</label>"
+         "<input type='text' name='vendor_new' placeholder='e.g. Filamentive'>"
+         "</div>";
+}
+
+static void materialPickerField(String& p, const char* defMaterial) {
+    p += "<label>Material</label><select name='material' onchange=\""
+         "document.getElementById('cat-source').value='manual';"
+         "document.getElementById('material-new-wrap').style.display="
+         "this.value=='__new__'?'block':'none'\">";
+    CfgMaterial m;
+    for (size_t i = 0; i < cfgMaterialCount(); i++)
+        if (cfgMaterialAt(i, m))
+            p += String("<option") + (strcmp(m.name, defMaterial) == 0 ? " selected" : "")
+               + ">" + esc(m.name) + "</option>";
+    p += "<option value='__new__'>&plus; Add new material&hellip;</option>";
+    p += "</select>";
+    p += "<div id='material-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New material name</label>"
+         "<input type='text' name='material_new_name' placeholder='e.g. PETG Carbon Fiber'>"
+         "<label>Abbreviation (max 7 chars)</label>"
+         "<input type='text' name='material_new_abbr' maxlength='7' placeholder='e.g. PETGCF'>"
+         "<label>Class</label><select name='material_new_class'>"
+         "<option value='0'>FFF (filament)</option><option value='1'>SLA (resin)</option></select>"
+         "<label>Type</label><select name='material_new_type'>";
+    for (const auto& t : kMatTypes)
+        p += "<option value='" + String((int)t.key) + "'>" + t.abbr + "</option>";
+    p += "</select>"
+         "<label>Diameter (mm)</label><input type='number' step='0.01' name='material_new_dia' value='1.75'>"
+         "<label>Print temp min/max (&deg;C)</label>"
+         "<input type='number' name='material_new_print_min' placeholder='min' style='width:48%;display:inline-block'>"
+         " <input type='number' name='material_new_print_max' placeholder='max' style='width:48%;display:inline-block'>"
+         "<label>Bed temp min/max (&deg;C)</label>"
+         "<input type='number' name='material_new_bed_min' placeholder='min' style='width:48%;display:inline-block'>"
+         " <input type='number' name='material_new_bed_max' placeholder='max' style='width:48%;display:inline-block'>"
+         "</div>";
+}
+
+static void colorPickerField(String& p, const char* defColor) {
+    p += "<label>Color</label><select name='color' onchange=\""
+         "document.getElementById('cat-source').value='manual';"
+         "document.getElementById('color-new-wrap').style.display="
+         "this.value=='__new__'?'block':'none'\">";
+    CfgColor c;
+    for (size_t i = 0; i < cfgColorCount(); i++)
+        if (cfgColorAt(i, c))
+            p += String("<option") + (strcmp(c.name, defColor) == 0 ? " selected" : "")
+               + ">" + esc(c.name) + "</option>";
+    p += "<option value='__new__'>&plus; Add new colour&hellip;</option>";
+    p += "</select>";
+    p += "<div id='color-new-wrap' style='display:none;margin-top:8px'>"
+         "<label>New colour name</label>"
+         "<input type='text' name='color_new_name' placeholder='e.g. Summer Grass'>"
+         "<label>Swatch</label><input type='color' name='color_new' value='#808080'>"
+         "</div>";
+}
+
 static void handleOnboardForm(AsyncWebServerRequest* req) {
     String p = head("Onboard", "/onboard");
     int cur = currentSpool();
@@ -1478,85 +1577,16 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
                        "this.value=='__new__'?'block':'none'\"";
     };
 
-    // Vendor — defaults to whatever was picked last time (see last_onboard.h):
-    // a batch of new stock from one supplier is usually many spools in a row
+    // Vendor/Material/Color — see vendorPickerField()/materialPickerField()/
+    // colorPickerField() above (shared with Stock List's manual fallback).
+    // Each defaults to whatever was picked last time (last_onboard.h): a
+    // batch of new stock from one supplier is usually many spools in a row
     // of the same vendor, so retyping/reselecting it every time is pure
     // friction. Falls back to the browser's own default (first option) when
     // nothing's been remembered yet, or the remembered name no longer exists.
-    const char* lastVendor = lastOnboardVendor();
-    p += "<label>Vendor</label><select name='vendor'" + revealOnchange("vendor-new-wrap") + ">";
-    char vbuf[64];
-    for (size_t i = 0; i < cfgVendorCount(); i++)
-        if (cfgVendorAt(i, vbuf, sizeof(vbuf)))
-            p += String("<option") + (strcmp(vbuf, lastVendor) == 0 ? " selected" : "")
-               + ">" + esc(vbuf) + "</option>";
-    p += "<option value='__new__'>&plus; Add new vendor&hellip;</option>";
-    p += "</select>";
-    p += "<div id='vendor-new-wrap' style='display:none;margin-top:8px'>"
-         "<label>New vendor name</label>"
-         "<input type='text' name='vendor_new' placeholder='e.g. Filamentive'>"
-         "</div>";
-
-    // Material — the "+ Add new" panel needs the full CfgMaterial shape
-    // (class/type enums plus print/bed temps), not just a name: those are
-    // exactly the fields that silently write 0 C onto a tag if skipped. The
-    // enum options below are a static copy of OpenPrintTag/openprinttag-specification's
-    // material_class_enum.yaml / material_type_enum.yaml — the same source
-    // CATALOG_SCRIPT's type-token matching already uses — kept local so this
-    // panel works with no network, matching the whole point of the manual
-    // fallback.
-    const char* lastMaterial = lastOnboardMaterial();
-    p += "<label>Material</label><select name='material'" + revealOnchange("material-new-wrap") + ">";
-    CfgMaterial m;
-    for (size_t i = 0; i < cfgMaterialCount(); i++)
-        if (cfgMaterialAt(i, m))
-            p += String("<option") + (strcmp(m.name, lastMaterial) == 0 ? " selected" : "")
-               + ">" + esc(m.name) + "</option>";
-    p += "<option value='__new__'>&plus; Add new material&hellip;</option>";
-    p += "</select>";
-    p += "<div id='material-new-wrap' style='display:none;margin-top:8px'>"
-         "<label>New material name</label>"
-         "<input type='text' name='material_new_name' placeholder='e.g. PETG Carbon Fiber'>"
-         "<label>Abbreviation (max 7 chars)</label>"
-         "<input type='text' name='material_new_abbr' maxlength='7' placeholder='e.g. PETGCF'>"
-         "<label>Class</label><select name='material_new_class'>"
-         "<option value='0'>FFF (filament)</option><option value='1'>SLA (resin)</option></select>"
-         "<label>Type</label><select name='material_new_type'>";
-    static const struct { int8_t key; const char* abbr; } kMatTypes[] = {
-        {0,"PLA"},{1,"PETG"},{2,"TPU"},{3,"ABS"},{4,"ASA"},{5,"PC"},{6,"PCTG"},{7,"PP"},
-        {8,"PA6"},{9,"PA11"},{10,"PA12"},{42,"PA612"},{11,"PA66"},{12,"CPE"},{13,"TPE"},
-        {14,"HIPS"},{15,"PHA"},{16,"PET"},{17,"PEI"},{18,"PBT"},{19,"PVB"},{20,"PVA"},
-        {21,"PEKK"},{22,"PEEK"},{23,"BVOH"},{24,"TPC"},{25,"PPS"},{26,"PPSU"},{27,"PVC"},
-        {28,"PEBA"},{29,"PVDF"},{30,"PPA"},{31,"PCL"},{32,"PES"},{33,"PMMA"},{34,"POM"},
-        {35,"PPE"},{36,"PS"},{37,"PSU"},{38,"TPI"},{39,"SBS"},{40,"OBC"},{41,"EVA"},
-    };
-    for (const auto& t : kMatTypes)
-        p += "<option value='" + String((int)t.key) + "'>" + t.abbr + "</option>";
-    p += "</select>"
-         "<label>Diameter (mm)</label><input type='number' step='0.01' name='material_new_dia' value='1.75'>"
-         "<label>Print temp min/max (&deg;C)</label>"
-         "<input type='number' name='material_new_print_min' placeholder='min' style='width:48%;display:inline-block'>"
-         " <input type='number' name='material_new_print_max' placeholder='max' style='width:48%;display:inline-block'>"
-         "<label>Bed temp min/max (&deg;C)</label>"
-         "<input type='number' name='material_new_bed_min' placeholder='min' style='width:48%;display:inline-block'>"
-         " <input type='number' name='material_new_bed_max' placeholder='max' style='width:48%;display:inline-block'>"
-         "</div>";
-
-    // Color
-    const char* lastColor = lastOnboardColor();
-    p += "<label>Color</label><select name='color'" + revealOnchange("color-new-wrap") + ">";
-    CfgColor c;
-    for (size_t i = 0; i < cfgColorCount(); i++)
-        if (cfgColorAt(i, c))
-            p += String("<option") + (strcmp(c.name, lastColor) == 0 ? " selected" : "")
-               + ">" + esc(c.name) + "</option>";
-    p += "<option value='__new__'>&plus; Add new colour&hellip;</option>";
-    p += "</select>";
-    p += "<div id='color-new-wrap' style='display:none;margin-top:8px'>"
-         "<label>New colour name</label>"
-         "<input type='text' name='color_new_name' placeholder='e.g. Summer Grass'>"
-         "<label>Swatch</label><input type='color' name='color_new' value='#808080'>"
-         "</div>";
+    vendorPickerField(p, lastOnboardVendor());
+    materialPickerField(p, lastOnboardMaterial());
+    colorPickerField(p, lastOnboardColor());
 
     // Spool profile (fills nominal-full + empty tare)
     const char* lastProfile = lastOnboardProfile();
@@ -2225,18 +2255,30 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='hidden' name='cat_mat_uuid'    id='cat-f-cat_mat_uuid'>"
          "<input type='hidden' name='cat_brand_uuid'  id='cat-f-cat_brand_uuid'>";
 
-    // "Or type it in" — the pre-existing fallback, now second-string to the
-    // catalog search rather than the only option. Each field resets `source`
-    // back to 'manual' on edit, same as Onboard's manual selects do, so a
-    // catalog pick followed by a change of mind doesn't silently resubmit
-    // stale cat_* fields alongside freshly-typed ones.
-    const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
+    // "Or enter manually" — the pre-existing fallback, now second-string to
+    // the catalog search rather than the only option. Vendor/Material/Color
+    // are the same catalog-backed picklists as Onboard's manual path (see
+    // vendorPickerField()/materialPickerField()/colorPickerField() above),
+    // each defaulting to whatever this row already has typed (editing an
+    // existing free-typed item), falling back to whatever was picked last
+    // time for a Stock List item specifically otherwise (last_stock.h) — a
+    // batch of new stock items for one supplier is usually several in a row
+    // of the same vendor, same reasoning as Onboard's own memory, but kept
+    // as a SEPARATE remembered pick (not shared with Onboard) since the two
+    // pages are not necessarily the same session -- see last_stock.h.
+    const char* defVendor   = s.vendor[0]   ? s.vendor   : lastStockVendor();
+    const char* defMaterial = s.material[0] ? s.material : lastStockMaterial();
+    const char* defColor    = s.color[0]    ? s.color    : lastStockColor();
     p += "<details id='stock-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
          "Or enter manually</summary>";
-    p += String("<label>Vendor</label><input type='text' name='vendor' value='") + esc(s.vendor) + "'" + resetSrc + ">";
-    p += String("<label>Material (bare type, e.g. PLA)</label>"
-         "<input type='text' name='material' value='") + esc(s.material) + "'" + resetSrc + ">";
-    p += String("<label>Color</label><input type='text' name='color' value='") + esc(s.color) + "'" + resetSrc + ">";
+    vendorPickerField(p, defVendor);
+    materialPickerField(p, defMaterial);
+    colorPickerField(p, defColor);
+    // Diameter/nominal weight stay plain numeric fields, not a picklist —
+    // Stock List has no "spool profile" concept the way Onboard does; each
+    // stock item just states its own numbers directly. Still resets `source`
+    // back to 'manual' on edit, same reasoning as the picklists above.
+    const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
     p += String("<label>Diameter (mm)</label>"
          "<input type='number' step='0.01' name='dia' value='") + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'" + resetSrc + ">";
     p += String("<label>Nominal spool weight (g)</label>"
@@ -2261,12 +2303,19 @@ static void stockFormFields(String& p, const CfgStock& s) {
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock List", "/stock");
 
-    long editIdx = -1;
-    if (req->hasParam("edit")) editIdx = req->getParam("edit")->value().toInt();
+    // By id, not position (see CfgStock::id) -- stable no matter what else
+    // has added/removed a row anywhere since this Edit link was rendered.
+    uint32_t editId = req->hasParam("edit") ? (uint32_t)req->getParam("edit")->value().toInt() : 0;
     CfgStock editRow{};
-    bool haveEdit = editIdx >= 0 && cfgStockAt((size_t)editIdx, editRow);
+    bool haveEdit = editId && cfgStockFindById(editId, editRow);
 
     p += "<h3>Currently stocked</h3>";
+    p += "<p class='muted'>This is what we <b>want</b> to keep on the shelf, curated by "
+         "hand &mdash; not what's actually there right now. For that, see "
+         "<a href='/' style='color:#8f8'>Inventory</a>, every physical spool on hand. "
+         "The two lists are expected to differ: something can be in Inventory but not "
+         "here (we have some, we're not restocking it), or here but at zero on hand "
+         "(we ran out and haven't reordered yet).</p>";
     p += "<p class='muted'>Sorted by popularity, lowest first &mdash; the top of this "
          "list is where to look for items to remove. Popularity is grams consumed per "
          "day the material was actually IN STOCK over the last " + String(STOCK_POPULARITY_WINDOW_DAYS)
@@ -2319,10 +2368,10 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material) + "</td><td>"
            + esc(sr.color) + "</td><td>" + popCell + "</td><td>" + thr + "</td><td>"
            + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
-           + "<a href='/stock?edit=" + String((unsigned)i) + "#stockform' style='color:#8f8'>Edit</a> "
+           + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
              "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
-           + "<input type='hidden' name='index' value='" + String((unsigned)i) + "'>"
+           + "<input type='hidden' name='id' value='" + String((unsigned)sr.id) + "'>"
            + "<button type='submit' style='background:#522;color:#eee;margin:0;padding:4px 10px;"
              "font-size:13px;border-radius:4px;border:0;cursor:pointer'>Remove</button>"
            + "</form></td></tr>";
@@ -2343,7 +2392,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
          "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
     p += "<div class='card'>";
     p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "'>";
-    if (haveEdit) p += "<input type='hidden' name='index' value='" + String((long)editIdx) + "'>";
+    if (haveEdit) p += "<input type='hidden' name='id' value='" + String((unsigned)editId) + "'>";
     stockFormFields(p, editRow);
     p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
     if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
@@ -2403,12 +2452,98 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         s.dia     = q.dia > 0 ? q.dia : 1.75f;
         s.spool_g = q.nom_g;
     } else {
-        strlcpy(s.vendor,   arg("vendor").c_str(),   sizeof(s.vendor));
-        strlcpy(s.material, arg("material").c_str(), sizeof(s.material));
-        strlcpy(s.color,    arg("color").c_str(),    sizeof(s.color));
-        s.dia = arg("dia").toFloat();
-        if (s.dia <= 0.0f) s.dia = 1.75f;
-        s.spool_g = arg("spool_g").toFloat();
+        // "+ Add new ..." sentinel from the manual picklists (see
+        // vendorPickerField()/materialPickerField()/colorPickerField()) —
+        // same mechanism handleApiOnboard's own manual path uses: build the
+        // Cfg* row from the revealed fields and append it to the local
+        // catalog so it is there for next time.
+        String vendor = arg("vendor");
+        if (vendor == "__new__") vendor = arg("vendor_new");
+
+        String matName = arg("material");
+        CfgMaterial m{}; bool haveMat = false;
+        if (matName == "__new__") {
+            CfgMaterial nm = {};
+            strlcpy(nm.name, arg("material_new_name").c_str(), sizeof(nm.name));
+            strlcpy(nm.abbr, arg("material_new_abbr").c_str(), sizeof(nm.abbr));
+            nm.cls       = (int8_t)arg("material_new_class").toInt();
+            nm.type      = (int8_t)arg("material_new_type").toInt();
+            nm.dia       = arg("material_new_dia").toFloat();
+            if (nm.dia <= 0.0f) nm.dia = 1.75f;
+            nm.print_min = (int16_t)arg("material_new_print_min").toInt();
+            nm.print_max = (int16_t)arg("material_new_print_max").toInt();
+            nm.bed_min   = (int16_t)arg("material_new_bed_min").toInt();
+            nm.bed_max   = (int16_t)arg("material_new_bed_max").toInt();
+            cfgMaterialAdd(nm);
+            matName = nm.name;
+            m = nm; haveMat = true;
+        } else {
+            haveMat = cfgMaterialByName(matName.c_str(), m);
+        }
+
+        String colName = arg("color");
+        CfgColor col{};
+        if (colName == "__new__") {
+            CfgColor nc = {};
+            strlcpy(nc.name, arg("color_new_name").c_str(), sizeof(nc.name));
+            String hex = arg("color_new");   // "#rrggbb" from <input type='color'>
+            if (hex.length() == 7 && hex[0] == '#') {
+                nc.rgba[0] = (uint8_t)strtol(hex.substring(1, 3).c_str(), nullptr, 16);
+                nc.rgba[1] = (uint8_t)strtol(hex.substring(3, 5).c_str(), nullptr, 16);
+                nc.rgba[2] = (uint8_t)strtol(hex.substring(5, 7).c_str(), nullptr, 16);
+                nc.rgba[3] = 255;
+            }
+            cfgColorAdd(nc);
+            colName = nc.name;
+            col = nc;
+        } else {
+            cfgColorByName(colName.c_str(), col);
+        }
+
+        float dia = arg("dia").toFloat();
+        if (dia <= 0.0f) dia = haveMat ? m.dia : 1.75f;
+        float spoolG = arg("spool_g").toFloat();
+
+        if (vendor.length()) cfgVendorAdd(vendor.c_str());
+        // Remembered for THIS page's picklists only -- see last_stock.h for
+        // why this isn't shared with Onboard's own memory.
+        lastStockSet(vendor.c_str(), matName.c_str(), colName.c_str());
+
+        // Resolve or create a product for this vendor+material+colour, same
+        // as the existing-product/catalog paths above -- a manually-typed
+        // entry (a vendor colour the catalog doesn't have yet, or updated
+        // info) still gets the exact FK match against Inventory, not the
+        // fragile name-probe fallback. Tare (empty_g) is deliberately left
+        // unset: the Stock List never weighs anything, so it has none to
+        // offer -- whoever eventually onboards a real physical spool of
+        // this product supplies it then, or it's fixed after via
+        // /product?id=N, same as any other product with an approximate tare.
+        String display = matName;
+        if (colName.length()) display += " " + colName;
+        ProductRecord prod;
+        strlcpy(prod.vendor,   vendor.c_str(),  sizeof(prod.vendor));
+        strlcpy(prod.material, display.c_str(), sizeof(prod.material));
+        if (haveMat) strlcpy(prod.abbr, m.abbr, sizeof(prod.abbr));
+        memcpy(prod.rgba, col.rgba, 4);
+        prod.dia = dia; prod.nom_g = spoolG;
+        pid = findOrCreateProduct(prod);
+
+        ProductRecord np;
+        if (pid && storeGetProduct(pid, np)) {
+            s.product = pid;
+            strlcpy(s.vendor,   np.vendor,   sizeof(s.vendor));
+            strlcpy(s.material, np.material, sizeof(s.material));
+            s.dia     = np.dia > 0 ? np.dia : 1.75f;
+            s.spool_g = np.nom_g;
+        } else {
+            // Should not happen (findOrCreateProduct() only fails if the
+            // store write itself fails) -- fall back to the raw typed
+            // values rather than silently dropping the item.
+            strlcpy(s.vendor,   vendor.c_str(),  sizeof(s.vendor));
+            strlcpy(s.material, matName.c_str(), sizeof(s.material));
+            strlcpy(s.color,    colName.c_str(), sizeof(s.color));
+            s.dia = dia; s.spool_g = spoolG;
+        }
     }
     s.min_spools = (uint16_t)arg("min_spools").toInt();
     s.min_grams  = arg("min_grams").toFloat();
@@ -2427,10 +2562,15 @@ static void handleApiStockAdd(AsyncWebServerRequest* req) {
 
 static void handleApiStockUpdate(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    const AsyncWebParameter* pi = req->getParam("index", true);
-    if (!pi) { req->send(400, "text/plain", "missing index"); return; }
-    if (!cfgStockUpdate((size_t)pi->value().toInt(), parseStockForm(req))) {
-        req->send(400, "text/plain", "invalid index");
+    const AsyncWebParameter* pi = req->getParam("id", true);
+    if (!pi) { req->send(400, "text/plain", "missing id"); return; }
+    // Fails cleanly (400) rather than silently, if this id no longer exists
+    // -- e.g. someone else deleted the row between this Edit page loading
+    // and this submit. See CfgStock::id: that used to silently become an
+    // unrelated Add instead.
+    if (!cfgStockUpdate((uint32_t)pi->value().toInt(), parseStockForm(req))) {
+        req->send(400, "text/plain", "no such stock item (it may have been removed "
+                                      "or edited elsewhere since this page loaded)");
         return;
     }
     req->redirect("/stock");
@@ -2438,10 +2578,10 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
 
 static void handleApiStockDelete(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    const AsyncWebParameter* pi = req->getParam("index", true);
-    if (!pi) { req->send(400, "text/plain", "missing index"); return; }
-    if (!cfgStockRemove((size_t)pi->value().toInt())) {
-        req->send(400, "text/plain", "invalid index");
+    const AsyncWebParameter* pi = req->getParam("id", true);
+    if (!pi) { req->send(400, "text/plain", "missing id"); return; }
+    if (!cfgStockRemove((uint32_t)pi->value().toInt())) {
+        req->send(400, "text/plain", "no such stock item (already removed?)");
         return;
     }
     req->redirect("/stock");
@@ -2472,7 +2612,8 @@ static void handleApiStock(AsyncWebServerRequest* req) {
     for (size_t i = 0; i < n; i++) {
         if (i) j += ",";
         const CfgStock& s = rows[i];
-        j += "{\"vendor\":\"" + esc(s.vendor) + "\""
+        j += "{\"id\":" + String((unsigned)s.id)
+           + ",\"vendor\":\"" + esc(s.vendor) + "\""
            + ",\"material\":\"" + esc(s.material) + "\""
            + ",\"color\":\"" + esc(s.color) + "\""
            + ",\"dia\":" + String(s.dia, 2)

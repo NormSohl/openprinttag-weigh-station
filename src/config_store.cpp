@@ -4,6 +4,7 @@
 #include "config_store.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <vector>
 #include <string.h>
 
@@ -13,6 +14,13 @@ static std::vector<CfgMaterial> sMaterials;
 static std::vector<CfgProfile>  sProfiles;
 static std::vector<CfgColor>    sColors;
 static std::vector<CfgStock>    sStock;
+
+// Stock-item id counter. NVS-backed and never moved backward, same reasoning
+// as store.cpp's spool/product counters: a stale Edit link (another browser
+// tab, or this same page left open across someone else's add/delete) must
+// fail cleanly against an id nothing owns any more, never silently resolve
+// to a DIFFERENT row that happened to get the same number reissued.
+static uint32_t sNextStockId = 1;
 
 #define P_VENDORS  "/config/vendors.json"
 #define P_MATS     "/config/materials.json"
@@ -138,6 +146,10 @@ static void parseStock(JsonArrayConst arr) {
     sStock.clear();
     for (JsonObjectConst o : arr) {
         CfgStock s{};
+        // 0 on every row written before ids existed -- migrateStockIds_()
+        // (called right after this, in cfgBegin()) assigns real ones to
+        // those and re-saves, so nothing downstream ever sees an id of 0.
+        s.id = o["id"] | 0;
         strlcpy(s.vendor,   o["vendor"]   | "", sizeof(s.vendor));
         strlcpy(s.material, o["material"] | "", sizeof(s.material));
         strlcpy(s.color,    o["color"]    | "", sizeof(s.color));
@@ -159,6 +171,7 @@ static String serStock() {
     JsonDocument d; JsonArray a = d.to<JsonArray>();
     for (auto& s : sStock) {
         JsonObject o = a.add<JsonObject>();
+        o["id"] = s.id;
         o["vendor"] = s.vendor; o["material"] = s.material; o["color"] = s.color;
         o["dia"] = s.dia; o["spool_g"] = s.spool_g;
         o["min_spools"] = s.min_spools; o["min_grams"] = s.min_grams;
@@ -200,6 +213,7 @@ static void addColor(const char* name, uint8_t r, uint8_t g, uint8_t b, uint8_t 
 static void addStock(const char* vendor, const char* material, const char* color,
                      float dia, float spool_g, uint16_t min_spools) {
     CfgStock s{};
+    s.id = sNextStockId++;
     strlcpy(s.vendor,   vendor,   sizeof(s.vendor));
     strlcpy(s.material, material, sizeof(s.material));
     strlcpy(s.color,    color,    sizeof(s.color));
@@ -333,6 +347,33 @@ static void seedStock() {
     addStock("Overture", "TPU", "Clear", 1.75f, 1000.0f, 1);
 }
 
+// ── Stock-item id counter (NVS-backed, never reused) ────────────────────────
+static void loadStockIdCounter_() {
+    Preferences p;
+    p.begin("cfgstock", false);
+    sNextStockId = p.isKey("counter") ? p.getUInt("counter", 1) : 1;
+    p.end();
+}
+static void saveStockIdCounter_() {
+    Preferences p;
+    p.begin("cfgstock", false);
+    p.putUInt("counter", sNextStockId);
+    p.end();
+}
+
+// One-time migration for rows written before CfgStock::id existed (id
+// decodes as 0 -- see parseStock()). Assigns each a real id off the SAME
+// counter cfgStockAdd() uses, never derived from "max id currently in the
+// table": that would let a deleted row's old id get reissued to a
+// different row the moment the highest-numbered one was removed.
+static bool migrateStockIds_() {
+    bool changed = false;
+    for (auto& s : sStock)
+        if (s.id == 0) { s.id = sNextStockId++; changed = true; }
+    if (changed) saveStockIdCounter_();
+    return changed;
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 bool cfgBegin() {
     // mkdir on an existing directory just returns false, quietly -- unlike
@@ -342,12 +383,21 @@ bool cfgBegin() {
     LittleFS.mkdir("/config");
     ensureFile_(P_VENDORS); ensureFile_(P_MATS);  ensureFile_(P_PROFILES);
     ensureFile_(P_COLORS);  ensureFile_(P_STOCK);
+    loadStockIdCounter_();
     JsonDocument d;
     if (readDoc(P_VENDORS, d))  parseVendors(d.as<JsonArrayConst>());  else { seedVendors();  writeStr(P_VENDORS,  serVendors()); }
     d.clear(); if (readDoc(P_MATS, d))     parseMaterials(d.as<JsonArrayConst>()); else { seedMaterials(); writeStr(P_MATS, serMaterials()); }
     d.clear(); if (readDoc(P_PROFILES, d)) parseProfiles(d.as<JsonArrayConst>());  else { seedProfiles();  writeStr(P_PROFILES, serProfiles()); }
     d.clear(); if (readDoc(P_COLORS, d))   parseColors(d.as<JsonArrayConst>());    else { seedColors();   writeStr(P_COLORS, serColors()); }
-    d.clear(); if (readDoc(P_STOCK, d))    parseStock(d.as<JsonArrayConst>());     else { seedStock();    writeStr(P_STOCK, serStock()); }
+    d.clear();
+    if (readDoc(P_STOCK, d)) {
+        parseStock(d.as<JsonArrayConst>());
+        if (migrateStockIds_()) writeStr(P_STOCK, serStock());   // legacy rows just got real ids
+    } else {
+        seedStock();              // assigns ids itself via addStock()
+        saveStockIdCounter_();
+        writeStr(P_STOCK, serStock());
+    }
     return true;
 }
 
@@ -386,6 +436,11 @@ bool cfgStockAt(size_t i, CfgStock& out) {
     if (i >= sStock.size()) return false;
     out = sStock[i]; return true;
 }
+bool cfgStockFindById(uint32_t id, CfgStock& out) {
+    if (!id) return false;
+    for (auto& s : sStock) if (s.id == id) { out = s; return true; }
+    return false;
+}
 
 // ── Mutation ──────────────────────────────────────────────────────────────────
 bool cfgVendorAdd(const char* name) {
@@ -397,17 +452,29 @@ bool cfgVendorAdd(const char* name) {
 bool cfgProfileAdd(const CfgProfile& p) { sProfiles.push_back(p); return cfgSave("spool-profiles"); }
 bool cfgMaterialAdd(const CfgMaterial& m) { sMaterials.push_back(m); return cfgSave("materials"); }
 bool cfgColorAdd(const CfgColor& c) { sColors.push_back(c); return cfgSave("colors"); }
-bool cfgStockAdd(const CfgStock& s) { sStock.push_back(s); return cfgSave("stock-items"); }
-
-bool cfgStockUpdate(size_t i, const CfgStock& s) {
-    if (i >= sStock.size()) return false;
-    sStock[i] = s;
+bool cfgStockAdd(CfgStock s) {
+    s.id = sNextStockId++;
+    saveStockIdCounter_();
+    sStock.push_back(s);
     return cfgSave("stock-items");
 }
-bool cfgStockRemove(size_t i) {
-    if (i >= sStock.size()) return false;
-    sStock.erase(sStock.begin() + i);
-    return cfgSave("stock-items");
+
+bool cfgStockUpdate(uint32_t id, const CfgStock& s) {
+    for (auto& r : sStock) {
+        if (r.id != id) continue;
+        r = s;
+        r.id = id;   // the id in the URL/hidden field wins -- see config_store.h
+        return cfgSave("stock-items");
+    }
+    return false;
+}
+bool cfgStockRemove(uint32_t id) {
+    for (size_t i = 0; i < sStock.size(); i++) {
+        if (sStock[i].id != id) continue;
+        sStock.erase(sStock.begin() + i);
+        return cfgSave("stock-items");
+    }
+    return false;
 }
 
 // ── Save / web JSON ───────────────────────────────────────────────────────────
@@ -443,7 +510,14 @@ bool cfgReplaceTable(const char* which, const String& json) {
     else if (matchWhich(which, "materials"))           parseMaterials(a);
     else if (matchWhich(which, "spool-profiles", "profiles")) parseProfiles(a);
     else if (matchWhich(which, "colors"))              parseColors(a);
-    else if (matchWhich(which, "stock-items", "stock")) parseStock(a);
+    else if (matchWhich(which, "stock-items", "stock")) {
+        parseStock(a);
+        // A raw-JSON edit (Settings page textarea) or a /config/import
+        // restore can easily omit "id" per row (an older export, or
+        // hand-edited JSON) -- fix those up now rather than leaving every
+        // row unfindable by id until the next reboot's cfgBegin() migration.
+        migrateStockIds_();
+    }
     else return false;
     return cfgSave(which);
 }

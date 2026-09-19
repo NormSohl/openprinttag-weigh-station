@@ -33,6 +33,20 @@ struct CfgColor {
 };
 
 struct CfgStock {       // a standard-stock SKU to keep + reorder threshold
+    // Stable, permanent, NVS-counter-backed, never reused -- same reasoning
+    // as store.cpp's spool/product ids. This table used to be addressed by
+    // array POSITION (cfgStockAt()'s index), which was fine only "for the
+    // lifetime of one page load" (its own now-stale comment said so) — the
+    // instant a second add/delete happened anywhere (another browser tab,
+    // this session's own testing, even just a normal second person editing)
+    // before an already-open Edit page was submitted, that position no
+    // longer pointed at the row the user meant. Found live: an Edit that
+    // silently became an Add (the stale index made cfgStockAt() fail,
+    // handleStockPage() fell back to rendering an "Add" form with the
+    // manual picklists still defaulting from last-used memory, so it LOOKED
+    // pre-filled) — the row meant to be edited was untouched, and a near-
+    // duplicate row was created instead.
+    uint32_t id;
     char     vendor[48];
     char     material[48];
     char     color[32];
@@ -73,7 +87,8 @@ size_t cfgColorCount();
 bool   cfgColorAt(size_t i, CfgColor& out);
 bool   cfgColorByName(const char* name, CfgColor& out);
 size_t cfgStockCount();
-bool   cfgStockAt(size_t i, CfgStock& out);
+bool   cfgStockAt(size_t i, CfgStock& out);   // by POSITION -- listing order only
+bool   cfgStockFindById(uint32_t id, CfgStock& out);
 
 // ── Mutation ──────────────────────────────────────────────────────────────────
 // Add helpers (onboarding save-back). Return false on duplicate/full.
@@ -81,13 +96,15 @@ bool cfgVendorAdd(const char* name);
 bool cfgProfileAdd(const CfgProfile& p);
 bool cfgMaterialAdd(const CfgMaterial& m);
 bool cfgColorAdd(const CfgColor& c);
-bool cfgStockAdd(const CfgStock& s);
+bool cfgStockAdd(CfgStock s);   // by value: assigns s.id itself, ignoring any passed in
 
-// Per-row edit/remove for the Stock items table (the /stock management page).
-// Indexed by position, same as cfgStockAt() -- valid only within one page
-// load's worth of requests, same as every other index-addressed table here.
-bool cfgStockUpdate(size_t i, const CfgStock& s);
-bool cfgStockRemove(size_t i);
+// Per-row edit/remove for the Stock items table (the /stock management
+// page). By id (see CfgStock::id), NOT position -- stable across any add/
+// delete that happens anywhere between rendering the Edit page and
+// submitting it. `s.id` is ignored on update (the id in the URL/hidden
+// field wins, so a row can never be re-pointed at another one's identity).
+bool cfgStockUpdate(uint32_t id, const CfgStock& s);
+bool cfgStockRemove(uint32_t id);
 
 // Replace a whole table from a JSON array string (web CRUD posts this).
 // `which` ∈ vendors|materials|spool-profiles|colors|stock-items.

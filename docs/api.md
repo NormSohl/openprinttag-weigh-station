@@ -192,8 +192,8 @@ These change state and are guarded once an API key is set.
 | `POST /api/cal` | Calibrate against a known weight |
 | `POST /api/config` | Replace a config catalog table |
 | `POST /api/stock/add` | Add a Stock List item |
-| `POST /api/stock/update` | Edit a Stock List item (form field `index`, its position from `/api/stock`) |
-| `POST /api/stock/delete` | Remove a Stock List item (form field `index`) |
+| `POST /api/stock/update` | Edit a Stock List item (form field `id`, from `/api/stock`) |
+| `POST /api/stock/delete` | Remove a Stock List item (form field `id`) |
 | `POST /api/audit/start` | Begin a physical-inventory audit (Idle → Scanning) |
 | `POST /api/audit/finish` | Move to reviewing what wasn't found (Scanning → Resolving) |
 | `POST /api/audit/abandon` | Drop the audit itself, from either phase, without undoing anything already Closed/Found |
