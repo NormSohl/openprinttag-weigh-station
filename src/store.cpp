@@ -158,6 +158,7 @@ static String encodeBody(const StoreEvent& e) {
         b += "\"mat\":\"";    b += jsonEsc(e.material); b += "\",";
         snprintf(n, sizeof(n), "%.1f", e.usage_g);              b += "\"grams\":";  b += n; b += ",";
         snprintf(n, sizeof(n), "%u", (unsigned)e.usage_weighs); b += "\"weighs\":"; b += n; b += ",";
+        snprintf(n, sizeof(n), "%.2f", e.usage_dollars);        b += "\"dollars\":"; b += n; b += ",";
     }
     // A Product carries the same descriptive fields as a spool's identity — that
     // IS the relationship: a spool record is a resolved cache of its product.
@@ -181,6 +182,7 @@ static String encodeBody(const StoreEvent& e) {
         b += "\"needs_ob\":"; b += (e.needs_ob ? "true" : "false"); b += ",";
         b += "\"fgn\":"; b += (e.foreign ? "true" : "false"); b += ",";
         b += "\"nfc_uid\":\""; b += e.nfc_uid; b += "\",";
+        snprintf(n, sizeof(n), "%.2f", e.cost); b += "\"cost\":"; b += n; b += ",";
     }
     if (e.ev == StoreEv::Product) {
         b += "\"puuid\":\""; b += jsonEsc(e.pkg_uuid);   b += "\",";
@@ -237,8 +239,9 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     if (e.ev == StoreEv::Usage) {
         strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
         strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
-        e.usage_g      = doc["grams"]  | 0.0f;
-        e.usage_weighs = doc["weighs"] | 0u;
+        e.usage_g       = doc["grams"]   | 0.0f;
+        e.usage_weighs  = doc["weighs"]  | 0u;
+        e.usage_dollars = doc["dollars"] | 0.0f;
     }
     const bool ident = (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
                         e.ev == StoreEv::Checkpoint);
@@ -263,6 +266,9 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     // storeFindActiveByNfcUid() never matches -- pre-existing records simply
     // aren't found by physical UID until they're next placed and re-onboarded.
     if (ident) strlcpy(e.nfc_uid, doc["nfc_uid"] | "", sizeof(e.nfc_uid));
+    // Absent on every line written before cost tracking existed → 0, which
+    // reads as "not recorded" -- exactly right, not a fabricated free spool.
+    if (ident) e.cost = doc["cost"] | 0.0f;
     if (e.ev == StoreEv::Product) {
         strlcpy(e.pkg_uuid,   doc["puuid"] | "", sizeof(e.pkg_uuid));
         strlcpy(e.mat_uuid,   doc["muuid"] | "", sizeof(e.mat_uuid));
@@ -348,13 +354,13 @@ static void periodOf_(const char* ts, char* out, size_t n) {
 // here, same as rebuildInventory_.
 static void usageAdd_(std::vector<UsageRow>& tbl, const char* period,
                       const char* vendor, const char* material,
-                      float grams, uint32_t weighs) {
+                      float grams, uint32_t weighs, float dollars = 0) {
     const char* mat = (material && material[0]) ? material : "(unspecified)";
     const char* ven = (vendor   && vendor[0])   ? vendor   : "(unspecified)";
     for (auto& u : tbl) {
         if (!strcmp(u.period, period) && !strcmp(u.vendor, ven) &&
             !strcmp(u.material, mat)) {
-            u.grams += grams; u.weighs += weighs;
+            u.grams += grams; u.weighs += weighs; u.dollars += dollars;
             return;
         }
     }
@@ -362,7 +368,7 @@ static void usageAdd_(std::vector<UsageRow>& tbl, const char* period,
     strlcpy(r.period,   period, sizeof(r.period));
     strlcpy(r.vendor,   ven,    sizeof(r.vendor));
     strlcpy(r.material, mat,    sizeof(r.material));
-    r.grams = grams; r.weighs = weighs;
+    r.grams = grams; r.weighs = weighs; r.dollars = dollars;
     tbl.push_back(r);
 }
 
@@ -408,7 +414,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
     if (e.ev == StoreEv::Usage) {
         char p[8];
         strlcpy(p, e.ts, sizeof(p));        // ts holds "YYYY-MM" for these
-        usageAdd_(usage, p, e.vendor, e.material, e.usage_g, e.usage_weighs);
+        usageAdd_(usage, p, e.vendor, e.material, e.usage_g, e.usage_weighs, e.usage_dollars);
         return;
     }
     if (e.uuid[0] == 0) return;
@@ -443,6 +449,12 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         const float delta = r.remaining_g - e.remaining_g;
         if (delta > 0.05f) {
             char p[8]; periodOf_(e.ts, p, sizeof(p));
+            // $/gram for THIS spool, from what it actually cost -- 0 when
+            // cost was never recorded, which correctly contributes $0 rather
+            // than fabricating a price. Deliberately r.cost, not e.cost: the
+            // record already carries whatever the creating Onboard/Reconcile
+            // set, and a Weigh/Retire event has no cost field of its own.
+            const float rate = (r.nom_g > 1.0f && r.cost > 0) ? r.cost / r.nom_g : 0.0f;
             // Popularity is per vendor + material TYPE, so key on the
             // abbreviation ("PLA"). r.material carries the OPT display string
             // ("PLA Summer Grass"), which would fragment the rollup into one
@@ -450,7 +462,8 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             // Records with no abbreviation — seeded rows, foreign tags — fall
             // back to r.material, which for those IS the bare type, so old and
             // new rows still merge on the same key.
-            usageAdd_(usage, p, r.vendor, r.abbr[0] ? r.abbr : r.material, delta, 1);
+            usageAdd_(usage, p, r.vendor, r.abbr[0] ? r.abbr : r.material,
+                      delta, 1, delta * rate);
         }
     }
 
@@ -473,6 +486,14 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             r.dia = e.dia; r.empty_g = e.empty_g; r.nom_g = e.nom_g;
             r.needs_ob = e.needs_ob;
             r.product  = e.product;
+            // Replaced by every identity event, deliberately NOT guarded like
+            // foreign/nfc_uid below -- see StoreEvent::cost's comment for why:
+            // the Onboard web form itself emits a Reconcile, so this has to
+            // behave like vendor/material above. storePropagateProduct()'s
+            // Reconcile snapshots and re-asserts the spool's own r.cost before
+            // appending, the same way it already does for needs_ob, so a
+            // product edit never clobbers what a spool actually cost.
+            r.cost = e.cost;
             // Ownership is established at creation and STICKY: an Onboard sets it,
             // a Checkpoint (folded state, built from the live record) preserves it,
             // but a Reconcile must NOT touch it — a propagated product edit carries
@@ -927,8 +948,10 @@ size_t storePropagateProduct(uint32_t id) {
     // Snapshot the affected spools BEFORE appending anything. storeAppendEvent()
     // mutates sSpools through the index, so iterating it while appending would
     // be walking a container that is being rewritten underneath us. Only the
-    // three fields an identity event does not carry are needed.
-    struct Target { char uuid[33]; uint32_t spool; bool needs_ob; };
+    // per-spool fields a product-level identity event has no business setting
+    // are needed here -- needs_ob and cost are facts about one spool, not
+    // about the product all of them share.
+    struct Target { char uuid[33]; uint32_t spool; bool needs_ob; float cost; };
     std::vector<Target> targets;
     {
         Lock lk;
@@ -936,7 +959,7 @@ size_t storePropagateProduct(uint32_t id) {
             if (!r.valid || r.product != id || r.uuid[0] == 0) continue;
             Target t;
             strlcpy(t.uuid, r.uuid, sizeof(t.uuid));
-            t.spool = r.spool; t.needs_ob = r.needs_ob;
+            t.spool = r.spool; t.needs_ob = r.needs_ob; t.cost = r.cost;
             targets.push_back(t);
         }
     }
@@ -953,8 +976,11 @@ size_t storePropagateProduct(uint32_t id) {
         memcpy(e.rgba, p.rgba, 4);
         e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
         // Carried through, not cleared: whether a spool still needs details
-        // entered is a fact about that spool, not about its product.
+        // entered, and what it cost, are facts about that spool, not its
+        // product -- see StoreEvent::cost's comment for why cost can't use
+        // the simpler foreign/nfc_uid exemption instead.
         e.needs_ob = t.needs_ob;
+        e.cost     = t.cost;
         e.product  = id;
         if (storeAppendEvent(e)) n++;
     }
@@ -1558,8 +1584,9 @@ bool storeCompact() {
         strlcpy(x.ts,       u.period,   sizeof(x.ts));
         strlcpy(x.vendor,   u.vendor,   sizeof(x.vendor));
         strlcpy(x.material, u.material, sizeof(x.material));
-        x.usage_g      = u.grams;
-        x.usage_weighs = u.weighs;
+        x.usage_g       = u.grams;
+        x.usage_weighs  = u.weighs;
+        x.usage_dollars = u.dollars;
         if (!emit(encodeLine(x))) { ok = false; break; }
     }
 
@@ -1581,6 +1608,7 @@ bool storeCompact() {
         c.needs_ob = r.needs_ob;
         c.foreign  = r.foreign;   // carry ownership through the fold
         strlcpy(c.nfc_uid, r.nfc_uid, sizeof(c.nfc_uid));  // carry physical UID through the fold
+        c.cost = r.cost;   // carry what was paid through the fold
         c.retired  = r.retired;   // carry disposal status through the fold
         c.product  = r.product;
         if (!emit(encodeLine(c))) { ok = false; break; }
@@ -1690,15 +1718,16 @@ bool storeSerialCommand(const String& lineIn) {
         } else if (what == "usage") {
             Serial.printf("[store] usage (%u buckets):\n", (unsigned)storeUsageCount());
             UsageRow u;
-            float total = 0;
+            float total = 0, totalDollars = 0;
             for (size_t i = 0; i < storeUsageCount(); i++)
                 if (storeUsageAt(i, u)) {
-                    Serial.printf("  %-8s %-12s %-10s %9.1f g  (%u weighs)\n",
+                    Serial.printf("  %-8s %-12s %-10s %9.1f g  $%8.2f  (%u weighs)\n",
                                   u.period, u.vendor, u.material, u.grams,
-                                  (unsigned)u.weighs);
-                    total += u.grams;
+                                  u.dollars, (unsigned)u.weighs);
+                    total += u.grams; totalDollars += u.dollars;
                 }
-            Serial.printf("  total %.1f g (%.2f kg)\n", total, total / 1000.0f);
+            Serial.printf("  total %.1f g (%.2f kg), $%.2f\n",
+                          total, total / 1000.0f, totalDollars);
         } else if (what == "prod" || what == "products") {
             Serial.printf("[store] products (%u), next #%u:\n",
                           (unsigned)storeProductCount(), (unsigned)storePeekProductId());

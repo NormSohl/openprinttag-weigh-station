@@ -37,7 +37,14 @@ static bool checkLayout(uint8_t numBlocks, uint8_t blockSize) {
         std::printf("  %2ux%u: optBuildBlankTag refused\n", numBlocks, blockSize);
         return false;
     }
-    OptAuxiliary a{}; a.consumed_weight = 123.5f;
+    // Realistic worst case for the region-fit check: consumed_weight AND a
+    // recorded purchase price/currency, the combination the byte budget in
+    // AUX_REGION_SIZE's comment was sized against.
+    OptAuxiliary a{};
+    a.consumed_weight = 123.5f;
+    a.has_purchase = true;
+    a.purchase_price = 24.99f;
+    std::strcpy(a.purchase_currency, "USD");
     uint8_t probe[64];
     size_t auxLen = optEncodeAux(a, probe, sizeof probe);
 
@@ -272,6 +279,69 @@ int main() {
                     m.has_lab, m.primary_color_lab[0], m.primary_color_lab[1],
                     m.primary_color_lab[2], ok ? "ok" : "FAIL");
         if (!ok) return 1;
+
+        // Aux purchase-price round-trip, same "absent means unrecorded, not a
+        // measured $0" reasoning has_lab already established. Needs a full
+        // NDEF tag image, not a bare optEncodeAux() buffer: optDecode() starts
+        // by locating the NDEF payload via findNdefPayload(), which a raw CBOR
+        // map has none of, so it would return false without ever touching aux.
+        // Same splice-into-a-blank-tag pattern as the identity/lab tests above.
+        {
+            std::vector<uint8_t> t = good;
+            OptMeta meta{};
+            size_t payloadOff = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+            size_t auxAbs = payloadOff + meta.aux_region_offset;
+
+            OptAuxiliary in{};
+            in.consumed_weight = 55.0f;
+            in.has_purchase = true;
+            in.purchase_price = 24.99f;
+            std::strcpy(in.purchase_currency, "USD");
+            uint8_t abuf[64];
+            size_t an = optEncodeAux(in, abuf, sizeof abuf);
+            if (an == 0 || auxAbs + an > t.size()) {
+                std::fprintf(stderr, "aux purchase round-trip: encode didn't fit\n");
+                return 1;
+            }
+            std::memcpy(t.data() + auxAbs, abuf, an);
+
+            OptAuxiliary aback{};
+            optDecode(t.data(), t.size(), nullptr, nullptr, &aback);
+            const bool aok = aback.has_purchase
+                          && std::fabs(aback.purchase_price - 24.99f) < 0.01f
+                          && std::strcmp(aback.purchase_currency, "USD") == 0
+                          && std::fabs(aback.consumed_weight - 55.0f) < 0.01f
+                          && aback.extra_len == 0;   // fully modelled: no passthrough needed
+            std::printf("aux purchase round-trip: has_purchase=%d price=%.2f "
+                        "currency=%s consumed=%.1f extra_len=%u -> %s\n",
+                        aback.has_purchase, aback.purchase_price, aback.purchase_currency,
+                        aback.consumed_weight, (unsigned)aback.extra_len, aok ? "ok" : "FAIL");
+            if (!aok) return 1;
+
+            std::vector<uint8_t> t2 = good;
+            OptMeta meta2{};
+            size_t payloadOff2 = optBuildBlankTag(80, 4, t2.data(), t2.size(), &meta2);
+            size_t auxAbs2 = payloadOff2 + meta2.aux_region_offset;
+
+            OptAuxiliary noPurchase{}; noPurchase.consumed_weight = 12.0f;
+            uint8_t nbuf[64];
+            size_t nn = optEncodeAux(noPurchase, nbuf, sizeof nbuf);
+            if (nn == 0 || auxAbs2 + nn > t2.size()) {
+                std::fprintf(stderr, "aux purchase omitted-when-unset: encode didn't fit\n");
+                return 1;
+            }
+            std::memcpy(t2.data() + auxAbs2, nbuf, nn);
+
+            // Fresh/zeroed, matching how every real caller decodes (optDecode
+            // only ever SETS fields it recognizes, never clears ones a tag
+            // doesn't mention -- the caller starts from {} each time).
+            OptAuxiliary nback{};
+            optDecode(t2.data(), t2.size(), nullptr, nullptr, &nback);
+            const bool nok = !nback.has_purchase;
+            std::printf("aux purchase omitted when unset: has_purchase=%d -> %s\n",
+                        nback.has_purchase, nok ? "ok" : "FAIL");
+            if (!nok) return 1;
+        }
 
         OptMain none{};
         uint8_t buf[256];

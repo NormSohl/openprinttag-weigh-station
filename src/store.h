@@ -88,6 +88,19 @@ struct StoreEvent {
     // reuse flow, TAGFORMAT, or a third-party NFC tool).
     char     nfc_uid[17] = {};
 
+    // What was paid for THIS spool (0 = not recorded), entered on the
+    // Onboard web form. UNLIKE `foreign`/`nfc_uid` above, this is NOT
+    // exempt from Reconcile: handleApiOnboard (the one place a human types
+    // a price) itself emits a Reconcile, not an Onboard, so applyInto_()
+    // must replace it there the same way it replaces vendor/material/dia —
+    // it cannot use the `if (e.ev != StoreEv::Reconcile)` guard those two
+    // use, or a human's typed price could never be recorded at all.
+    // storePropagateProduct()'s Reconcile (product-edit propagation) instead
+    // explicitly snapshots and re-asserts the spool's own cost, the same way
+    // it already does for `needs_ob` — a product-level event has no business
+    // knowing what one specific spool cost.
+    float    cost = 0;
+
     // Confirmed physically disposed (Retire/Checkpoint only). See
     // SpoolRecord::retired -- carried through Checkpoint so a fold never
     // silently un-retires a spool; never set or cleared by Onboard/Reconcile.
@@ -95,8 +108,9 @@ struct StoreEvent {
 
     // Usage rollup (Usage). `ts` holds the period as "YYYY-MM" rather than a
     // timestamp; vendor + material are the grouping key.
-    float    usage_g      = 0;   // grams consumed in this period + category
-    uint32_t usage_weighs = 0;   // weigh events that contributed
+    float    usage_g       = 0;   // grams consumed in this period + category
+    uint32_t usage_weighs  = 0;   // weigh events that contributed
+    float    usage_dollars = 0;   // grams * (that spool's cost / its nom_g), summed
 
     // Product reference. Rides on Onboard/Reconcile/Checkpoint (which product
     // this spool resolved to) and on Product (which product is being upserted).
@@ -137,6 +151,8 @@ struct SpoolRecord {
     bool     foreign = false;
     // Physical NFC chip UID (16 lowercase hex chars). See StoreEvent::nfc_uid.
     char     nfc_uid[17] = {};
+    // What was paid for this spool (0 = not recorded). See StoreEvent::cost.
+    float    cost = 0;
     // Confirmed physically disposed during a physical-inventory audit. Distinct
     // from remaining_g happening to read near zero: this is a fact about
     // disposal, not an inference from weight. Cleared automatically by the
@@ -209,8 +225,9 @@ struct UsageRow {
     char     period[8]    = {};  // "YYYY-MM"
     char     vendor[64]   = {};
     char     material[64] = {};
-    float    grams  = 0;         // consumed during this period
-    uint32_t weighs = 0;         // weigh events contributing
+    float    grams   = 0;         // consumed during this period
+    uint32_t weighs  = 0;         // weigh events contributing
+    float    dollars = 0;         // only reflects spools with a recorded cost
 };
 
 // ── Inventory rollup (derived) ────────────────────────────────────────────────

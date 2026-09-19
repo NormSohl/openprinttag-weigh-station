@@ -709,7 +709,13 @@ void nfcTask(void* param) {
             OptAuxiliary aux = gTagAux;
             uint16_t auxOffset = gTagMeta.aux_region_offset;
             xSemaphoreGive(gTagMutex);
-            if (auxOffset > 0) {
+            if (auxOffset > 0 && !optAuxPreservesAll(aux)) {
+                // Same rule as Main: refusing costs an edit (consumed_weight/
+                // purchase_price won't update this pass), writing would cost
+                // whatever unmodelled Aux key this tag already carried.
+                Serial.println("[nfc] Aux NOT rewritten: this tag carries more "
+                               "unmodelled fields than the aux region can hold");
+            } else if (auxOffset > 0) {
                 size_t n = optEncodeAux(aux, cborBuf, sizeof(cborBuf));
                 if (n > 0) {
                     // No spiBusTake here: writeSection -> writeBlockRetry takes and

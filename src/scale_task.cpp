@@ -120,6 +120,14 @@ static void dumpTag() {
     Serial.printf("[tag] Aux   consumed %.1f g%s\n", a.consumed_weight,
                   a.consumed_weight > 0.0f ? ""
                     : "   <- zero: either an unused spool, or Aux never wrote");
+    if (a.has_purchase)
+        Serial.printf("[tag] Aux   purchase %.2f %s\n", a.purchase_price, a.purchase_currency);
+    else
+        Serial.println("[tag] Aux   purchase NOT RECORDED");
+    if (a.extra_len || a.extra_overflow)
+        Serial.printf("[tag] Aux   %u B of unmodelled fields preserved%s\n",
+                      (unsigned)a.extra_len,
+                      a.extra_overflow ? "  <- OVERFLOW: Aux will not be rewritten" : "");
 
     if (m.actual_netto_full_weight > 0.0f)
         Serial.printf("[tag] calc  remaining = actual - consumed = %.1f g\n",

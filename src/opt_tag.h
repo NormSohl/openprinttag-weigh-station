@@ -115,7 +115,37 @@ inline bool optMainPreservesAll(const OptMain& m) { return !m.extra_overflow; }
 // Calculate it as:  remaining = actual_netto_full_weight - consumed_weight
 struct OptAuxiliary {
     float consumed_weight;  // key 0 — grams used so far; written on every weigh event
+
+    // key 6/7 — "not filled by the manufacturer, for customer private
+    // tracking only" per the spec, which is exactly cost tracking entered
+    // at onboarding. has_purchase is a separate flag for the same reason
+    // OptMain::has_lab is: a real $0 is implausible but a zero-initialised
+    // struct needs a way to say UNSET, not FREE. Deliberately no
+    // purchase_time (key 5): the local event log's own timestamp already
+    // records when the price was entered, and there is no byte budget left
+    // for it anyway (see AUX_REGION_SIZE's comment in opt_tag.cpp).
+    float    purchase_price;
+    char     purchase_currency[4];  // ISO 4217, e.g. "USD" (3 chars + NUL)
+    bool     has_purchase;
+
+    // Verbatim passthrough of Aux keys this firmware does not model — same
+    // reasoning as OptMain::extra, at a much smaller scale: optEncodeAux()
+    // used to rewrite the WHOLE map from consumed_weight alone, silently
+    // destroying anything else present (an unused-until-now latent bug —
+    // OPT allows customer-private Aux keys we don't model, e.g. workgroup,
+    // storage_location). Sized for what's left of AUX_REGION_SIZE after
+    // consumed_weight + purchase_price + purchase_currency (~19 of 24
+    // bytes) — deliberately tiny, so overflow is expected and refuses the
+    // write rather than corrupting the map, same as Main's extra_overflow.
+    uint8_t  extra[5];
+    uint8_t  extra_len;
+    bool     extra_overflow;
 };
+
+// True if rewriting Aux would preserve everything the tag already carried.
+// Same contract as optMainPreservesAll(): false means unmodelled Aux keys
+// were seen but didn't all fit, so a caller should refuse the write.
+inline bool optAuxPreservesAll(const OptAuxiliary& a) { return !a.extra_overflow; }
 
 // ── NDEF/tag layout constants ─────────────────────────────────────────────────
 #define OPT_CC_SIZE            4       // capability container (first 4 bytes of tag)

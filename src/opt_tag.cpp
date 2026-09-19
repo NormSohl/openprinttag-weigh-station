@@ -36,7 +36,9 @@ static constexpr int MAIN_KEY_MATERIAL_ABBREVIATION      = 52;
 static constexpr int MAIN_KEY_PRIMARY_COLOR_LAB          = 59;
 
 // Auxiliary keys (data/aux_fields.yaml)
-static constexpr int AUX_KEY_CONSUMED_WEIGHT = 0;
+static constexpr int AUX_KEY_CONSUMED_WEIGHT    = 0;
+static constexpr int AUX_KEY_PURCHASE_PRICE     = 6;
+static constexpr int AUX_KEY_PURCHASE_CURRENCY  = 7;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -496,16 +498,48 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
     }
 
     // ── Decode Auxiliary region ───────────────────────────────────────────────
+    // Same pairStart/consumed/passthrough shape as Main's loop above, for the
+    // same two reasons: (1) the old unconditional second cborStep() here did
+    // not know some value types (e.g. a text string) already advance the
+    // iterator themselves when read, and double-advancing crashed the
+    // firmware on a tag carrying any Aux key besides consumed_weight -- (2)
+    // whatever we don't model must be preserved, not dropped, into extra[].
     if (aux && auxOffset > 0 && auxOffset < payloadLen) {
         CborParser ap; CborValue ai, am;
         if (cbor_parser_init(payload + auxOffset, payloadLen - auxOffset, 0, &ap, &ai) == CborNoError &&
             cbor_value_is_map(&ai) && cbor_value_enter_container(&ai, &am) == CborNoError) {
             while (!cbor_value_at_end(&am)) {
+                const uint8_t* pairStart = cbor_value_get_next_byte(&am);
+                bool known = true;
                 int64_t key;
                 if (!cborTakeInt(&am, &key)) break;
                 if (!cborStep(&am)) break;
-                if (key == AUX_KEY_CONSUMED_WEIGHT) cborGetFloat(&am, &aux->consumed_weight);
-                if (!cborStep(&am)) break;   // <- this call aborted the firmware
+                bool consumed = false;
+                switch (key) {
+                    case AUX_KEY_CONSUMED_WEIGHT:
+                        cborGetFloat(&am, &aux->consumed_weight); break;
+                    case AUX_KEY_PURCHASE_PRICE:
+                        if (cborGetFloat(&am, &aux->purchase_price)) aux->has_purchase = true;
+                        break;
+                    case AUX_KEY_PURCHASE_CURRENCY:
+                        consumed = cborTakeText(&am, aux->purchase_currency, sizeof(aux->purchase_currency));
+                        break;
+                    default: known = false; break;
+                }
+                if (!consumed && !cborStep(&am)) break;
+
+                if (!known) {
+                    const uint8_t* pairEnd = cbor_value_get_next_byte(&am);
+                    if (pairEnd > pairStart) {
+                        const size_t n = (size_t)(pairEnd - pairStart);
+                        if (aux->extra_len + n <= sizeof(aux->extra)) {
+                            memcpy(aux->extra + aux->extra_len, pairStart, n);
+                            aux->extra_len += (uint8_t)n;
+                        } else {
+                            aux->extra_overflow = true;
+                        }
+                    }
+                }
             }
             cborLeave(&ai, &am);
         }
@@ -619,6 +653,20 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
 
     cbor_encode_int(&map, AUX_KEY_CONSUMED_WEIGHT);
     cbor_encode_float(&map, aux.consumed_weight);
+
+    // Omitted entirely when unset, not written as 0/"" -- same reasoning as
+    // Main's primary_color_lab: a real $0 purchase is implausible, and OPT
+    // readers should see "not recorded" as absence, not as a free spool.
+    if (aux.has_purchase) {
+        cbor_encode_int(&map, AUX_KEY_PURCHASE_PRICE);
+        cbor_encode_float(&map, aux.purchase_price);
+        cbor_encode_int(&map, AUX_KEY_PURCHASE_CURRENCY);
+        cbor_encode_text_string(&map, aux.purchase_currency, strlen(aux.purchase_currency));
+    }
+
+    // Whatever this tag carried that we don't model, back untouched -- same
+    // reasoning as Main's extra[] splice, at Aux's much smaller scale.
+    if (!cborAppendRaw(&map, aux.extra, aux.extra_len)) return 0;
 
     cbor_encoder_close_container(&enc, &map);
     return cborMapToDefinite(buf, cbor_encoder_get_buffer_size(&enc, buf));

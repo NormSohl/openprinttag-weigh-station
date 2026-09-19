@@ -1391,6 +1391,15 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += "<form method='POST' action='/api/onboard'>";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
 
+    // Applies regardless of which of the three paths below resolves the rest
+    // of the identity -- what THIS spool cost is a fact about the purchase,
+    // not about the product, so it belongs outside #newprod (which hides for
+    // "another spool of X"). Deliberately no last-used default the way
+    // vendor/material/colour/profile get one: a stale price silently kept is
+    // exactly the failure worth avoiding here, so it starts blank every time.
+    p += "<label>Cost for this spool ($) &mdash; leave blank if unknown</label>"
+         "<input type='number' step='0.01' min='0' name='cost'>";
+
     // ── "Another spool of X" ──────────────────────────────────────────────────
     // The path that makes this worth building. Nine onboardings out of ten are
     // a repeat of one already done, and every retype is a fresh chance to pick
@@ -1841,6 +1850,12 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     // be set explicitly — leaving it at 0 would silently un-assign the product
     // every time someone edited a spool through this form.
     e.product = pid ? pid : rec.product;
+    // Same trap, for cost: the field starts blank every time (deliberately,
+    // see handleOnboardForm), so re-submitting this form later to fix a typo
+    // elsewhere — without retyping the price — must NOT blank out a cost
+    // already recorded. Only an actually-typed number overrides it.
+    String costArg = arg("cost");
+    e.cost = costArg.length() ? costArg.toFloat() : rec.cost;
     storeAppendEvent(e);
 
     // 2) If this spool is on the scale, write the full OPT Main to its tag now.
@@ -2821,38 +2836,44 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
 
     // Totals per material across all time — the headline "what is popular"
     // number. Materials are few, so a linear merge is fine.
-    struct Tot { String key; float g; uint32_t w; };
+    struct Tot { String key; float g; uint32_t w; float d; };
     std::vector<Tot> byMat;
-    float grand = 0;
+    float grand = 0, grandDollars = 0;
     UsageRow u;
     for (size_t i = 0; i < n; i++) {
         if (!storeUsageAt(i, u)) continue;
-        grand += u.grams;
+        grand += u.grams; grandDollars += u.dollars;
         bool found = false;
         for (auto& t : byMat)
-            if (t.key == u.material) { t.g += u.grams; t.w += u.weighs; found = true; break; }
-        if (!found) byMat.push_back({String(u.material), u.grams, u.weighs});
+            if (t.key == u.material) { t.g += u.grams; t.w += u.weighs; t.d += u.dollars; found = true; break; }
+        if (!found) byMat.push_back({String(u.material), u.grams, u.weighs, u.dollars});
     }
     std::sort(byMat.begin(), byMat.end(), [](const Tot& a, const Tot& b){ return a.g > b.g; });
 
-    p += "<table><tr><th>Material</th><th>Consumed</th><th>Share</th></tr>";
+    p += "<table><tr><th>Material</th><th>Consumed</th><th>Share</th><th>$</th></tr>";
     for (const auto& t : byMat) {
         const int pct = grand > 0 ? (int)(100.0f * t.g / grand + 0.5f) : 0;
         p += "<tr><td>" + esc(t.key.c_str()) + "</td><td>"
-           + String(t.g / 1000.0f, 2) + " kg</td><td>" + String(pct) + "%</td></tr>";
+           + String(t.g / 1000.0f, 2) + " kg</td><td>" + String(pct) + "%</td><td>"
+           + String(t.d, 2) + "</td></tr>";
     }
     p += "</table>";
-    p += "<p class='muted'>Total " + String(grand / 1000.0f, 2) + " kg across "
+    p += "<p class='muted'>Total " + String(grand / 1000.0f, 2) + " kg ($"
+       + String(grandDollars, 2) + ") across "
        + String((unsigned)n) + " month/vendor/material buckets.</p>";
+    p += "<p class='muted'>$ totals only reflect spools with a recorded cost "
+         "&mdash; entered on the Onboard form. Older spools, or ones where it "
+         "was left blank, contribute $0 here even though real grams were "
+         "consumed.</p>";
 
     // Yearly rollup, same shape as "by month" below but grouped one level
     // coarser — drilling down from the all-time summary above. Rows with no
     // synced clock at the time (period == "unknown") stay their own bucket
     // rather than being sliced into a fake year.
     p += "<h3>By year</h3><table>"
-         "<tr><th>Year</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>Weighs</th></tr>";
+         "<tr><th>Year</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>$</th><th>Weighs</th></tr>";
     struct YKey { String year, vendor, material; };
-    struct YTot { YKey k; float g; uint32_t w; };
+    struct YTot { YKey k; float g; uint32_t w; float d; };
     std::vector<YTot> byYear;
     for (size_t i = 0; i < n; i++) {
         if (!storeUsageAt(i, u)) continue;
@@ -2861,9 +2882,9 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
         bool found = false;
         for (auto& t : byYear)
             if (t.k.year == yr && t.k.vendor == u.vendor && t.k.material == u.material) {
-                t.g += u.grams; t.w += u.weighs; found = true; break;
+                t.g += u.grams; t.w += u.weighs; t.d += u.dollars; found = true; break;
             }
-        if (!found) byYear.push_back({{yr, String(u.vendor), String(u.material)}, u.grams, u.weighs});
+        if (!found) byYear.push_back({{yr, String(u.vendor), String(u.material)}, u.grams, u.weighs, u.dollars});
     }
     std::sort(byYear.begin(), byYear.end(), [](const YTot& a, const YTot& b) {
         int c = strcmp(b.k.year.c_str(), a.k.year.c_str());   // newest year first
@@ -2872,12 +2893,49 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     for (const auto& t : byYear) {
         p += "<tr><td>" + esc(t.k.year.c_str()) + "</td><td>" + esc(t.k.vendor.c_str())
            + "</td><td>" + esc(t.k.material.c_str()) + "</td><td>" + String(t.g, 0)
-           + " grams</td><td>" + String((unsigned)t.w) + "</td></tr>";
+           + " grams</td><td>" + String(t.d, 2) + "</td><td>" + String((unsigned)t.w) + "</td></tr>";
+    }
+    p += "</table>";
+
+    // By quarter: pure re-aggregation of the same rows "by year" already
+    // grouped, one level finer -- no new storage, quarter is derived from
+    // the "YYYY-MM" period string already on every UsageRow.
+    p += "<h3>By quarter</h3><table>"
+         "<tr><th>Quarter</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>$</th><th>Weighs</th></tr>";
+    struct QKey { String q, vendor, material; };
+    struct QTot { QKey k; float g; uint32_t w; float d; };
+    std::vector<QTot> byQuarter;
+    for (size_t i = 0; i < n; i++) {
+        if (!storeUsageAt(i, u)) continue;
+        String qk;
+        if (strcmp(u.period, "unknown") == 0) {
+            qk = "unknown";
+        } else {
+            String yr = String(u.period).substring(0, 4);
+            int mon = String(u.period).substring(5, 7).toInt();
+            int q = (mon > 0) ? ((mon - 1) / 3 + 1) : 1;
+            qk = yr + "-Q" + String(q);
+        }
+        bool found = false;
+        for (auto& t : byQuarter)
+            if (t.k.q == qk && t.k.vendor == u.vendor && t.k.material == u.material) {
+                t.g += u.grams; t.w += u.weighs; t.d += u.dollars; found = true; break;
+            }
+        if (!found) byQuarter.push_back({{qk, String(u.vendor), String(u.material)}, u.grams, u.weighs, u.dollars});
+    }
+    std::sort(byQuarter.begin(), byQuarter.end(), [](const QTot& a, const QTot& b) {
+        int c = strcmp(b.k.q.c_str(), a.k.q.c_str());   // newest quarter first
+        return c ? (c < 0) : (a.g > b.g);
+    });
+    for (const auto& t : byQuarter) {
+        p += "<tr><td>" + esc(t.k.q.c_str()) + "</td><td>" + esc(t.k.vendor.c_str())
+           + "</td><td>" + esc(t.k.material.c_str()) + "</td><td>" + String(t.g, 0)
+           + " grams</td><td>" + String(t.d, 2) + "</td><td>" + String((unsigned)t.w) + "</td></tr>";
     }
     p += "</table>";
 
     p += "<h3>By month</h3><table>"
-         "<tr><th>Period</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>Weighs</th></tr>";
+         "<tr><th>Period</th><th>Vendor</th><th>Material</th><th>Consumed</th><th>$</th><th>Weighs</th></tr>";
     // Newest first: periods are "YYYY-MM", so lexical order is chronological.
     std::vector<size_t> order;
     for (size_t i = 0; i < n; i++) order.push_back(i);
@@ -2891,7 +2949,7 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
         if (!storeUsageAt(i, u)) continue;
         p += "<tr><td>" + esc(u.period) + "</td><td>" + esc(u.vendor)
            + "</td><td>" + esc(u.material) + "</td><td>" + String(u.grams, 0)
-           + " grams</td><td>" + String((unsigned)u.weighs) + "</td></tr>";
+           + " grams</td><td>" + String(u.dollars, 2) + "</td><td>" + String((unsigned)u.weighs) + "</td></tr>";
     }
     p += "</table>";
     p += "<p><a href='/usage.csv'><button type='button'>Download CSV</button></a></p>";
@@ -2904,14 +2962,15 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
 }
 
 static void handleUsageCsv(AsyncWebServerRequest* req) {
-    String c = "period,vendor,material,grams,weighs\n";
+    String c = "period,vendor,material,grams,dollars,weighs\n";
     const size_t n = storeUsageCount();
     UsageRow u;
     for (size_t i = 0; i < n; i++) {
         if (!storeUsageAt(i, u)) continue;
         // Quote the free-text columns; vendor/material can contain commas.
         c += String(u.period) + ",\"" + u.vendor + "\",\"" + u.material + "\","
-           + String(u.grams, 1) + "," + String((unsigned)u.weighs) + "\n";
+           + String(u.grams, 1) + "," + String(u.dollars, 2) + ","
+           + String((unsigned)u.weighs) + "\n";
     }
     AsyncWebServerResponse* r = req->beginResponse(200, "text/csv", c);
     r->addHeader("Content-Disposition", "attachment; filename=\"usage.csv\"");
@@ -2929,6 +2988,7 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
         j += "\",\"vendor\":\"";  j += esc(u.vendor);
         j += "\",\"material\":\""; j += esc(u.material);
         j += "\",\"grams\":";     j += String(u.grams, 1);
+        j += ",\"dollars\":";     j += String(u.dollars, 2);
         j += ",\"weighs\":";      j += String((unsigned)u.weighs);
         j += "}";
     }

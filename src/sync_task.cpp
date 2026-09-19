@@ -102,6 +102,20 @@ static bool recordDiffersFromMain(const SpoolRecord& r, const OptMain& m) {
         || r.nom_g   != m.nominal_netto_full_weight;
 }
 
+// Same idea as the pair above, for the one Aux field the store tracks:
+// what a spool cost. Currency is always "USD" here (see StoreEvent::cost),
+// so it never needs to be part of the comparison.
+static bool recordDiffersFromAux(const SpoolRecord& r, const OptAuxiliary& a) {
+    return (r.cost > 0) != a.has_purchase
+        || (r.cost > 0 && r.cost != a.purchase_price);
+}
+
+static void overlayRecordOntoAux(const SpoolRecord& r, OptAuxiliary& a) {
+    a.has_purchase = (r.cost > 0);
+    a.purchase_price = r.cost;
+    if (a.has_purchase) strlcpy(a.purchase_currency, "USD", sizeof(a.purchase_currency));
+}
+
 // Build a product probe from a tag's Main section: everything the matching
 // ladder can key on, in the order it tries them.
 //
@@ -369,6 +383,12 @@ void syncTask(void* param) {
     // Per-tag state, valid while a spool is on the scale.
     int     sSpoolId  = -1;
     OptMain sSnapshot = {};
+    // Cached alongside sSnapshot for the same reason: the Holding-phase poll
+    // below needs something cheap to diff the live store against, without a
+    // tag re-read. Only cost needs this (not the rest of OptAuxiliary) --
+    // consumed_weight is never store-driven, it's computed fresh each
+    // placement.
+    float   sCostSnapshot = 0;
     // True while the spool on the scale is a FOREIGN tag (valid OPT, adopted from
     // its own data, not one we formatted). Such a tag carries another writer's
     // layout — writing our Main/Aux encoding onto it corrupts it (observed: a
@@ -450,7 +470,7 @@ void syncTask(void* param) {
 
             case DeviceState::Idle:
             case DeviceState::IdleNoWiFi:
-                sSpoolId = -1; sSnapshot = {};
+                sSpoolId = -1; sSnapshot = {}; sCostSnapshot = 0;
                 gSpoolId = -1; gSpoolNeedsOnboarding = false;
                 sphase = SyncPhase::Idle;   // tag gone (or never arrived)
                 sForeign = false;
@@ -562,7 +582,7 @@ void syncTask(void* param) {
                 // mint-a-stub path at all.
                 if (gEraseModeActive) {
                     sSpoolId = -1; gSpoolId = -1; gSpoolNeedsOnboarding = false;
-                    sSnapshot = {};
+                    sSnapshot = {}; sCostSnapshot = 0;
                     gEraseModeActivityMs = millis();   // reset the idle auto-off clock
                     ctrlPost(CtrlEvent::Weighed);   // -> Present, same as a normal weigh
                     sphase = SyncPhase::Holding;
@@ -633,6 +653,26 @@ void syncTask(void* param) {
                         xSemaphoreGive(gTagMutex);
                         gWriteMainPending = true;
                     }
+
+                    // Same reconcile, for cost, onto Aux -- catches a price
+                    // entered (or edited) on the web form while this spool sat
+                    // off the scale. gTagAux already reflects THIS physical
+                    // tag's own current Aux (nfcTask set it from the decode
+                    // moments ago), so comparing against it, not sSnapshot,
+                    // matches the tag's actual state rather than whatever the
+                    // last placement happened to leave cached.
+                    xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                    OptAuxiliary auxNow = gTagAux;
+                    xSemaphoreGive(gTagMutex);
+                    if (!sForeign && recordDiffersFromAux(r, auxNow)) {
+                        overlayRecordOntoAux(r, auxNow);
+                        xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                        gTagAux = auxNow;
+                        xSemaphoreGive(gTagMutex);
+                        gWriteAuxPending = true;
+                    }
+                    sCostSnapshot = r.cost;
+
                     sSnapshot = updated;
                     ctrlPost(CtrlEvent::BeginWeigh);
                     sphase = SyncPhase::Weighing;
@@ -803,6 +843,26 @@ void syncTask(void* param) {
                         sSnapshot = updated;
                         ctrlPost(CtrlEvent::NeedsReconcile);
                         sphase = SyncPhase::Reconciling;
+                    }
+                    // Same idea for cost, but deliberately NOT routed through
+                    // Reconciling: that phase only exits when nfcTask posts
+                    // ReconcileDone after a MAIN write specifically (see its
+                    // handler above), so an Aux-only change would never clear
+                    // it and the display would stick on "Updating tag..."
+                    // forever. Aux writes are already a silent background
+                    // thing everywhere else (consumed_weight updates every
+                    // weigh with no display transition at all) -- this stays
+                    // consistent with that instead of inventing a second kind
+                    // of reconcile just for cost.
+                    if (!sForeign && r.cost != sCostSnapshot) {
+                        OptAuxiliary updatedAux;
+                        xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                        updatedAux = gTagAux;
+                        overlayRecordOntoAux(r, updatedAux);
+                        gTagAux = updatedAux;
+                        xSemaphoreGive(gTagMutex);
+                        gWriteAuxPending = true;
+                        sCostSnapshot = r.cost;
                     }
                 }
             }
