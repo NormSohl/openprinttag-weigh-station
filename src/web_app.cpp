@@ -1602,6 +1602,18 @@ static void handleApiTare(AsyncWebServerRequest* req) {
     req->send(200, "application/json", "{\"weight\":" + String(w, 1) + "}");
 }
 
+// Resolve `probe` to an existing product, or create one if nothing matches.
+// Shared by every place a form resolves a product from typed/picked fields
+// (Onboard's catalog and manual paths, the Stock List's catalog path below)
+// so the same real filament converges on the same product id regardless of
+// which page or path it was entered through.
+static uint32_t findOrCreateProduct(ProductRecord& probe) {
+    ProductRecord found;
+    if (storeFindProduct(probe, found)) return found.id;
+    if (storeUpsertProduct(probe))      return probe.id;
+    return 0;
+}
+
 // ── POST /api/onboard — apply the form, write the tag, log a reconcile ────────
 static void handleApiOnboard(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
@@ -1702,9 +1714,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         prod.gtin = gtin;
         memcpy(prod.rgba, rgba, 4);
         prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
-        ProductRecord found;
-        if (storeFindProduct(prod, found))      pid = found.id;
-        else if (storeUpsertProduct(prod))      pid = prod.id;
+        pid = findOrCreateProduct(prod);
     } else {
         String matName  = arg("material");
         String colName  = arg("color");
@@ -1809,9 +1819,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         strlcpy(prod.abbr,     abbr.c_str(),    sizeof(prod.abbr));
         memcpy(prod.rgba, rgba, 4);
         prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
-        ProductRecord found;
-        if (storeFindProduct(prod, found))      pid = found.id;
-        else if (storeUpsertProduct(prod))      pid = prod.id;
+        pid = findOrCreateProduct(prod);
     }
 
     // 1) Append the identity to the log so indices + inventory reflect it.
@@ -2156,7 +2164,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
              "onchange=\"document.getElementById('stocknew').style.display="
              "this.value=='0'?'block':'none'\">";
         p += String("<option value='0'") + (s.product == 0 ? " selected" : "")
-           + ">&mdash; Type it in &mdash;</option>";
+           + ">&mdash; Search catalog or type in &mdash;</option>";
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
@@ -2172,15 +2180,71 @@ static void stockFormFields(String& p, const CfgStock& s) {
         p += "<input type='hidden' name='product' value='0'>";
         p += "<div id='stocknew'>";
     }
-    p += "<label>Vendor</label><input type='text' name='vendor' value='" + esc(s.vendor) + "'>";
-    p += "<label>Material (bare type, e.g. PLA)</label>"
-         "<input type='text' name='material' value='" + esc(s.material) + "'>";
-    p += "<label>Color</label><input type='text' name='color' value='" + esc(s.color) + "'>";
-    p += "<label>Diameter (mm)</label>"
-         "<input type='number' step='0.01' name='dia' value='" + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'>";
-    p += "<label>Nominal spool weight (g)</label>"
-         "<input type='number' step='0.1' name='spool_g' value='" + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'>";
+    // ── OpenPrintTag catalog search ───────────────────────────────────────────
+    // Same live search as /onboard (see CATALOG_SCRIPT), so a stock item can
+    // be set up for any real vendor product — including one never physically
+    // onboarded yet — not just whatever already has a local product. A pick
+    // resolves/creates a product the same way Onboard's catalog path does
+    // (findOrCreateProduct(), in parseStockForm() below), so the same real
+    // filament picked from either page converges on one product.
+    //
+    // Deliberately no cat_print_min/max / cat_bed_min/max hidden fields:
+    // those exist only to write onto a physical tag's Main section, and a
+    // Stock List item has no tag. CATALOG_SCRIPT's setField() no-ops safely
+    // on a missing element (`if(el)`), so omitting them costs nothing.
+    p += "<div class='card'>"
+         "<label>Search filament catalog</label>"
+         "<div class='cat-status' id='cat-status'>Loading catalog&hellip;</div>"
+         "<div class='cat-field' id='cat-field-vendor'>"
+           "<label>Vendor</label>"
+           "<input class='cat-input' id='cat-in-vendor' placeholder='Loading&hellip;' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-vendor'></div>"
+         "</div>"
+         "<div class='cat-field disabled' id='cat-field-type'>"
+           "<label>Material type</label>"
+           "<input class='cat-input' id='cat-in-type' placeholder='Pick a vendor first' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-type'></div>"
+         "</div>"
+         "<div class='cat-field disabled' id='cat-field-material'>"
+           "<label>Material</label>"
+           "<input class='cat-input' id='cat-in-material' placeholder='Pick a vendor first' disabled autocomplete='off'>"
+           "<div class='cat-panel' id='cat-panel-material'></div>"
+         "</div>"
+         "<div id='cat-resolved'></div>"
+         "</div>";
+    p += "<input type='hidden' name='source' id='cat-source' value='manual'>"
+         "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
+         "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
+         "<input type='hidden' name='cat_abbr'        id='cat-f-cat_abbr'>"
+         "<input type='hidden' name='cat_rgba'        id='cat-f-cat_rgba'>"
+         "<input type='hidden' name='cat_dia'         id='cat-f-cat_dia'>"
+         "<input type='hidden' name='cat_nom_g'       id='cat-f-cat_nom_g'>"
+         "<input type='hidden' name='cat_empty_g'     id='cat-f-cat_empty_g'>"
+         "<input type='hidden' name='cat_gtin'        id='cat-f-cat_gtin'>"
+         "<input type='hidden' name='cat_pkg_uuid'    id='cat-f-cat_pkg_uuid'>"
+         "<input type='hidden' name='cat_mat_uuid'    id='cat-f-cat_mat_uuid'>"
+         "<input type='hidden' name='cat_brand_uuid'  id='cat-f-cat_brand_uuid'>";
+
+    // "Or type it in" — the pre-existing fallback, now second-string to the
+    // catalog search rather than the only option. Each field resets `source`
+    // back to 'manual' on edit, same as Onboard's manual selects do, so a
+    // catalog pick followed by a change of mind doesn't silently resubmit
+    // stale cat_* fields alongside freshly-typed ones.
+    const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
+    p += "<details id='stock-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
+         "Or enter manually</summary>";
+    p += String("<label>Vendor</label><input type='text' name='vendor' value='") + esc(s.vendor) + "'" + resetSrc + ">";
+    p += String("<label>Material (bare type, e.g. PLA)</label>"
+         "<input type='text' name='material' value='") + esc(s.material) + "'" + resetSrc + ">";
+    p += String("<label>Color</label><input type='text' name='color' value='") + esc(s.color) + "'" + resetSrc + ">";
+    p += String("<label>Diameter (mm)</label>"
+         "<input type='number' step='0.01' name='dia' value='") + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'" + resetSrc + ">";
+    p += String("<label>Nominal spool weight (g)</label>"
+         "<input type='number' step='0.1' name='spool_g' value='") + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'" + resetSrc + ">";
+    p += "</details>";
     p += "</div>";   // #stocknew
+    p += CATALOG_STYLE;
+    p += CATALOG_SCRIPT;
     p += "<label>Minimum spools to keep &mdash; 0 = use grams instead</label>"
          "<input type='number' name='min_spools' value='" + String(s.min_spools) + "'>";
     p += "<label>Minimum grams to keep &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
@@ -2255,7 +2319,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material) + "</td><td>"
            + esc(sr.color) + "</td><td>" + popCell + "</td><td>" + thr + "</td><td>"
            + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
-           + "<a href='/stock?edit=" + String((unsigned)i) + "' style='color:#8f8'>Edit</a> "
+           + "<a href='/stock?edit=" + String((unsigned)i) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
              "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
            + "<input type='hidden' name='index' value='" + String((unsigned)i) + "'>"
@@ -2274,7 +2338,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     }
     p += "<p><a href='/stock.csv'><button type='button'>Download CSV</button></a></p>";
 
-    p += "<h3>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
+    p += "<h3 id='stockform'>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
     p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
          "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
     p += "<div class='card'>";
@@ -2299,6 +2363,32 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
     };
     CfgStock s{};
     uint32_t pid = (uint32_t)arg("product").toInt();
+
+    // Picked from the OpenPrintTag catalog search (see CATALOG_SCRIPT in
+    // stockFormFields()) rather than an existing local product — resolves or
+    // creates one via the same findOrCreateProduct() handleApiOnboard's own
+    // catalog path uses, so the same real filament picked from either page
+    // converges on one product instead of two near-identical ones.
+    if (!pid && arg("source") == "catalog" && arg("cat_vendor").length()) {
+        ProductRecord prod;
+        strlcpy(prod.vendor,   arg("cat_vendor").c_str(),   sizeof(prod.vendor));
+        strlcpy(prod.material, arg("cat_material").c_str(), sizeof(prod.material));
+        strlcpy(prod.abbr,     arg("cat_abbr").c_str(),     sizeof(prod.abbr));
+        String rgbaHex = arg("cat_rgba");
+        if (rgbaHex.length() == 8)
+            for (int i = 0; i < 4; i++)
+                prod.rgba[i] = (uint8_t)strtol(rgbaHex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
+        prod.dia = arg("cat_dia").toFloat();
+        if (prod.dia <= 0.0f) prod.dia = 1.75f;
+        prod.nom_g   = arg("cat_nom_g").toFloat();
+        prod.empty_g = arg("cat_empty_g").toFloat();
+        strlcpy(prod.pkg_uuid,   arg("cat_pkg_uuid").c_str(),   sizeof(prod.pkg_uuid));
+        strlcpy(prod.mat_uuid,   arg("cat_mat_uuid").c_str(),   sizeof(prod.mat_uuid));
+        strlcpy(prod.brand_uuid, arg("cat_brand_uuid").c_str(), sizeof(prod.brand_uuid));
+        prod.gtin = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
+        pid = findOrCreateProduct(prod);
+    }
+
     ProductRecord q;
     if (pid && storeGetProduct(pid, q)) {
         // Inherit the product's own identity exactly, ignoring whatever the
