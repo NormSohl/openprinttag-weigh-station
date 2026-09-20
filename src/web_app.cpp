@@ -1600,11 +1600,6 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // friends) so it is there for next time — same mechanism the catalog
     // search already uses for Vendor, extended to the fields it doesn't
     // reach (Material, Color, Spool profile).
-    auto revealOnchange = [&](const char* wrapId) -> String {
-        return String(" onchange=\"document.getElementById('cat-source').value='manual';"
-                       "document.getElementById('") + wrapId + "').style.display="
-                       "this.value=='__new__'?'block':'none'\"";
-    };
 
     // Vendor/Material/Color — see vendorPickerField()/materialPickerField()/
     // colorPickerField() above (shared with Stock List's manual fallback).
@@ -1617,13 +1612,50 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     materialPickerField(p, lastOnboardMaterial());
     colorPickerField(p, lastOnboardColor());
 
-    // Spool profile (fills nominal-full + empty tare)
+    p += "</details>";
+
+    // ── Spool profile: the tare preset, OUTSIDE the manual-entry details ─────
+    // A spool profile is a weight fact (tare + nominal full), not an identity
+    // one, so it applies no matter how the identity was resolved. It used to
+    // live inside the collapsed "Or enter manually" block, which made it
+    // invisible to anyone using the catalog search — while the tare field
+    // below, which IS visible, said "blank to use profile" and pointed at a
+    // picker they could not see. A lab that uses three spool types wants
+    // those three one click away on every path, which is the whole point of
+    // having presets at all.
+    //
+    // Picking one fills the tare box client-side. That is what makes it work
+    // on every path without touching handleApiOnboard: a typed tare already
+    // beats the catalog's own value and the profile's, on every branch that
+    // reads it. ("Another spool of X" deliberately ignores both and inherits
+    // the product's tare — that is the point of that path, and #newprod is
+    // hidden for it anyway.)
+    //
+    // Deliberately does NOT fill on page load, only on an actual pick: blank
+    // has to keep meaning "use whatever this path already knows", or every
+    // catalog pick would silently have its real container tare overwritten by
+    // a local guess.
+    //
+    // And deliberately does NOT set cat-source='manual' the way the identity
+    // picklists do. It used to, via the shared revealOnchange() helper, which
+    // meant picking a catalog product and then adjusting the spool profile
+    // silently threw the catalog identity away -- UUIDs, GTIN and print temps
+    // all reverting to whatever the manual picklists happened to hold.
+    // Choosing a tare preset is not a statement that you are typing the
+    // identity by hand.
     const char* lastProfile = lastOnboardProfile();
-    p += "<label>Spool profile</label><select name='profile'" + revealOnchange("profile-new-wrap") + ">";
+    p += "<label>Spool profile &mdash; sets the tare below</label>"
+         "<select name='profile' onchange=\""
+           "document.getElementById('profile-new-wrap').style.display="
+             "this.value=='__new__'?'block':'none';"
+           "var o=this.selectedOptions[0];"
+           "if(o&&o.dataset.tare)document.getElementById('tare').value=o.dataset.tare;"
+         "\">";
     CfgProfile pr;
     for (size_t i = 0; i < cfgProfileCount(); i++)
         if (cfgProfileAt(i, pr))
-            p += String("<option") + (strcmp(pr.label, lastProfile) == 0 ? " selected" : "")
+            p += String("<option data-tare='") + String(pr.empty_g, 1) + "'"
+               + (strcmp(pr.label, lastProfile) == 0 ? " selected" : "")
                + ">" + esc(pr.label) + "</option>";
     p += "<option value='__new__'>&plus; Add new spool profile&hellip;</option>";
     p += "</select>";
@@ -1633,11 +1665,10 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<label>Nominal full weight (g)</label><input type='number' step='0.1' name='profile_new_nom'>"
          "<label>Empty spool weight / tare (g)</label><input type='number' step='0.1' name='profile_new_empty'>"
          "</div>";
-    p += "</details>";
 
     // Tare override (optional). "Capture tare" reads the load cell once.
-    p += "<label>Empty spool tare (g) &mdash; blank to use profile</label>"
-         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='from profile'>";
+    p += "<label>Empty spool tare (g) &mdash; blank uses the catalog or profile value</label>"
+         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='from profile or catalog'>";
     p += "<button type='button' class='sec' onclick=\"fetch('/api/tare',{method:'POST'})"
          ".then(r=>r.json()).then(d=>{document.getElementById('tare').value=d.weight.toFixed(1)})\">"
          "Capture tare from scale</button>";
