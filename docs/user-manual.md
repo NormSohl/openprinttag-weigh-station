@@ -201,8 +201,11 @@ still work as a fallback.)
 
 - **Inventory** — remaining filament by material, grouped by vendor. Click a
   row to expand it and see the individual spools, or a spool number to open
-  its weigh history + a remaining-over-time sparkline (with CSV export). This
-  is also where a physical stock **audit** is started — see below.
+  its weigh history + a remaining-over-time sparkline (with CSV export). A
+  spool's own page is also where you can check **what it cost** — it shows
+  the recorded price, or says plainly that none was recorded, which is how
+  you spot spools still needing one. This is also where a physical stock
+  **audit** is started — see below.
 - **Onboard** — fill in details for a new/blank spool, or add another spool of
   something already on file.
 - **Reorder** — Stock List items at or below threshold; download a CSV to

@@ -20,7 +20,7 @@ work with no configuration.
 | Endpoint | Content-Type | Purpose |
 |---|---|---|
 | `GET /api/status` | JSON | Everything a dashboard polls: state, spool on the scale, weight, WiFi, storage health |
-| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, onboarding flag, retired flag |
+| `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, cost, onboarding flag, retired flag |
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
 | `GET /api/stock` | JSON | Every Stock List item (what to keep + its reorder threshold), each with its 90-day popularity |
 | `GET /stock.csv` | CSV | Every Stock List item, no popularity — plain line-by-line list for comparing against physical bins/tags |
@@ -39,6 +39,12 @@ work with no configuration.
 > colour rather than a black one, and a consumer must be able to tell those apart.
 > `material` carries the OPT display string (`"PLA Summer Grass"`); the bare type
 > code is on the record as the abbreviation and is what `/api/usage` groups by.
+>
+> **`cost` follows the same rule** — `null`, not `0`, when no price was recorded
+> for that spool. A spool nobody priced is not a free spool, and filtering for
+> `cost == null` is how you find the ones still missing one. It is the price of
+> the whole spool as entered at onboarding, not a per-gram rate; `/api/usage`
+> derives its dollar figures from it.
 
 ### `GET /api/products`
 

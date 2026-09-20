@@ -891,6 +891,10 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
            // null, not 0: a spool predating products has no product, which is
            // not the same as belonging to product zero.
            + ",\"product\":" + (r.product ? String((unsigned)r.product) : String("null"))
+           // Same rule, same reason: no price on record is not a free spool.
+           // Exposed so "which spools still need a price?" is answerable
+           // without walking every detail page by hand.
+           + ",\"cost\":" + (r.cost > 0.0f ? String(r.cost, 2) : String("null"))
            + ",\"needs_onboarding\":" + (r.needs_ob ? "true" : "false")
            + ",\"retired\":" + (r.retired ? "true" : "false") + "}";
     }
@@ -1282,6 +1286,18 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
                               + String((unsigned)q.id) + "</a>"
                               + (q.provisional ? " <span class='ob'>provisional</span>"
                                                : String()));
+    // What this spool cost. This page is the ONLY place it is visible: the
+    // Onboard form's field is deliberately blank every time (so a re-submit
+    // can't silently wipe a recorded price), which also means the form can
+    // never show you what is already on record. Without this, a price could
+    // be entered and then never verified again.
+    //
+    // Shown even when it is 0/unset, rather than omitted like the fields
+    // above: "which spools still need a price?" is exactly the question this
+    // answers, and a silently absent row cannot answer it.
+    spec += kv("Cost", r.cost > 0.0f
+                          ? ("$" + String(r.cost, 2))
+                          : String("<span class='muted'>not recorded</span>"));
     if (spec.length()) p += "<div class='spec'>" + spec + "</div>";
     p += "</div>";
 
@@ -1474,8 +1490,21 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // "another spool of X"). Deliberately no last-used default the way
     // vendor/material/colour/profile get one: a stale price silently kept is
     // exactly the failure worth avoiding here, so it starts blank every time.
+    //
+    // What IS on record is shown beside the field as text, never as the
+    // input's value: pre-filling it would put a price back in the POST that
+    // nobody re-typed, which is the whole thing the blank field prevents.
+    // But leaving it invisible meant a price could be entered and never
+    // verified again, since no other page showed it either.
     p += "<label>Cost for this spool ($) &mdash; leave blank if unknown</label>"
          "<input type='number' step='0.01' min='0' name='cost'>";
+    p += "<p class='muted' style='margin-top:4px'>";
+    if (r.cost > 0.0f)
+        p += "Currently recorded: <b>$" + String(r.cost, 2) + "</b>. "
+             "Leaving this blank keeps it; enter 0 to clear it.";
+    else
+        p += "No cost recorded for this spool yet.";
+    p += "</p>";
 
     // ── "Another spool of X" ──────────────────────────────────────────────────
     // The path that makes this worth building. Nine onboardings out of ten are
