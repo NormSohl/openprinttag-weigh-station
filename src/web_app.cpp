@@ -2616,13 +2616,28 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     const AsyncWebParameter* pi = req->getParam("id", true);
     if (!pi) { req->send(400, "text/plain", "missing id"); return; }
-    // Fails cleanly (400) rather than silently, if this id no longer exists
-    // -- e.g. someone else deleted the row between this Edit page loading
-    // and this submit. See CfgStock::id: that used to silently become an
-    // unrelated Add instead.
-    if (!cfgStockUpdate((uint32_t)pi->value().toInt(), parseStockForm(req))) {
+    const uint32_t id = (uint32_t)pi->value().toInt();
+
+    // Confirm the row still exists BEFORE parsing the form, not as a side
+    // effect of the update call. parseStockForm() is emphatically not a pure
+    // read: it resolves-or-creates a product, appends any "+ Add new ..."
+    // vendor/material/colour to the config catalog, and rewrites the
+    // last-used picklist memory — all of which hit flash. Passing it as an
+    // argument to cfgStockUpdate() meant C++ evaluated it first, so a
+    // rejected update still left a new product and catalog rows behind. A
+    // write that answers 400 must change nothing.
+    //
+    // Fails cleanly rather than silently when the id is gone — e.g. someone
+    // deleted the row between this Edit page loading and this submit. See
+    // CfgStock::id: that used to silently become an unrelated Add instead.
+    CfgStock existing;
+    if (!cfgStockFindById(id, existing)) {
         req->send(400, "text/plain", "no such stock item (it may have been removed "
                                       "or edited elsewhere since this page loaded)");
+        return;
+    }
+    if (!cfgStockUpdate(id, parseStockForm(req))) {
+        req->send(500, "text/plain", "stock item vanished mid-update");
         return;
     }
     req->redirect("/stock");
