@@ -25,7 +25,7 @@ work with no configuration.
 | `GET /api/stock` | JSON | Every Stock List item (what to keep + its reorder threshold), each with its 90-day popularity |
 | `GET /stock.csv` | CSV | Every Stock List item, no popularity — plain line-by-line list for comparing against physical bins/tags |
 | `GET /reorder?format=csv` | CSV | Stock items below threshold |
-| `GET /api/usage` | JSON | Consumption per month per vendor+material (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
+| `GET /api/usage` | JSON | Consumption per month per vendor+material, grams and dollars (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
 | `GET /api/storage` | JSON | Log size, free space, compaction due, write-failure flag |
@@ -83,7 +83,7 @@ before you save). It updates the definition, clears `provisional`, and emits one
   "window_days": 90,
   "data_since": "2026-08-14T03:51:15Z",
   "items": [
-    { "vendor": "eSun", "material": "PLA", "color": "Beige", "dia": 1.75,
+    { "id": 7, "vendor": "eSun", "material": "PLA Beige", "color": "", "dia": 1.75,
       "spool_g": 1000.0, "min_spools": 1, "min_grams": 0.0,
       "sku": "", "gtin": "", "pack_qty": 1,
       "has_data": true, "grams_in_window": 820.0, "available_days": 41.2,
@@ -100,6 +100,17 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
 90 and sat empty the other 88 is scored on those 2 days, not diluted across
 90 — a stockout must never make a popular material look unpopular.
 
+- **`id`** is the row's stable, never-reused identifier, and is what
+  `/api/stock/update` and `/api/stock/delete` take. It is deliberately *not*
+  the row's position in `items` — positions shift whenever anything is added
+  or removed, so an id captured from an earlier read stays valid (or fails
+  cleanly as gone), while a position silently comes to mean a different row.
+- **`material` usually carries the colour and `color` is empty.** A row
+  linked to a product (the normal case — picking an existing product,
+  a catalog search, or manual entry, all link one) reports that product's
+  full display name, e.g. `"PLA Beige"`, exactly as a spool's OpenPrintTag
+  `material_name` holds it. `color` is only populated separately on an
+  unlinked row, where `material` is then the bare type (`"PLA"`).
 - **`has_data: false`** means the item was never in stock at all during the
   window — the strongest possible signal it's a candidate to remove from the
   Stock List, not an edge case to hide. `grams_per_week` is `null` in that case.

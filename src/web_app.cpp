@@ -2064,12 +2064,23 @@ struct OnHand { uint16_t count; float grams; uint32_t product; };
 static OnHand rollUp(const CfgStock& s) {
     OnHand oh{0, 0.0f, 0};
 
-    if (s.product) {
+    ProductRecord linked;
+    if (s.product && storeGetProduct(s.product, linked)) {
         // Picked directly at Stock List add/edit time (see stockFormFields()
         // / parseStockForm()) -- an exact FK, immune to both the name-probe
         // mismatch below and a later product rename via /product?id=N.
         oh.product = s.product;
     } else {
+        // Either never linked, or linked to a product that no longer
+        // resolves. The second case is real: CfgStock lives in the config
+        // catalog, which backs up and restores SEPARATELY from the event log
+        // that defines products (see *Config catalog & storage*), and WIPE
+        // ALL resets the product counter -- so a restored stock row can
+        // reference an id that is gone, or worse, one since reissued to a
+        // different product. Falling back to the name probe degrades to the
+        // older, coarser behaviour instead of silently reporting zero on
+        // hand (which reads as "reorder everything") or matching a product
+        // that was never this row's.
         ProductRecord probe, found;
         strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
         String disp = s.material;
@@ -2134,7 +2145,11 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>Standard-stock items at or below their threshold. "
          "Download the CSV to place the order. Manage what's tracked (add, edit, "
          "remove) on the <a href='/stock' style='color:#8f8'>Stock List</a> page.</p>";
-    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th>"
+    // No Color column: a linked row's Material already carries the colour
+    // (the product's full display string, e.g. "PETG Magenta"), and that's
+    // virtually every row now that Stock List's manual entry links to a
+    // product too -- see stockFormFields()/parseStockForm().
+    p += "<table><tr><th>Vendor</th><th>Material</th>"
          "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
     CfgStock s;
     int flagged = 0;
@@ -2149,7 +2164,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
                    : s.min_grams  > 0 ? (String(s.min_grams, 0) + " grams")
                    : String("empty");
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
-           + esc(s.color) + "</td><td>" + String(oh.count) + " spool(s), "
+           + String(oh.count) + " spool(s), "
            + String(oh.grams, 0) + " grams</td><td>" + thr + "</td><td>"
            // Which rule produced this row. A stock item falling back to the name
            // match is not wrong, but it is coarser — it will count every colour
@@ -2161,7 +2176,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
            + "</td></tr>";
     }
     if (flagged == 0)
-        p += "<tr><td colspan='6' class='muted'>Everything is above threshold "
+        p += "<tr><td colspan='5' class='muted'>Everything is above threshold "
              "(or no stock items configured)</td></tr>";
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
@@ -2177,16 +2192,19 @@ static void handleReorder(AsyncWebServerRequest* req) {
 // ── Stock items: per-row add/edit/remove for what /reorder tracks ─────────────
 // The friendlier counterpart to the raw-JSON "Stock items" textarea on
 // /config, which still exists for bulk edits and import/export. Rows are
-// addressed by position (cfgStockAt()'s index), same as the rest of this
-// table's API — valid for the lifetime of one page load, which is fine here
-// since there is one operator at a time, not concurrent editors.
+// addressed by CfgStock::id — a stable, never-reused id, NOT the array
+// position cfgStockAt() iterates by. This used to be position-addressed on
+// the reasoning that an index is "valid for the lifetime of one page load,
+// which is fine since there is one operator at a time"; that assumption
+// broke the moment anything else touched the list between a page render and
+// its submit, and an Edit silently became an Add. See CfgStock::id.
 static void stockFormFields(String& p, const CfgStock& s) {
     // "Pick an existing product" vs. type it in — same reasoning as Onboard's
     // "another spool of X": a stock row's vendor/material/color is free text
     // independent of whatever a real product ended up named, so a retype is a
     // fresh chance to silently miss it (e.g. "PLA" + "Fire Engine Red" typed
     // here never matches a real product named "PLA Basic Fire Engine Red").
-    // Picking the product directly sidesteps that: rollUp() (below) matches
+    // Picking the product directly sidesteps that: rollUp() (above) matches
     // by this id, not by recomposing a name.
     const size_t np = storeProductCount();
     if (np) {
@@ -2351,7 +2369,12 @@ static void handleStockPage(AsyncWebServerRequest* req) {
              < (pop[b].grams / (pop[b].available_days > 0 ? pop[b].available_days : 1.0f));
     });
 
-    p += "<table><tr><th>Vendor</th><th>Material</th><th>Color</th><th>Popularity</th>"
+    // No Color column: a linked row's Material already carries the colour
+    // (it's the product's full display string, e.g. "PETG Magenta" -- see
+    // parseStockForm()), and that's virtually every row now that manual
+    // entry links to a product too. sr.color stays populated internally for
+    // the rare unlinked/fallback case, just not surfaced as its own column.
+    p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
          "<th>Threshold</th><th>SKU</th><th>Pack</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
@@ -2366,7 +2389,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
             popCell = String(perWeek, 0) + " g/wk";
         }
         p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material) + "</td><td>"
-           + esc(sr.color) + "</td><td>" + popCell + "</td><td>" + thr + "</td><td>"
+           + popCell + "</td><td>" + thr + "</td><td>"
            + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
@@ -2377,7 +2400,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + "</form></td></tr>";
     }
     if (n == 0)
-        p += "<tr><td colspan='8' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
+        p += "<tr><td colspan='7' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
     p += "</table>";
     if (n && earliestTs[0]) {
         char local[32];
@@ -2444,7 +2467,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         // (hidden) free-text fields carry -- same reasoning as Onboard's
         // "another spool of X". color is left blank: q.material is already
         // the full display string ("PLA Basic Fire Engine Red"), and
-        // rollUp() below matches by product id directly, so there is
+        // rollUp() above matches by product id directly, so there is
         // nothing left to recompose a name probe from.
         s.product = pid;
         strlcpy(s.vendor,   q.vendor,   sizeof(s.vendor));

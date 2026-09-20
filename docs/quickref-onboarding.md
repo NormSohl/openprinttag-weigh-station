@@ -41,7 +41,12 @@ untagged reel.
    - Not in the catalog? Expand **Enter details manually**. Vendor, material,
      colour, and spool profile each default to whatever you picked last time,
      and each has a **+ Add new** option if it's not in the list yet.
-7. Click **Save & write tag.** The full data is written to the tag.
+7. **Cost for this spool** — optional, near the top. Enter what this reel
+   cost if you know it; leave it blank if you don't. It feeds the dollar
+   figures on the Usage page. The box starts empty every time, on purpose —
+   leaving it blank on a later edit keeps whatever was already recorded,
+   it does not erase it. (To clear a price, type `0`.)
+8. Click **Save & write tag.** The full data is written to the tag.
 
 Done — the tag now carries real identity, and the spool is in inventory.
 **Place the next spool** and the page carries you straight into *its*

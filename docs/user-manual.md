@@ -112,6 +112,12 @@ right away if the spool is still on the scale, or the next time it's placed.
    if it isn't in the list yet — no need to visit Settings first to add it.
    You can also capture the tare from a matching empty spool with
    **Capture tare**.
+
+   **Cost for this spool** is optional: enter what the reel cost if you know
+   it, leave it blank if you don't. It drives the dollar columns on the Usage
+   page. The field is deliberately blank every time the form opens — coming
+   back later to fix something else and leaving it empty keeps the price
+   already on record rather than wiping it. Enter `0` to clear one.
 4. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
    weights) is written to the tag and the record is saved.
 
@@ -205,10 +211,13 @@ still work as a fallback.)
   each with a 90-day popularity score, sorted so the least-popular (or
   never-in-stock) items surface first — see *Deciding what to stock* below.
 - **Usage** — the lab's permanent consumption record: how much filament has
-  gone through the station, per material, broken down by year and by month,
-  all-time; CSV download. (For deciding what belongs on the Stock List, prefer
-  the Stock List page's popularity score — it corrects for spools that sold
-  out early, which this page's plain totals do not.)
+  gone through the station, per material, broken down by year, quarter and
+  month, all-time; CSV download. Also shows what that consumption **cost**,
+  for spools that had a price recorded at onboarding — filament used before
+  a price was entered counts its grams but contributes $0, since there's no
+  honest way to price it after the fact. (For deciding what belongs on the
+  Stock List, prefer the Stock List page's popularity score — it corrects for
+  spools that sold out early, which this page's plain totals do not.)
 - **Settings** — edit the vendor/material/color/spool-profile/stock-item
   tables, set the WiFi/API-key, choose the display timezone and 12/24-hour
   clock format, rename the station (the idle screen's greeting — "Seattle
@@ -265,6 +274,27 @@ if it sat unused the rest of the time. The list sorts lowest-popularity (and
 never-in-stock) first, since those are the candidates to reconsider. A
 material can be in the lab's inventory without being on the Stock List at
 all — that's normal for something being phased out, not an error.
+
+**Adding an entry.** The list comes first on the page; the add/edit form is
+below it (the **Edit** link on a row jumps straight down to it). The
+"Item is…" dropdown at the top of the form decides how you identify the
+filament:
+
+- **Pick one of the listed products** if the lab already has that filament on
+  file — nothing to retype.
+- Otherwise leave it on **Search catalog or type in** and use the **catalog
+  search**, which looks up any real vendor product, including ones the lab has
+  never stocked.
+- Not in the catalog (a colour the vendor added recently, or an out-of-date
+  entry)? Expand **Or enter manually** and pick vendor / material / colour
+  from the lists, each with a **+ Add new** option. These default to whatever
+  you chose last time, which speeds up entering several at once.
+
+All three routes are equal — each one files the entry against a real product,
+so the Stock List can match it against Inventory exactly rather than guessing
+from the spelling. That's why there's no separate Color column: a filed entry
+shows the product's full name, colour included (for example
+"PETG Magenta"), the same way the spool's own tag stores it.
 
 ### Changing the WiFi network
 
@@ -335,6 +365,7 @@ Read-only endpoints are open, so nothing needs configuring first:
 | `/api/spools` | Every spool and its remaining filament, as JSON |
 | `/api/products` | Every product (filament SKU) the station knows about |
 | `/api/stock` | The Stock List with each item's 90-day popularity score |
+| `/stock.csv` | The Stock List as a plain spreadsheet — handy for checking against the physical bins |
 | `/api/usage` | The same data as `/usage.csv`, as JSON |
 
 Automated monthly consumption pull:
