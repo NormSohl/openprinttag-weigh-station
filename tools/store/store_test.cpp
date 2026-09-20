@@ -19,6 +19,10 @@
 //                                       Idle across compaction; a retired
 //                                       spool staying retired forever after a
 //                                       genuine reweigh).
+//   store_test --cost                 — the cost rollup: applyInto_()'s
+//                                       `delta * rate`, which nothing else
+//                                       reaches (SEED never sets a price, so
+//                                       every other suite's dollars are $0.00).
 //   store_test --popularity           — the Stock List's stockout-corrected
 //                                       popularity math (storeMaterialPopularity).
 #include "store.h"
@@ -495,12 +499,144 @@ static void popularityTest() {
                                       "folding everything outside it)");
 }
 
+// ── Cost → dollars rollup ────────────────────────────────────────────────────
+// applyInto_()'s `delta * rate` is the one calculation the whole cost feature
+// exists for, and nothing else exercises it: SEED never sets a cost, so every
+// dollars figure in the other suites is $0.00 and a regression here would be
+// invisible until someone noticed the money was wrong months later.
+//
+// Note `rate` is taken from the RECORD (r.cost / r.nom_g), not the event, and
+// is evaluated BEFORE the switch below overwrites r.remaining_g — so these
+// tests are also what pins that ordering down.
+
+// An Onboard carrying a price. Mirrors what handleApiOnboard() writes: the
+// identity group plus cost, since a Reconcile/Onboard replaces all of it.
+static uint32_t costOnboard(const char* uuid, const char* vendor, const char* abbr,
+                            float nom, float cost) {
+    StoreEvent e;
+    e.ev = StoreEv::Onboard;
+    strlcpy(e.uuid, uuid, sizeof(e.uuid));
+    strlcpy(e.ts, "2026-09-01T12:00:00Z", sizeof(e.ts));
+    strlcpy(e.vendor, vendor, sizeof(e.vendor));
+    strlcpy(e.material, abbr, sizeof(e.material));
+    strlcpy(e.abbr, abbr, sizeof(e.abbr));
+    e.nom_g = nom;
+    e.cost  = cost;
+    e.spool = storeNextSpoolId();
+    storeAppendEvent(e);
+    return e.spool;
+}
+
+// A Reconcile that records a price on a spool that didn't have one. Carries
+// the identity group too: an identity event replaces it wholesale, so omitting
+// these would blank the vendor/abbr the rollup buckets on.
+static void costReconcile(const char* uuid, uint32_t spool, const char* vendor,
+                          const char* abbr, float nom, float cost) {
+    StoreEvent e;
+    e.ev = StoreEv::Reconcile;
+    strlcpy(e.uuid, uuid, sizeof(e.uuid));
+    strlcpy(e.ts, "2026-09-01T12:00:00Z", sizeof(e.ts));
+    strlcpy(e.vendor, vendor, sizeof(e.vendor));
+    strlcpy(e.material, abbr, sizeof(e.material));
+    strlcpy(e.abbr, abbr, sizeof(e.abbr));
+    e.spool = spool;
+    e.nom_g = nom;
+    e.cost  = cost;
+    storeAppendEvent(e);
+}
+
+static void weighTo(const char* uuid, uint32_t spool, float remaining) {
+    rawEvent(StoreEv::Weigh, uuid, spool, "2026-09-01T12:00:00Z", "", "", remaining);
+}
+
+static bool usageFor(const char* vendor, const char* mat, UsageRow& out) {
+    for (size_t i = 0; i < storeUsageCount(); i++) {
+        UsageRow u;
+        if (storeUsageAt(i, u) && !strcmp(u.vendor, vendor) && !strcmp(u.material, mat)) {
+            out = u; return true;
+        }
+    }
+    return false;
+}
+
+static void expectUsage(const char* vendor, const char* mat, float grams, float dollars,
+                        const char* what) {
+    UsageRow u;
+    if (!usageFor(vendor, mat, u)) { CHECK(false, "%s: no usage row for %s %s", what, vendor, mat); return; }
+    CHECK(fabsf(u.grams - grams) < 0.05f,
+          "%s: %s %s grams %.1f, expected %.1f", what, vendor, mat, u.grams, grams);
+    CHECK(fabsf(u.dollars - dollars) < 0.005f,
+          "%s: %s %s dollars %.2f, expected %.2f", what, vendor, mat, u.dollars, dollars);
+    printf("  %-7s %-5s %7.1f g  $%6.2f  (%s)\n", vendor, mat, u.grams, u.dollars, what);
+}
+
+static void costTest() {
+    run("WIPE ALL");
+
+    // A — priced up front. 1 kg at $30.00 is $0.03/g.
+    const char* ua = "aaaa0000000000000000000000000001";
+    uint32_t a = costOnboard(ua, "Acme", "PLA", 1000.0f, 30.00f);
+    weighTo(ua, a, 1000.0f);   // baseline: previous remaining is 0, so no delta
+    weighTo(ua, a,  800.0f);   // 200 g -> $6.00
+    weighTo(ua, a,  500.0f);   // 300 g -> $9.00
+
+    // B — never priced. Grams must still count; dollars must stay 0 rather
+    // than a fabricated price. This is the "degrades honestly" half.
+    const char* ub = "bbbb0000000000000000000000000002";
+    uint32_t b = costOnboard(ub, "Beta", "PETG", 1000.0f, 0.0f);
+    weighTo(ub, b, 1000.0f);
+    weighTo(ub, b,  700.0f);   // 300 g -> $0.00
+
+    // C — priced only partway through. Consumption that happened BEFORE the
+    // price was recorded stays unpriced forever: there is no honest way to
+    // backdate it, and nothing tries. 1 kg at $50.00 is $0.05/g.
+    const char* uc = "cccc0000000000000000000000000003";
+    uint32_t c = costOnboard(uc, "Gamma", "ASA", 1000.0f, 0.0f);
+    weighTo(uc, c, 1000.0f);
+    weighTo(uc, c,  900.0f);   // 100 g while unpriced -> $0.00
+    costReconcile(uc, c, "Gamma", "ASA", 1000.0f, 50.00f);
+    weighTo(uc, c,  800.0f);   // 100 g at $0.05/g -> $5.00
+
+    printf("\n--- before compaction ---\n");
+    expectUsage("Acme",  "PLA",  500.0f, 15.00f, "priced up front");
+    expectUsage("Beta",  "PETG", 300.0f,  0.00f, "never priced");
+    expectUsage("Gamma", "ASA",  200.0f,  5.00f, "priced partway: only the later 100 g");
+
+    // Usage rows are the ONLY evidence left once the raw events fold away, so
+    // the dollars have to survive exactly as the grams do.
+    //
+    // SEED first: with only a dozen lines the log is nowhere near
+    // STORE_LOG_KEEP_EVENTS and COMPACT is a no-op, which would make the
+    // assertions below re-check un-folded data and pass vacuously. (That is
+    // exactly what the first cut of this test did.) The line-count check
+    // after it is what keeps this honest if the thresholds ever move.
+    run("SEED 12 200");
+    const size_t linesSeeded = storeLogLineCount();
+    run("COMPACT");
+    const size_t linesFolded = storeLogLineCount();
+    CHECK(linesFolded < linesSeeded,
+          "compaction folded nothing (%u -> %u lines) — the assertions below "
+          "would be vacuous",
+          (unsigned)linesSeeded, (unsigned)linesFolded);
+
+    printf("\n--- after compaction (%u -> %u lines) ---\n",
+           (unsigned)linesSeeded, (unsigned)linesFolded);
+    expectUsage("Acme",  "PLA",  500.0f, 15.00f, "priced up front");
+    expectUsage("Beta",  "PETG", 300.0f,  0.00f, "never priced");
+    expectUsage("Gamma", "ASA",  200.0f,  5.00f, "priced partway: only the later 100 g");
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: cost rollup ($/gram from the record, unpriced "
+                                      "consumption stays $0, a later price never backdates "
+                                      "earlier grams, and dollars survive the fold)");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--products"))      { products();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--foreign"))       { foreignTest();    return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--foreign-setup")) { foreignSetup();   return 0; }
     if (argc > 1 && !strcmp(argv[1], "--audit"))         { auditTest();      return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--cost"))          { costTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--popularity"))    { popularityTest(); return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;

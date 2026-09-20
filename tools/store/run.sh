@@ -78,6 +78,11 @@ echo "    folds away in-window history does to the numbers -- see README) ---"
 STORE_TEST_ROOT="$OUT/fs6" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --popularity
 
 echo
+echo "--- cost rollup: \$/gram from the record, unpriced consumption stays \$0, ---"
+echo "    a later price never backdates earlier grams, dollars survive the fold ---"
+STORE_TEST_ROOT="$OUT/fs7" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --cost | tail -9
+
+echo
 echo "--- consumption rollup survives the fold ---"
 # The check that cannot be recovered afterwards: once raw events are folded
 # away, the Usage rows are the only evidence left. Both dumps must be identical.

@@ -46,6 +46,26 @@ clearing `retired` on a genuine subsequent reweigh. Both are regression-tested
 here now (SEED past `STORE_LOG_KEEP_EVENTS`, `COMPACT`, assert the phase
 survived; reweigh a retired spool, assert `retired` cleared).
 
+`--cost` covers `applyInto_()`'s `delta * rate` — the conversion from grams
+consumed to dollars, and the one calculation the whole cost feature exists for.
+Nothing else reached it: `SEED` never sets a price, so every `dollars` figure
+in the other suites is `$0.00` and a regression would have been invisible until
+someone noticed the money was wrong months later. Three spools, one period:
+priced up front (500 g of a $30.00/kg spool → $15.00), never priced (300 g →
+$0.00, grams still counted), and priced only partway through (200 g consumed
+but only the later 100 g priced → $5.00, because a price recorded later must
+never backdate earlier consumption). Then it seeds past
+`STORE_LOG_KEEP_EVENTS`, compacts, and re-asserts all three — Usage rows are
+the only evidence left once raw events fold away.
+
+**It seeds before compacting deliberately.** The first cut ran `COMPACT` on a
+twelve-line log, where it is a no-op, so the "survives the fold" assertions
+re-checked un-folded data and passed for the wrong reason. The test now
+captures the line count either side of the fold and fails if nothing was
+actually folded. Its detection power was confirmed by mutation: doubling the
+rate in `store.cpp` fails both priced buckets, before and after compaction,
+and correctly leaves the unpriced one passing.
+
 `--popularity` covers `storeMaterialPopularity()` — the Stock List's
 stockout-corrected `grams / available_days` metric — against a hand-built
 timeline (in stock, consumed to empty, restocked, partially consumed again)
