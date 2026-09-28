@@ -7,7 +7,7 @@ be argued about before any code moves.
 |---|---|
 | Upload events to a hosted service (additive, nothing removed) | not started |
 | Stock list and ordering owned by the service | not started |
-| Finished-spool lifecycle: archive, then drop from the station | not started |
+| Remove compaction; the station frees space only by dropping finished spools | not started |
 | Delete the station's reporting code | not started |
 
 ## The problem
@@ -112,8 +112,7 @@ lab's NAT means a hosted service cannot reach in to pull.
 - **Initial import ships the whole existing log**, including any `Checkpoint`
   and `Usage` lines from past compactions — they are the only surviving record
   of what they summarise, so the service takes them as its baseline. After
-  that, the station never ships a checkpoint again, because compaction only ever
-  writes them *before* the cursor (next section).
+  that, no checkpoint is ever written again: the station no longer compacts.
 - **Pre-NTP events** are stamped in 1970. `periodOf_()` files those as
   `unknown`; the service must do the same rather than invent a month.
 
@@ -138,72 +137,106 @@ lab's NAT means a hosted service cannot reach in to pull.
   and `/api/status`. A stalled uploader otherwise looks exactly like a working
   one.
 
-## Compaction: fold state, not history
+## No compaction: the station forgets only finished spools
 
-The station's event log stops being the permanent record and becomes two
-things: the current state of live spools, and a queue of events the service has
-not yet confirmed. Existing compaction already produces nearly that shape — one
-checkpoint per spool, then a verbatim tail — so this simplifies it rather than
-replacing it.
+**Decided (2026-09-28): the station does not compact.** Its log stops being the
+permanent record — the service holds history — so there is nothing left to
+preserve across a fold, and no fold. The station frees flash in exactly one way:
+once a finished spool's events have all shipped, a pass rewrites the log
+**without that spool's lines**.
 
-**The invariant: compaction never discards a line after the upload cursor.**
-The fold boundary becomes the earlier of its normal boundary and the cursor.
-Compaction then translates the cursor into the new file: the unshipped lines are
-copied verbatim to its end, so the new cursor is the new file size minus their
-length.
+This is a filter, not a fold, and the difference is the point. Compaction
+*synthesises* lines — checkpoints, re-emitted products and audit markers,
+`Usage` rows — and every one of those had to be exactly right: products had to
+be re-emitted from the live index, popularity lost in-window history across a
+fold, and uuid-less audit markers vanished across one (the bug found on
+hardware 2026-08-15). **A filter writes nothing new.** Its output is a strict
+subset of its input, so it cannot get a synthesised line wrong. Products and
+audit markers carry no `uuid`, so a filter that removes lines by spool can never
+touch them.
 
-Two consequences worth stating:
+What it still is, honestly: a whole-log rewrite, under the store lock, through a
+staging file promoted by rename — the same crash-safe mechanism compaction
+uses, and like compaction it runs only while the scale is idle. It is just a
+trivial one: copy every line except the dropped spools'.
 
-- **An outage does not block compaction.** Everything already shipped can still
-  be folded; only the unshipped tail is pinned. That is stronger than the
-  current popularity retention floor, which is disabled when the clock is not
-  set — the cursor rule does not depend on the clock at all.
-- **What gets deleted.** Once the service holds history, the `Usage` fold and
-  the popularity retention floor exist for no remaining reason. See *What the
-  station loses*.
-- **What must stay.** Products and audit state are still station-owned, so
-  compaction keeps re-emitting both from the live index exactly as it does
-  today. The audit case matters: an audit in progress across a compaction is
-  the bug found on hardware 2026-08-15, and moving history to the service does
-  nothing to make it safe to drop.
+**The upload rule is automatic.** A finished spool's lines precede its `Retire`,
+and the `Retire` must have shipped before the spool is eligible, so every line
+the filter removes is before the upload cursor. The unshipped tail is copied
+verbatim to the end of the new file, so the new cursor is the new file size
+minus its length.
 
-## Finishing a spool
+**What storage is bounded by now:** the lines of every *live* spool, kept in
+full, plus the tombstones below. Not shelf size alone — a spool accumulates
+every weigh over its life — but not time either. At 163 B per weigh line about
+11,500 lines fit; 100 live spools averaging 50 weighs each is 5,000, and 200 at
+50 is 10,000. Whether that is comfortable is an empirical question about this
+lab, which is why it is surfaced rather than assumed (*Watching it work*).
 
-Device storage becomes **bounded by shelf size rather than by time**: it holds
-the spools physically in the studio, not every weigh since the station was
-installed. That requires letting the station forget finished spools.
+### Which spools are finished
 
-"Finished" already has exactly two triggers — `storeRetireSpool()` is called
-from precisely two places — and they need different handling:
+`storeRetireSpool()` is called from exactly two places, and they need different
+handling:
 
 - **A rediscovered blank** (`sync_task.cpp`). Fires whenever a chip that used to
   carry a spool comes back blank — reuse mode, `TAGFORMAT`, or a third-party NFC
-  tool used entirely outside this firmware. In every case the old
-  `instance_uuid` no longer exists anywhere physical, and the next onboarding
-  mints a fresh one, so it can never be seen again. Once the retire has
-  shipped, the spool can be dropped at the next compaction.
+  tool used entirely outside this firmware. The old `instance_uuid` no longer
+  exists anywhere physical, and the next onboarding mints a fresh one. Once its
+  `Retire` has shipped, **every** line of the spool can go.
 - **Audit close** (`web_app.cpp`, `/api/audit/close`). "Not found on the shelf"
-  — and it can come back. A genuine reweigh already un-retires a spool; that is
-  a documented, deliberate behaviour. If the spool had been dropped, its
-  returning tag would be adopted as a stranger and **given a new spool number**,
-  breaking the number people look spools up by.
+  — and it can come back. A genuine reweigh already un-retires a spool, by
+  design. If nothing of it remained, its returning tag would be adopted as a
+  stranger and **given a new spool number**, breaking the number people look
+  spools up by.
 
-So audit-closed spools need either a **grace period** before being dropped, or a
-**tombstone** that survives the drop. See *Decisions to make*.
+### Tombstones, without writing anything new
+
+For an audit-closed spool, the filter drops every line **except its `Retire`**.
+That line already carries the `uuid` and the spool number, so it *is* the
+tombstone, and the filter still writes nothing new. About 150 bytes each.
+
+**The hazard, and the rule it needs.** A record rebuilt from a `Retire` alone has
+a number and no identity — no vendor, material or tare. Today's known-spool path
+pushes the station's record onto the tag whenever the two differ
+(`overlayRecordOntoMain()` / `recordDiffersFromMain()` in `sync_task.cpp`). For a
+returning tombstoned spool that would overwrite the tag's Main section with
+blanks. So: **a spool restored from a tombstone takes its identity from the
+tag** — the foreign-adoption path already does exactly this, via
+`identityFromMain()` and `storeAdoptProduct()` — keeps its old spool number, and
+must never push its empty record onto the tag. A record with no identity is
+detectable, since only a tombstone produces one.
+
+## Watching it work
+
+Since there is no compaction to fall back on, the station should make its
+storage trajectory visible rather than leaving it to the storage-full banner.
+On `LOGSTATS`, the Backup page and `/api/status`:
+
+- live spools, tombstones, and total lines;
+- lines per live spool — average and maximum, since one heavily weighed spool
+  is what would dominate;
+- bytes free, and **days until full at the trailing 30-day rate**.
+
+That last number is the one to watch. It turns "does no-compaction fit this
+lab?" from a guess into something read off the Backup page.
 
 ## What the station loses
 
 | removed | size today | why it can go |
 |---|---|---|
 | `storeMaterialPopularity()` | 138 lines | computed by the service over complete history |
-| Popularity retention floor in `storeCompact()` | | protects history the service now holds |
 | `Usage` rollup and its fold | ~45 lines + fold logic | same |
 | `/stock`, `/reorder`, `/usage`, `/usage.csv`, `/api/stock`, `/api/usage` | | pages move to the service |
 | `cfgStock` table | | owned by the service |
-| Much of `storeCompact()`'s complexity | of 241 lines | only state is folded now; product and audit re-emission stay |
+| `storeCompact()`, entirely — checkpoints, the fold, the retention floor, product and audit re-emission | 241 lines | replaced by the finished-spool filter, which writes nothing new |
+| `STORE_LOG_COMPACT_BYTES`, `STORE_LOG_KEEP_EVENTS`, the idle compaction trigger, `COMPACT` | | same |
 
 And one thing gets **faster**: the station no longer replays the whole log on
 every `/stock` request, because it no longer serves that page.
+
+**What stays: decoding old lines.** A log written before this change may hold
+`Checkpoint` and `Usage` lines. The station keeps *reading* both so an existing
+log still replays; it just never writes them again.
 
 ## What must not change
 
@@ -214,6 +247,8 @@ every `/stock` request, because it no longer serves that page.
 - **Spool numbers are never reissued.** The finished-spool lifecycle must not
   let a returning spool get a new number, and the NVS counter must keep
   following the log exactly as `reconcileIdCounter_()` does today.
+- **The station never pushes an empty record onto a tag.** A spool restored
+  from a tombstone takes its identity from the tag (*Tombstones*).
 - **A tag may never update a product** (see `product-instance.md`). Nothing about
   the service changes that; the service reads products, it does not write them.
 
@@ -244,8 +279,9 @@ do:
 
 | failure | effect | bounded by |
 |---|---|---|
-| Service down | reports stale (and labelled so); station unaffected | the unshipped tail grows in flash |
-| Long outage | tail reaches the storage-full threshold, existing banner fires | ~11,500 events: a weigh line is 163 B and ~1.88 MB is usable. At 50 placements/day, about 7 months |
+| Service down | reports stale (and labelled so); presence tasks unaffected | nothing ships, so no finished spool can be dropped and the log only grows |
+| Long outage | log reaches the storage-full threshold; the existing banner fires and weighs stop being recorded | ~11,500 lines at 163 B each, ~1.88 MB usable. At 50 placements/day, about 7 months. With no compaction this is the terminal state, so *days until full* is surfaced long before it |
+| Returning tombstoned spool | would overwrite its tag with an empty identity | the tombstone rule: identity comes from the tag, never pushed to it |
 | Ack lost | batch resent | content-hash dedup |
 | Clock never set | events filed as `unknown` on both sides | `periodOf_()` rule |
 | Token leaked | attacker can append events as that station | token scoped to ingest; revocable on the service |
@@ -258,14 +294,21 @@ do:
    keeping every piece of machinery this design exists to remove. Without a
    service the station still weighs, onboards, audits and reuses tags; it just
    has no reports.
-2. **Audit-closed spools: tombstone or grace period?** *Recommended: tombstone.*
-   A tombstone (`instance_uuid` → spool number, ~50 bytes) survives the drop, so
-   a spool that turns up after any length of time gets its number back, and the
-   tag itself carries the rest of its identity. A grace period is simpler but
-   reintroduces a time-based failure: return one day after it expires and the
-   spool comes back renumbered.
+2. **Audit-closed spools: tombstone or grace period?** *Decided: tombstone* —
+   the spool's own `Retire` line, kept by the filter (*Tombstones*). A grace
+   period would reintroduce a time-based failure: return a day after it expires
+   and the spool comes back renumbered. Tombstones grow at ~150 bytes per
+   audit-closed spool; at a few hundred a year that is years of headroom, and
+   aging the oldest out is a decision for later.
 3. **Hosting and stack for the service.** Open. The requirements above are the
    only constraints.
+4. **Can a downloaded backup count as "shipped"?** With no compaction, a station
+   that never reaches a service has no way to free space except by the filter,
+   and the filter waits for spools to ship. Letting a Backup-page `/export`
+   download also count — so finished spools covered by it become droppable —
+   would keep a service-less station viable indefinitely, which is the "regular
+   external backups" idea in its simplest form. The cost is that the station
+   then trusts someone to keep the file. *Open.*
 
 ## Open questions
 
@@ -302,6 +345,10 @@ working.
 2. **Stock list and ordering move to the service.** Retire the station's
    `/stock`, `/reorder` and `cfgStock`. This is the step that delivers remote
    *management*.
-3. **Finished-spool lifecycle.** Tombstones, and dropping finished spools at
-   compaction. This is what bounds the station's storage by shelf size.
+3. **Remove compaction; drop finished spools.** The filter, tombstones, the
+   tombstone rule, and *Watching it work*. Compaction's 900 KB trigger has very
+   likely never fired on the deployed station — check `LOGSTATS` — in which case
+   removing it changes nothing observable for months. It should still land
+   with or after step 1, since the filter can only drop spools that have
+   shipped.
 4. **Delete the station's reporting code.** The payoff, and safe to do last.
