@@ -74,7 +74,7 @@ which is what lets this avoid two-way sync entirely.
 | Live spools (identity, tare, remaining) | station | the scale is the only thing that observes them |
 | Spool cost | station | entered on the Onboard form (`handleApiOnboard`), a presence task; it ships with the spool's events like any other field |
 | Events (weighs, onboards, retires, audits) | station originates, service keeps forever | the station produces them; only the service has room to keep them |
-| Products | **both create**; editing *open* | the service creates products to order them (decided 2026-09-28); the station creates them when onboarding something new, and "another spool of X" picks from them, a presence task. Needs a downward path and globally unique product identity — see `onboarding-vocabulary.md`, *Products created by the service*. Who may edit one afterwards is not decided |
+| Products | **both create; the service edits and merges** | the service creates products to order them (decided 2026-09-28); the station creates them when onboarding something new, and "another spool of X" picks from them, a presence task. Needs a downward path and globally unique product identity — see `onboarding-vocabulary.md`, *Products created by the service*. Editing and merging duplicates move to the service (decided 2026-09-28); until then the station's `/product` page edits |
 | Vendors, materials, profiles, colours | station | the onboarding picklists need them |
 | Stock list | **service** | read only by the Stock List's own pages, CSV and API, by `/reorder`, and by config import — all of which move. Checked 2026-09-28: otherwise `cfgStock` appears only in a boot-log count |
 | Audit state | station | an audit is walking the shelf |
@@ -257,8 +257,8 @@ log still replays; it just never writes them again.
 - **The station never pushes an empty record onto a tag.** A spool restored
   from a tombstone takes its identity from the tag (*Tombstones*).
 - **A tag may never update a product** (see `product-instance.md`). Nothing about
-  the service changes that. The service may *create* products (for ordering);
-  whether it may also edit them is open.
+  the service changes that. The service creates products (for ordering), and
+  it alone edits and merges them once it exists.
 
 ## The service
 

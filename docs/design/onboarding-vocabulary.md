@@ -14,13 +14,17 @@ Decided 2026-09-28, on direct user decision:
   defaulted from its product. See *Tare belongs to the spool*.
 - **Tare is never unknown.** It is always supplied, by the database or by a
   person. Nothing may store a spool or product without one.
+- **The service edits and merges products; the station only creates them.**
+  Until the service exists, the station's `/product?id=N` stays the editor
+  and gets merge first. See *Who edits a product* and *Duplicate products*.
 
 | step | state |
 |---|---|
 | Tare required and per spool; every source feeds the picklists and spool profiles | not started |
 | Vocabulary moves into the event log | not started |
 | Name normalization (alias table, and option A or C) | not started — wait for data |
-| The service reads the vocabulary and creates products | not started — depends on `station-service-split.md` |
+| Product merge (on the station first) | not started |
+| The service reads the vocabulary, creates, edits and merges products | not started — depends on `station-service-split.md` |
 
 ## The problem
 
@@ -253,12 +257,86 @@ What that requires:
   both sides converges instead of doubling.
 - **A default tare is required** at creation (see above).
 
-Still open: **who edits a product once it exists.** Today only
-`/product?id=N` on the station, because it names the spools the edit will
-touch and their tags follow on next placement. If the service may edit too,
-products have two writers and need a rule for conflicts; if only the station
-edits, a product created on the service is fixed at the station. See
-*Decisions*.
+## Who edits a product
+
+*Decided 2026-09-28:* **both sides create products; only the service edits
+and merges them.** Until the service exists, the station's `/product?id=N`
+remains the editor, and merge is built there first.
+
+- **Curating products is not a presence task.** Fixing a product's name or
+  folding two entries together needs no spool on the scale, so under the
+  split's rule it belongs with the service.
+- **The service is the only place duplicates can all be seen.** Once it creates
+  products for ordering and the station creates them at onboarding, both will
+  create copies of the same filament, and neither can see that alone.
+- **One editor means no conflict rule.** Edits and merges travel down the same
+  pull path as new products; the station applies them as events, and tags
+  follow on next placement through the existing reconcile loop. Offline, they
+  simply wait.
+- **The station still fixes spools.** A spool attached to the wrong product is
+  re-onboarded as "another spool of" the right one. That edits the spool, not
+  the product, and needs the spool on the scale.
+
+When the station's editor retires, `/product?id=N` becomes read-only on the
+station and links out.
+
+## Duplicate products
+
+Nothing reconciles duplicates today: there is no merge and no split. The
+matcher's own comment (`store.cpp:883`) calls an over-merge something "a human
+can see and split", but no tool exists for either. Duplicates arise whenever
+the ladder misses — hand entry falls to the name rung, names differ in shape
+by source, and after the split two sides create products independently.
+
+### Merging B into A
+
+A merge is an **event in the log**, never a rewrite of history.
+
+1. **A person picks the survivor and confirms.** Conflicting fields are shown
+   side by side, and the page names the spools that will move, as `/product`
+   already does for an edit. No automatic merge: the destructive step takes
+   one explicit click, the same rule as erase and audit close.
+2. **B's spools are re-pointed to A** — one `Reconcile` each, exactly as
+   propagation works. Each keeps its own tare and cost (*Tare belongs to the
+   spool*).
+3. **B's identifiers become aliases of A**: its package UUID, GTIN, material
+   UUID and names. This is the load-bearing step. Without it the next tag or
+   database pick carrying B's identity misses A and re-creates B. Every merge
+   teaches the matcher; the ladder checks aliases on each rung.
+4. **B becomes a redirect, not a deletion.** Anything still holding B's id
+   resolves to A — a Stock List row, a service reference, an old event during
+   replay. Chains resolve (C → B → A). The same idea as a spool tombstone:
+   an identity that once existed keeps answering.
+5. **Stock List rows that now point at the same product** are shown to a person
+   to combine. Two reorder thresholds cannot be merged automatically.
+
+The monthly usage rollup is unaffected — it groups by vendor + abbreviation,
+not product — though vendor spellings still need the alias table. Popularity
+follows the redirect, so B's history counts toward A.
+
+Constraints this inherits:
+
+- **Merge and alias events are global and `uuid`-less.** While compaction
+  exists they need re-emission from live state like Products; under the split
+  the finished-spool filter must keep them.
+- **Product identity must be globally unique** before merges can cross
+  station and service (*Products created by the service*).
+
+### Finding duplicates
+
+The Products page already exists to answer "is adoption converging?". It
+suggests likely duplicates for a person to confirm, never merges them:
+
+- same vendor (after aliases), abbreviation and nominal weight, with a close
+  colour;
+- names that differ only by added words ("PLA Basic Fire Engine Red" /
+  "PLA Fire Engine Red").
+
+### Undoing a merge
+
+Because nothing is rewritten, an unmerge can restore B and its aliases. Which
+spools return still takes a person, one spool at a time. Merges should be
+rare enough that this is acceptable.
 
 ## Normalizing names: two options
 
@@ -292,8 +370,9 @@ risk, and fixes the vendor half of the problem outright.
 ## Decisions to make
 
 1. **Service-side product creation.** *Decided: yes* (2026-09-28).
-2. **Who edits a product after creation** — station only, service only, or
-   both with a conflict rule. *Open.*
+2. **Who edits a product after creation.** *Decided* (2026-09-28): the
+   service edits and merges; the station only creates, and edits only until
+   the service exists.
 3. **Option A or C** — *deferred* until step 1 has run long enough to show how
    often names actually disagree.
 4. **Does tare distinguish products?** *Decided: no* (2026-09-28). Tare is per
@@ -321,7 +400,11 @@ risk, and fixes the vendor half of the problem outright.
    interchangeable.
 2. **Vocabulary into the log,** with the migration above. Still station-only;
    makes `/export` complete.
-3. **Vendor alias table, then A or C,** once step 1 shows the size of the name
+3. **Product merge on the station:** merge and alias events, redirects, the
+   duplicate suggestions on the Products page. Independent of the service,
+   and useful now — duplicates already happen.
+4. **Vendor alias table, then A or C,** once step 1 shows the size of the name
    problem.
-4. **The service reads vocabulary events and creates products,** with the
-   downward product path and globally unique product identity.
+5. **The service reads vocabulary events, creates products, and takes over
+   editing and merging,** with the downward product path and globally unique
+   product identity. The station's `/product` editor becomes read-only.
