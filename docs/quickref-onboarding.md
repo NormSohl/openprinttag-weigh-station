@@ -39,8 +39,13 @@ untagged reel.
      real result fills in brand, material, colour, print temps, and vendor
      identifiers automatically.
    - Not in the catalog? Expand **Enter details manually**. Vendor, material,
-     colour, and spool profile each default to whatever you picked last time,
-     and each has a **+ Add new** option if it's not in the list yet.
+     and colour each default to whatever you picked last time, and each has
+     a **+ Add new** option if it's not in the list yet.
+   - **Spool profile** (next to the tare box) starts blank every time.
+     Picking one fills in the empty-spool tare. **Required for manual
+     entry** (it also sets the full weight); optional after a catalog pick.
+     You can still type the tare yourself, or use **Capture tare** with a
+     matching empty spool.
 7. **Cost for this spool** — optional, near the top. Enter what this reel
    cost if you know it; leave it blank if you don't. It feeds the dollar
    figures on the Usage page. The box starts empty every time, on purpose —

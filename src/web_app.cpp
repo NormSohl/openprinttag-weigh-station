@@ -1481,14 +1481,25 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     storeGetSpool((uint32_t)cur, r);
 
     p += "<h3>Onboard spool #" + String((unsigned)cur) + "</h3>";
-    p += "<form method='POST' action='/api/onboard'>";
+    // The submit check mirrors handleApiOnboard's: a manual-entry onboard (not
+    // "another spool of X", not a catalog pick) takes its nominal weight and
+    // tare from the spool profile alone, so it needs one. The server enforces
+    // it too; this just says so before the page is replaced by a bare 400.
+    p += "<form method='POST' action='/api/onboard' onsubmit=\""
+           "var d=document.getElementById('prod'),"
+               "s=document.getElementById('cat-source'),"
+               "f=document.getElementById('profile');"
+           "if((!d||d.value=='0')&&s&&s.value=='manual'&&f&&f.value==''){"
+             "alert('Pick a spool profile (next to the tare box) \\u2014 it sets "
+             "this spool\\'s full and empty weights.');f.focus();return false;}"
+           "return true;\">";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
 
     // Applies regardless of which of the three paths below resolves the rest
     // of the identity -- what THIS spool cost is a fact about the purchase,
     // not about the product, so it belongs outside #newprod (which hides for
     // "another spool of X"). Deliberately no last-used default the way
-    // vendor/material/colour/profile get one: a stale price silently kept is
+    // vendor/material/colour get one: a stale price silently kept is
     // exactly the failure worth avoiding here, so it starts blank every time.
     //
     // What IS on record is shown beside the field as text, never as the
@@ -1643,20 +1654,27 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // all reverting to whatever the manual picklists happened to hold.
     // Choosing a tare preset is not a statement that you are typing the
     // identity by hand.
-    const char* lastProfile = lastOnboardProfile();
+    //
+    // Starts on a neutral "choose" option rather than the last-used profile.
+    // A preselected profile that has NOT filled the tare box (see above) read
+    // as though it had been applied, when on the catalog path it had not.
+    // The cost of a neutral default is that the manual path takes nominal
+    // weight and tare from the profile alone, so handleApiOnboard refuses a
+    // manual onboard with none picked, and the form checks the same thing on
+    // submit, rather than silently writing 0 g / 0 g to the tag.
     p += "<label>Spool profile &mdash; sets the tare below</label>"
-         "<select name='profile' onchange=\""
+         "<select name='profile' id='profile' onchange=\""
            "document.getElementById('profile-new-wrap').style.display="
              "this.value=='__new__'?'block':'none';"
            "var o=this.selectedOptions[0];"
            "if(o&&o.dataset.tare)document.getElementById('tare').value=o.dataset.tare;"
          "\">";
+    p += "<option value='' selected>&mdash; choose a spool profile &mdash;</option>";
     CfgProfile pr;
     for (size_t i = 0; i < cfgProfileCount(); i++)
         if (cfgProfileAt(i, pr))
-            p += String("<option data-tare='") + String(pr.empty_g, 1) + "'"
-               + (strcmp(pr.label, lastProfile) == 0 ? " selected" : "")
-               + ">" + esc(pr.label) + "</option>";
+            p += String("<option data-tare='") + String(pr.empty_g, 1) + "'>"
+               + esc(pr.label) + "</option>";
     p += "<option value='__new__'>&plus; Add new spool profile&hellip;</option>";
     p += "</select>";
     p += "<div id='profile-new-wrap' style='display:none;margin-top:8px'>"
@@ -1743,7 +1761,30 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     int16_t  catPrintMin = 0, catPrintMax = 0, catBedMin = 0, catBedMax = 0;
 
     ProductRecord q;
-    if (chosen && storeGetProduct(chosen, q)) {
+    const bool haveChosen = chosen && storeGetProduct(chosen, q);
+
+    // The manual path takes nominal weight and tare from the spool profile
+    // alone, and the picker now starts on a blank "choose" option, so a
+    // manual onboard with no profile would write 0 g / 0 g to the tag.
+    // Checked HERE, before the manual branch adds any "+ Add new ..." catalog
+    // rows, creates a product, or rewrites the last-used memory: a request
+    // that answers 4xx must not have changed anything.
+    if (!haveChosen && arg("source") != "catalog") {
+        const String prof = arg("profile");
+        if (prof.length() == 0) {
+            req->send(400, "text/plain",
+                      "pick a spool profile: it sets this spool's full and empty weights");
+            return;
+        }
+        if (prof == "__new__" && (arg("profile_new_label").length() == 0 ||
+                                  arg("profile_new_nom").toFloat() <= 0.0f)) {
+            req->send(400, "text/plain",
+                      "a new spool profile needs a label and a nominal full weight");
+            return;
+        }
+    }
+
+    if (haveChosen) {
         pid     = q.id;
         vendor  = q.vendor;
         display = q.material;
@@ -1871,11 +1912,11 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
                 if (cfgProfileAt(i, pr) && profName == pr.label) { havePr = true; break; }
         }
 
-        // Remember these four for next time's dropdown defaults — see
-        // last_onboard.h. vendor/matName/colName/profName are all final
-        // resolved names by this point, whether picked from the list or just
-        // created via "+ Add new ...".
-        lastOnboardSet(vendor.c_str(), matName.c_str(), colName.c_str(), profName.c_str());
+        // Remember these three for next time's dropdown defaults — see
+        // last_onboard.h. vendor/matName/colName are all final resolved names
+        // by this point, whether picked from the list or just created via
+        // "+ Add new ...". Not the spool profile: that picker starts neutral.
+        lastOnboardSet(vendor.c_str(), matName.c_str(), colName.c_str());
 
         nominal = havePr ? pr.nominal_full_g : 0.0f;
         empty   = (tareOvr > 0.0f) ? tareOvr : (havePr ? pr.empty_g : 0.0f);

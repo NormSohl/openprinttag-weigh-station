@@ -104,14 +104,25 @@ right away if the spool is still on the scale, or the next time it's placed.
    brand, material, colour, print temperatures, and the manufacturer's own
    identifiers — the same data a genuine vendor tag carries. If the filament
    isn't in the catalog, expand **Enter details manually** and pick the
-   **vendor**, **material**, **color**, and **spool profile** (the profile
-   fills in the empty-spool tare and nominal weight) from the lab's own lists
-   — each of the four picklists defaults to whichever choice was used last, so
-   onboarding a batch of the same shipment doesn't mean re-picking the same
-   vendor for every spool. Any of those four fields has a **+ Add new** option
-   if it isn't in the list yet — no need to visit Settings first to add it.
-   You can also capture the tare from a matching empty spool with
-   **Capture tare**.
+   **vendor**, **material**, and **color** from the lab's own lists — each
+   picklist defaults to whichever choice was used last, so onboarding a batch
+   of the same shipment doesn't mean re-picking the same vendor for every
+   spool. Any of them has a **+ Add new** option if it isn't in the list yet —
+   no need to visit Settings first to add it.
+
+   **Spool profile** sits next to the tare field, outside the manual section,
+   and works however you identified the filament — catalog pick or manual
+   entry. It's a preset for the empty spool's weight: picking one fills in
+   the **tare** box for you. It starts on **— choose a spool profile —**
+   every time, rather than on the last one used, so what the tare box shows
+   is always what will be saved. It has its own **+ Add new** option. If you
+   entered details manually you must pick one: it also sets the spool's
+   nominal full weight, and the form won't save without it. After a catalog
+   pick it's optional; leaving it unchosen keeps the catalog's own tare.
+   Anything you type in the tare box yourself wins. You can also
+   capture the tare from a matching empty spool with **Capture tare**. (If
+   you chose **another spool of X**, the tare comes from that product and
+   both of these are ignored.)
 
    **Cost for this spool** is optional: enter what the reel cost if you know
    it, leave it blank if you don't. It drives the dollar columns on the Usage
