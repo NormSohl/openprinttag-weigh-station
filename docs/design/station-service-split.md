@@ -54,7 +54,7 @@ needed the lab. An outage makes reports stale; it never stops a weigh.
 |---|---|
 | Weighing and the display | Stock list |
 | Onboarding | Ordering / reorder |
-| Audits (physical inventorying) | Usage and popularity reports |
+| Audits (physical inventorying) | Usage, popularity and cost reports |
 | Tag reuse | Full per-spool weigh history |
 | Calibration, WiFi setup | |
 | Live inventory view | |
@@ -72,12 +72,13 @@ which is what lets this avoid two-way sync entirely.
 | data | authoritative | why |
 |---|---|---|
 | Live spools (identity, tare, remaining) | station | the scale is the only thing that observes them |
+| Spool cost | station | entered on the Onboard form (`handleApiOnboard`), a presence task; it ships with the spool's events like any other field |
 | Events (weighs, onboards, retires, audits) | station originates, service keeps forever | the station produces them; only the service has room to keep them |
 | Products | station | "another spool of X" onboarding picks from them, and that is a presence task. Product edits propagate to tags on next placement, which is presence-adjacent too |
 | Vendors, materials, profiles, colours | station | the onboarding picklists need them |
-| Stock list | **service** | only `/stock` and `/reorder` read it, and both move. Checked: `cfgStock` is otherwise used only for a boot-log count |
+| Stock list | **service** | read only by the Stock List's own pages, CSV and API, by `/reorder`, and by config import — all of which move. Checked 2026-09-28: otherwise `cfgStock` appears only in a boot-log count |
 | Audit state | station | an audit is walking the shelf |
-| Usage, popularity | service computes | from complete raw history — no fold to survive |
+| Usage, popularity, cost rollup (`usage_dollars`) | service computes | from complete raw history — no fold to survive |
 
 The config catalog therefore **splits**: the stock-items table leaves the
 station; the other four tables stay.
@@ -268,7 +269,8 @@ do:
   attributed to vendor + **abbreviation** (not the display name); `Retire` is a
   weigh to zero; popularity excludes stockout days. **Conformance test:** feed
   the same log to `tools/store` and to the service; `DUMP usage` and the
-  service's usage report must agree to the gram.
+  service's usage report must agree to the gram, and the dollars rollup to the
+  cent — `tools/store` already covers that sum.
 - **Own the stock list**, and compute ordering from the mirrored live spools
   matched to products.
 - **Say how fresh it is.** Every page shows when it last heard from the station.
