@@ -323,6 +323,29 @@ do:
   local, or link out to the service. Either is fine; worth deciding
   deliberately.
 
+- **The on-device log format.** *Deferred (2026-09-28) until "days until full"
+  says space is a problem.* Measured on a realistic synthetic log (5,000 weighs
+  over 90 days, random spool order, noisy weights) in today's exact format:
+
+  | format | bytes/event | vs today |
+  |---|---|---|
+  | Today's NDJSON | 165 | 1.0× |
+  | Lean NDJSON — epoch `ts`, short keys, no `uuid` or derived `used_g` on weighs | 69 | 2.4× |
+  | Today's NDJSON, deflate in 4 KB sealed segments | 48 | 3.4× |
+  | CBOR records | 32 | 5.1× |
+  | Packed binary | 19 | 8.7× |
+
+  If it ever matters, **lean NDJSON first**: most of the size is redundancy (the
+  32-char `uuid` repeated on every weigh, the ISO timestamp, long keys), so
+  trimming it keeps the log readable and greppable and roughly halves boot
+  replay. Its one code change is that weighs key on spool number rather than
+  `uuid` in `applyInto_`. Binary and compression cost more than their numbers
+  suggest: the log stops being a readable backup; CBOR replay would need the
+  tag decoder's guarded accessors, because tinycbor aborts on the malformed
+  input a torn write leaves; and compression loses a whole block to a torn
+  write unless the active tail stays plain text. Binary sizes are exact; deflate
+  ratios will shift on real data.
+
 ## Migration
 
 - **Ship first, delete later.** Step 1 below is purely additive, so it can be
