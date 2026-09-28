@@ -83,6 +83,12 @@ which is what lets this avoid two-way sync entirely.
 The config catalog therefore **splits**: the stock-items table leaves the
 station; the other four tables stay.
 
+Two things this leaves open are taken up in `onboarding-vocabulary.md`: the
+upload ships only the event log, so the service would never see the vendors,
+materials, profiles and colours at all (proposed: move them into the log); and
+the Stock List can mint a product with no spool in hand, which conflicts with
+"the service reads products, it does not write them."
+
 ## Upload: continuous, pushed by the station
 
 **Every event ships as it happens.** It is tempting to back a spool up only when
