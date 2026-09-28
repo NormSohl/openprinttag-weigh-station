@@ -58,7 +58,7 @@ needed the lab. An outage makes reports stale; it never stops a weigh.
 | Tag reuse | Full per-spool weigh history |
 | Calibration, WiFi setup | |
 | Live inventory view | |
-| Products (the service reads them) | |
+| Products (onboarding picks from them) | Products (created here, then ordered) |
 
 The station keeps a local web server for exactly the left column. WiFi setup
 and calibration **must** stay local no matter what — you need them precisely
@@ -74,7 +74,7 @@ which is what lets this avoid two-way sync entirely.
 | Live spools (identity, tare, remaining) | station | the scale is the only thing that observes them |
 | Spool cost | station | entered on the Onboard form (`handleApiOnboard`), a presence task; it ships with the spool's events like any other field |
 | Events (weighs, onboards, retires, audits) | station originates, service keeps forever | the station produces them; only the service has room to keep them |
-| Products | station | "another spool of X" onboarding picks from them, and that is a presence task. Product edits propagate to tags on next placement, which is presence-adjacent too |
+| Products | **both create**; editing *open* | the service creates products to order them (decided 2026-09-28); the station creates them when onboarding something new, and "another spool of X" picks from them, a presence task. Needs a downward path and globally unique product identity — see `onboarding-vocabulary.md`, *Products created by the service*. Who may edit one afterwards is not decided |
 | Vendors, materials, profiles, colours | station | the onboarding picklists need them |
 | Stock list | **service** | read only by the Stock List's own pages, CSV and API, by `/reorder`, and by config import — all of which move. Checked 2026-09-28: otherwise `cfgStock` appears only in a boot-log count |
 | Audit state | station | an audit is walking the shelf |
@@ -86,8 +86,8 @@ station; the other four tables stay.
 Two things this leaves open are taken up in `onboarding-vocabulary.md`: the
 upload ships only the event log, so the service would never see the vendors,
 materials, profiles and colours at all (proposed: move them into the log); and
-the Stock List can mint a product with no spool in hand, which conflicts with
-"the service reads products, it does not write them."
+products created on the service for ordering must reach the station before the
+spool arrives (decided: the service creates products; the station pulls them).
 
 ## Upload: continuous, pushed by the station
 
@@ -257,7 +257,8 @@ log still replays; it just never writes them again.
 - **The station never pushes an empty record onto a tag.** A spool restored
   from a tombstone takes its identity from the tag (*Tombstones*).
 - **A tag may never update a product** (see `product-instance.md`). Nothing about
-  the service changes that; the service reads products, it does not write them.
+  the service changes that. The service may *create* products (for ordering);
+  whether it may also edit them is open.
 
 ## The service
 

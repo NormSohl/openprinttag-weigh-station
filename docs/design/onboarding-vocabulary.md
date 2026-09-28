@@ -4,12 +4,23 @@ Status: **proposed** (2026-09-28) — nothing built. Written to pin down the
 problem before choosing a fix; step 1 of *Sequencing* is useful on its own and
 does not depend on the rest.
 
+Decided 2026-09-28, on direct user decision:
+
+- **The service creates products.** New products are created there, ordered,
+  then received and onboarded at the station. See *Products created by the
+  service*.
+- **Tare does not make a product different.** Sometimes a different kind of
+  spool has to be ordered for the same filament. Tare belongs to the spool,
+  defaulted from its product. See *Tare belongs to the spool*.
+- **Tare is never unknown.** It is always supplied, by the database or by a
+  person. Nothing may store a spool or product without one.
+
 | step | state |
 |---|---|
-| Unknown tare is visible; every source feeds the picklists and spool profiles | not started |
+| Tare required and per spool; every source feeds the picklists and spool profiles | not started |
 | Vocabulary moves into the event log | not started |
 | Name normalization (alias table, and option A or C) | not started — wait for data |
-| The service reads the vocabulary | not started — depends on `station-service-split.md` |
+| The service reads the vocabulary and creates products | not started — depends on `station-service-split.md` |
 
 ## The problem
 
@@ -89,11 +100,19 @@ And what each one feeds back:
    container or a vendor tag never becomes a spool profile, so the next
    hand-entered spool of the same vendor's body needs one created by hand.
    `CfgProfile` carries no vendor at all — its label is free text.
-8. **Tare is not in the product key.** Nominal weight is (1 kg and 5 kg stay
-   apart); tare is only compared after the fact, as a disagreement on tag
-   adoption (`productDiffers_()`, `store.cpp:1004`), which is logged and left
-   alone. So the first tare to arrive wins for every spool of that product.
-   Usually right — worth knowing when it isn't.
+8. **Tare is treated as a product fact, but it is a spool fact.** The same
+   filament can arrive on a different spool body. Today:
+   - "Another spool of X" inherits the product's tare and **ignores the tare
+     box** (`handleApiOnboard`), so a spool on a different body cannot be
+     onboarded correctly by that path at all.
+   - A product edit rewrites **every** spool's tare with the product's
+     (`storePropagateProduct()`, `store.cpp:977`). Cost is snapshotted and
+     re-asserted there for exactly this reason; tare is not.
+   - A tag whose tare differs from its product's is reported as a
+     *disagreement* (`productDiffers_()`, `store.cpp:1004`), when a different
+     spool body is a legitimate reason for it.
+9. **Products can be minted with no tare.** The Stock List creates a product
+   with `empty_g` 0, because nothing is weighed there.
 
 ## Guiding principle
 
@@ -121,11 +140,9 @@ Four tables, each fed by all three sources:
   tag may create a vocabulary row but not change one, or one odd tag rewrites
   what every later onboarding is offered. A disagreement is reported, the way
   `storeAdoptProduct()`'s `outDiffers` is.
-- **Unknown tare is a state, not a number.** Tare 0 reads as *not recorded*
-  everywhere it is shown — the same treatment cost already gets on
-  `/spool?id=N`. A real spool body does not weigh nothing. When a source
-  supplies no tare, onboarding offers the vendor's known spool body instead of
-  storing 0.
+- **Tare is always supplied.** Every path that creates a spool or a product
+  must end with a real tare, from the database or from a person — never 0.
+  See *Tare belongs to the spool* for where it is enforced.
 - **The abbreviation is required on every path, or inferred.** Inference can
   come from the vocabulary (a known vendor + product) or the database's `type`;
   failing both, the form asks.
@@ -134,6 +151,36 @@ Four tables, each fed by all three sources:
   that vendor and material. The spool profile stays out of it: it starts
   neutral on purpose (2026-09-27), and tare is the one field where a
   remembered default silently sticks to the wrong spool.
+
+## Tare belongs to the spool
+
+*Decided:* tare does not distinguish products. The product carries a
+**default** tare; each spool carries its **own**, which starts as the default
+and may differ.
+
+- **Onboarding always shows the tare, on every path**, prefilled from the
+  product's default (or the spool body picked), and a changed value wins —
+  including on "another spool of X", which today ignores it. The spool profile
+  picker becomes the list of known spool bodies to pick from.
+- **A product edit does not touch a spool's tare.** `storePropagateProduct()`
+  snapshots and re-asserts it, exactly as it already does for cost. Changing
+  the product's default affects spools onboarded afterwards.
+- **A tag's tare differing from its product's default is not a
+  disagreement.** It is that spool's tare. `productDiffers_()` stops comparing
+  it (reversing the fix that added it — which was right while tare was a
+  product fact, and is the reason to keep a native test covering this).
+- **Never unknown.** Enforced where each source enters:
+  - *Hand entry:* already refused (400) without a spool profile; the rule
+    becomes "without a tare".
+  - *Database pick:* if the package has no container weight, the form
+    requires one before saving.
+  - *Service-created product:* the Stock List form requires a default tare,
+    from the database or typed. It no longer mints `empty_g` 0.
+  - *Foreign tag without `empty_container_weight`:* adopted, but marked
+    `needs_ob` so it lands on the Onboard page for a tare, rather than being
+    weighed as if the spool body were filament.
+- **Existing zero tares** (from before this rule) are listed for fixing, not
+  guessed at.
 
 ## Where the vocabulary lives: the event log
 
@@ -179,13 +226,39 @@ on the station "because the onboarding picklists need them." That is still
 right — onboarding is a presence task — but it left two things unsaid:
 
 1. **How the service gets them.** Answered above: they ride the log.
-2. **Who creates products for filament nobody has onboarded.** Today the Stock
-   List can mint a product with no spool in hand. The split moves the Stock
-   List to the service *and* says the service reads products and never writes
-   them. Both cannot hold. Either the service may **propose** a product (a
-   provisional one the station adopts on next contact, like a foreign tag's), or
-   a Stock List row for never-seen filament stays unlinked until a spool of it
-   is onboarded and the name probe finds it. *Open — see Decisions.*
+2. **Who creates products for filament nobody has onboarded.** *Decided: the
+   service.* See the next section.
+
+## Products created by the service
+
+The lifecycle is: a product is created on the service, put on the stock list,
+ordered, received, and onboarded at the station as "another spool of X". So
+the station must know products it did not create — which reverses the split
+doc's "the service reads products, it does not write them."
+
+What that requires:
+
+- **A downward path.** The station pushes and nothing can reach in, so the
+  station **pulls** new products — most simply in the response to each upload,
+  or a periodic fetch on the same connection. Onboarding still works offline;
+  a product created on the service since the last contact just is not offered
+  yet, and "a new product" remains available.
+- **Identity that cannot collide.** Today a product id is a small integer from
+  the station's NVS counter. The service cannot draw from that counter. A
+  product needs a globally unique identity — the OPT `package_uuid` where the
+  database supplies one, otherwise one minted by whichever side creates the
+  product — with the station's integer kept as a local index only.
+- **Matching still runs.** A service-created product arriving at the station
+  goes through the same ladder as any other source, so a product created on
+  both sides converges instead of doubling.
+- **A default tare is required** at creation (see above).
+
+Still open: **who edits a product once it exists.** Today only
+`/product?id=N` on the station, because it names the spools the edit will
+touch and their tags follow on next placement. If the service may edit too,
+products have two writers and need a rule for conflicts; if only the station
+edits, a product created on the service is fixed at the station. See
+*Decisions*.
 
 ## Normalizing names: two options
 
@@ -218,36 +291,37 @@ risk, and fixes the vendor half of the problem outright.
 
 ## Decisions to make
 
-1. **Service-side product creation** — propose-and-adopt, or leave unlinked
-   rows until a spool arrives. *Open;* decide together with the split.
-2. **Option A or C** — *deferred* until step 1 has run long enough to show how
+1. **Service-side product creation.** *Decided: yes* (2026-09-28).
+2. **Who edits a product after creation** — station only, service only, or
+   both with a conflict rule. *Open.*
+3. **Option A or C** — *deferred* until step 1 has run long enough to show how
    often names actually disagree.
-3. **Should tare join the product key?** Two spool bodies of one product
-   (cardboard vs. plastic) would then be two products. Probably *no* — the
-   right unit is the spool body, which this design makes a vocabulary row —
-   but worth a deliberate answer.
-4. **Unknown tare at weigh time** — keep reporting gross (flagged), or report
-   nothing until a tare is known? Flagged gross is more useful on the shelf;
-   nothing is more honest in the rollup.
+4. **Does tare distinguish products?** *Decided: no* (2026-09-28). Tare is per
+   spool, defaulted from the product.
+5. **Unknown tare.** *Decided: not allowed* (2026-09-28). Always supplied by
+   the database or a person; a foreign tag without one goes to onboarding.
 
 ## Migration
 
 - First boot on the new firmware emits one vocabulary event per existing
   `/config/` row, the same way `migrateStockIds_()` backfilled Stock List ids.
   Existing spools and products are untouched.
-- Spools already carrying tare 0 are not guessed at. They show as *tare not
-  recorded* and are fixed on `/product?id=N` or by re-onboarding.
+- Spools and products already carrying tare 0 are not guessed at. They are
+  listed for fixing, and a spool with one on the scale is sent to onboarding.
 
 ## Sequencing
 
-1. **Local, standalone:** tare 0 shown as unrecorded; tag and database sources
-   feed the picklists and spool profiles (create-only); abbreviation required
-   or inferred; last-used defaults learn from every path; the
-   `cfgMaterialByName(abbr)` name/abbreviation mismatch fixed. Fixes the
-   silently wrong remaining weights and makes the sources interchangeable.
+1. **Local, standalone:** tare required on every path and per spool (the tare
+   box honoured on "another spool of X", propagation preserving it, tag tare
+   no longer a disagreement, foreign tags without one sent to onboarding);
+   tag and database sources feed the picklists and spool profiles
+   (create-only); abbreviation required or inferred; last-used defaults learn
+   from every path; the `cfgMaterialByName(abbr)` name/abbreviation mismatch
+   fixed. Fixes the silently wrong remaining weights and makes the sources
+   interchangeable.
 2. **Vocabulary into the log,** with the migration above. Still station-only;
    makes `/export` complete.
 3. **Vendor alias table, then A or C,** once step 1 shows the size of the name
    problem.
-4. **The service reads vocabulary events,** decided together with service-side
-   product creation.
+4. **The service reads vocabulary events and creates products,** with the
+   downward product path and globally unique product identity.
