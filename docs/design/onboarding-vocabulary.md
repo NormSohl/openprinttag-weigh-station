@@ -1,38 +1,48 @@
 # Design: one vocabulary for onboarding
 
-Status: **proposed** (2026-09-28) — nothing built. Written to pin down the
-problem before choosing a fix; step 1 of *Sequencing* is useful on its own and
-does not depend on the rest.
-
-Decided 2026-09-28, on direct user decision:
-
-- **The service creates products.** New products are created there, ordered,
-  then received and onboarded at the station. See *Products created by the
-  service*.
-- **Tare does not make a product different.** Sometimes a different kind of
-  spool has to be ordered for the same filament. Tare belongs to the spool,
-  defaulted from its product. See *Tare belongs to the spool*.
-- **Tare is never unknown.** It is always supplied, by the database or by a
-  person. Nothing may store a spool or product without one.
-- **The service edits and merges products; the station only creates them.**
-  Until the service exists, the station's `/product?id=N` stays the editor
-  and gets merge first. See *Who edits a product* and *Duplicate products*.
+Status: **proposed** (2026-09-28, revised 2026-09-30) — nothing built.
+**Station-only:** the hosted service in `station-service-split.md` is on hold
+(2026-09-30, on direct user decision), so this plan assumes the station stays
+self-contained. What the service would change is kept under *If the service
+resumes*, not in the plan.
 
 | step | state |
 |---|---|
-| Tare required and per spool; every source feeds the picklists and spool profiles | not started |
-| Vocabulary moves into the event log | not started |
-| Name normalization (alias table, and option A or C) | not started — wait for data |
-| Product merge (on the station first) | not started |
-| The service reads the vocabulary, creates, edits and merges products | not started — depends on `station-service-split.md` |
+| 1. `cfgMaterialByName(abbr)` lookup fix | not started |
+| 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | not started |
+| 3. Tare belongs to the spool | not started |
+| 4. Tare required wherever a person or the database supplies it | not started |
+| 5. Every source feeds the picklists and spool profiles | not started |
+| 6. Abbreviation required or inferred | not started |
+| 7. Product merge | not started |
+| 8. Name normalization (vendor aliases, then option A or C) | not started — wait for data |
+
+## Decisions
+
+All on direct user decision.
+
+- **Tare does not make a product different** (2026-09-28). Sometimes a
+  different kind of spool has to be ordered for the same filament. Tare
+  belongs to the spool, defaulted from its product.
+- **Tare is never unknown** (2026-09-28). It is always supplied — by the tag,
+  the database, or a person. Nothing a person or the database creates may be
+  stored with tare 0.
+- **Every tag is written the same way, whoever made it** (2026-09-30). The
+  read-only rule for adopted tags was a guard against format bugs that have
+  since been fixed; OPT is public and we follow it. If writing breaks a tag,
+  that is a bug in our encoding and gets fixed, not routed around.
+- **Tags adopted from a vendor carry a correct tare** (2026-09-30). So the
+  weigh keeps taking tare from the tag (`empty_container_weight`), which on
+  every tag we write equals the record's.
+- **Products are edited only on `/product?id=N`**, as today. Merge is built
+  there too.
 
 ## The problem
 
 A spool's descriptive data reaches the station from three sources:
 
 1. **A tag that is already written** — a vendor spool, or one tagged elsewhere
-   (foreign-tag adoption, `sync_task.cpp` `productFromMain()` /
-   `identityFromMain()`).
+   (adoption, `sync_task.cpp` `productFromMain()` / `identityFromMain()`).
 2. **A pick from the OpenPrintTag database** — the catalog search on `/onboard`
    and `/stock` (`CATALOG_SCRIPT` `applyPick()`, then `handleApiOnboard`'s
    `source=catalog` branch).
@@ -50,11 +60,11 @@ Checked against the code 2026-09-28.
 
 | | vendor | material (display, OPT key 10) | abbreviation (key 52) | tare | nominal |
 |---|---|---|---|---|---|
-| **Tag** | `brand_name` verbatim, or `"Unknown"` | `material_name` verbatim, or `"Unknown"` | verbatim, may be empty | `empty_container_weight`, **0 if absent** | `nominal_netto_full_weight` |
+| **Tag** | `brand_name` verbatim, or `"Unknown"` | `material_name` verbatim, or `"Unknown"` | verbatim, may be empty | `empty_container_weight` | `nominal_netto_full_weight` |
 | **Database pick** | brand `name`, or a prettified slug | the database's `mat.name`, e.g. `"PLA Basic Fire Engine Red"` | `abbreviation`, else `type`, may be empty | container `empty_weight`, **0 if the package has no container**; the tare box overrides | package `nominal_netto_full_weight` |
 | **Person** | picklist or typed | composed `<material> <colour>`, e.g. `"PLA Fire Engine Red"` | from the `CfgMaterial` row | from the spool profile (required); the tare box overrides | from the spool profile |
 | *"Another spool of X"* | inherited from the product | inherited | inherited | inherited — **the tare box is ignored** | inherited |
-| *Stock List row* | picklist, typed, or database | as above | as above | always 0 (nothing is weighed) | typed |
+| *Stock List row* | picklist, typed, or database | as above | as above | **always 0** (nothing is weighed) | typed |
 
 And what each one feeds back:
 
@@ -78,14 +88,11 @@ And what each one feeds back:
 2. **Vendor spelling varies** — "Bambu Lab", "BambuLab", "Bambu" — and nothing
    reconciles them. Database picks leak their spelling into the vendor
    picklist; tags never do.
-3. **The last-used defaults see one source in three.** After a foreign spool
-   or a database pick, the manual picklists still default to whatever was last
-   typed by hand.
-4. **The picklists are not a shared vocabulary.** Materials and colours enter
+3. **The picklists are not a shared vocabulary.** Materials and colours enter
    only by "+ Add new". A material that arrived by tag or database is never
    offered, so the next hand-entered spool of it is typed afresh — and
    possibly differently.
-5. **The abbreviation is the weakest field and the most load-bearing one.** It
+4. **The abbreviation is the weakest field and the most load-bearing one.** It
    keys the consumption rollup (and falls back to the full display name when
    empty, splitting one bucket per colour), and the catalog and
    "another spool" paths use it to look up the material's class, type and
@@ -93,18 +100,16 @@ And what each one feeds back:
    `CfgMaterial` **name** field, while the manual path looks up by name — so a
    config row named `"PLA Silk"` with abbreviation `"PLA"` is found by one path
    and missed by the other.
-6. **A missing tare is stored as zero, silently.** Remaining is gross minus
-   tare, and the weigh (`sync_task.cpp:779`, using the tag's own
-   `empty_container_weight`) falls back to gross when tare is 0 — so a spool with
-   no recorded tare reports its own spool body as filament — typically
-   200–250 g too much — and nothing flags it. Two sources can produce it: a
-   database package with no container file, and a tag without
-   `empty_container_weight`.
-7. **Spool bodies are learned from one source.** A real tare from a database
+5. **A missing tare is stored as zero, silently.** Remaining is gross minus
+   tare, and the weigh (`sync_task.cpp:779`) falls back to gross when tare is
+   0 — so the spool body is reported as filament, typically 200–250 g too much,
+   and nothing flags it. The sources that can produce it are a database package
+   with no container file and a Stock List product.
+6. **Spool bodies are learned from one source.** A real tare from a database
    container or a vendor tag never becomes a spool profile, so the next
-   hand-entered spool of the same vendor's body needs one created by hand.
-   `CfgProfile` carries no vendor at all — its label is free text.
-8. **Tare is treated as a product fact, but it is a spool fact.** The same
+   hand-entered spool of the same body needs one created by hand. `CfgProfile`
+   carries no vendor at all — its label is free text.
+7. **Tare is treated as a product fact, but it is a spool fact.** The same
    filament can arrive on a different spool body. Today:
    - "Another spool of X" inherits the product's tare and **ignores the tare
      box** (`handleApiOnboard`), so a spool on a different body cannot be
@@ -115,8 +120,14 @@ And what each one feeds back:
    - A tag whose tare differs from its product's is reported as a
      *disagreement* (`productDiffers_()`, `store.cpp:1004`), when a different
      spool body is a legitimate reason for it.
-9. **Products can be minted with no tare.** The Stock List creates a product
-   with `empty_g` 0, because nothing is weighed there.
+8. **Adopted tags are never written.** Neither Main nor Aux (`sForeign`,
+   `sync_task.cpp:650`, `:795`). So a correction to an adopted spool's record
+   never reaches its tag, and our weighings never reach its `consumed_weight`
+   — which is what Prusa software reads, and which OPT requires to stay
+   writable.
+9. **Duplicate products cannot be reconciled.** There is no merge and no
+   split. The matcher's own comment (`store.cpp:883`) calls an over-merge
+   something "a human can see and split", but no tool exists for either.
 
 ## Guiding principle
 
@@ -129,38 +140,49 @@ second, weaker identity.
 
 It follows that every source, not just hand entry, should feed the vocabulary.
 
-## The vocabulary
+## Every tag is written the same way
 
-Four tables, each fed by all three sources:
+The read-only rule for adopted tags (`sForeign`, carried on the record as
+`foreign`) dates from 2026-08-14, the day our tags were brought byte-for-byte
+into line with the OPT reference layout — a rewrite in our old encoding had
+destroyed a Prusa tag while debugging. Everything that made a rewrite
+dangerous has been fixed since:
 
-| table | key | carries | fed by a tag | fed by a database pick |
-|---|---|---|---|---|
-| **Vendors** | canonical name, plus aliases | `brand_uuid` when known | `brand_name`, `brand_uuid` | brand `name`, `uuid` |
-| **Materials** | abbreviation | class, type, diameter, print/bed temps | `material_abbreviation`, temps, class/type | `abbreviation`/`type`, `properties` |
-| **Colours** | name | rgba | — (OPT has no colour name) | — |
-| **Spool bodies** | vendor + label | tare, nominal | `empty_container_weight`, nominal | container `empty_weight`, package nominal |
+- **Unmodelled fields survive.** `optDecode()` keeps every key we do not model
+  in `extra[]` and `optEncodeMain()`/`optEncodeAux()` write them back;
+  overflow refuses the rewrite.
+- **`write_protection` is respected** (`optMainWritable()`).
+- **Writes are bounded by the tag's own declared layout** (`optPayloadExtent()`),
+  not the physical size.
 
-- **A source adds, it never overwrites.** Same rule as a tag and a product: a
-  tag may create a vocabulary row but not change one, or one odd tag rewrites
-  what every later onboarding is offered. A disagreement is reported, the way
-  `storeAdoptProduct()`'s `outDiffers` is.
-- **Tare is always supplied.** Every path that creates a spool or a product
-  must end with a real tare, from the database or from a person — never 0.
-  See *Tare belongs to the spool* for where it is enforced.
-- **The abbreviation is required on every path, or inferred.** Inference can
-  come from the vocabulary (a known vendor + product) or the database's `type`;
-  failing both, the form asks.
-- **The last-used defaults record the resolved values, whatever the path.**
-  After a database pick or a foreign spool, the manual picklists default to
-  that vendor and material. The spool profile stays out of it: it starts
-  neutral on purpose (2026-09-27), and tare is the one field where a
-  remembered default silently sticks to the wrong spool.
+So the rule goes: adopted tags get Main reconciled and Aux (`consumed_weight`,
+cost) written exactly like ours. The record's `foreign` flag stays as a note of
+where the spool came from; it no longer blocks writes.
+
+- **Product edits then reach adopted tags too**, through the normal reconcile
+  loop. Products inferred from a tag stay `provisional`, and excluded from
+  write-back, until a person confirms them — the guard that matters here.
+- **A vendor tag may declare a smaller Aux region than our write needs.** With
+  cost, our Aux map is 18 bytes. `writeSection()` refuses such a write cleanly
+  rather than overrunning; whether real Prusament tags hit this is one of the
+  things the bench test below answers.
+
+**Verify on hardware before relying on it**, with a genuine Prusament spool:
+
+1. `DUMP TAG` before any write.
+2. Place it (weigh → Aux write), then edit its record and let it reconcile
+   (Main write).
+3. `DUMP TAG` again: every field present before is still present and
+   unchanged, apart from the ones we meant to write.
+4. The tag still reads correctly in Prusa's own app, including the remaining
+   weight computed from our `consumed_weight`.
 
 ## Tare belongs to the spool
 
 *Decided:* tare does not distinguish products. The product carries a
 **default** tare; each spool carries its **own**, which starts as the default
-and may differ.
+and may differ. On the tag it is OPT's `empty_container_weight`, which is
+per tag anyway.
 
 - **Onboarding always shows the tare, on every path**, prefilled from the
   product's default (or the spool body picked), and a changed value wins —
@@ -173,140 +195,72 @@ and may differ.
   disagreement.** It is that spool's tare. `productDiffers_()` stops comparing
   it (reversing the fix that added it — which was right while tare was a
   product fact, and is the reason to keep a native test covering this).
-- **Never unknown.** Enforced where each source enters:
+- **The weigh keeps reading the tag.** On every tag we write, the tag holds the
+  record's tare; an adopted vendor tag's is taken as correct as it arrives.
+- **Never unknown.** Enforced where a person or the database supplies it:
   - *Hand entry:* already refused (400) without a spool profile; the rule
     becomes "without a tare".
   - *Database pick:* if the package has no container weight, the form
     requires one before saving.
-  - *Service-created product:* the Stock List form requires a default tare,
-    from the database or typed. It no longer mints `empty_g` 0.
-  - *Foreign tag without `empty_container_weight`:* adopted, but marked
-    `needs_ob` so it lands on the Onboard page for a tare, rather than being
-    weighed as if the spool body were filament.
+  - *Stock List:* requires a default tare, from the database or typed. It no
+    longer creates products with `empty_g` 0.
 - **Existing zero tares** (from before this rule) are listed for fixing, not
   guessed at.
 
-## Where the vocabulary lives: the event log
+## The vocabulary
 
-Today the four tables are JSON files under `/config/`, backed up separately
-from the log (`/config/export`). **They become event types in the log**, the
-way Products already are, and the `/config/` tables become a rebuildable
-index.
+Four tables, each fed by all three sources:
 
-- **One backup.** `/export` stays the single file that captures everything the
-  station knows, which it already claims to be.
-- **One upload.** Under `station-service-split.md`, the continuous upload ships
-  the event log and nothing else — so today the service would receive products
-  but not the vocabulary those products were built from, and would have to
-  build Stock List rows against names it has never seen. Putting the
-  vocabulary in the log closes that without a second sync channel.
-- **Every source feeds it the same way.** A tag or database pick that brings a
-  new vendor or spool body appends the same event hand entry does. That is
-  what makes the sources interchangeable, and it costs no mechanism beyond the
-  event itself.
-- **History comes free.** A vocabulary row that was renamed or corrected keeps
-  its record, like everything else in the log.
+| table | key | carries | fed by a tag | fed by a database pick |
+|---|---|---|---|---|
+| **Vendors** | canonical name, plus aliases | `brand_uuid` when known | `brand_name`, `brand_uuid` | brand `name`, `uuid` |
+| **Materials** | abbreviation | class, type, diameter, print/bed temps | `material_abbreviation`, temps, class/type | `abbreviation`/`type`, `properties` |
+| **Colours** | name | rgba | — (OPT has no colour name) | — |
+| **Spool bodies** | *open — see Questions* | tare, nominal | `empty_container_weight`, nominal | container `empty_weight`, package nominal |
 
-What this costs:
-
-- **`StoreEvent` is a union of every event type's fields** and a ~375-byte
-  stack object (see *Gotchas* in `CLAUDE.md`). Vocabulary events should reuse
-  existing fields — name, abbreviation, vendor, rgba, temps, dia, tare,
-  nominal are all already there — rather than add new ones.
-- **They are global, `uuid`-less events.** Until compaction is removed, each
-  needs re-emission from the live index at `storeCompact()`, exactly like
-  Products and audit markers, or it silently vanishes across a fold. Under the
-  split's no-compaction design, the finished-spool filter must keep them
-  forever — one more line type in a rule that already exists.
-- **The Settings page's raw-JSON editors and `/config/import`** replace whole
-  tables today. As a log-backed index they would have to emit events for the
-  differences instead. `/config/export` shrinks to what is genuinely
-  station-local configuration.
-
-## Interaction with the station/service split
-
-`station-service-split.md` says vendors, materials, profiles and colours stay
-on the station "because the onboarding picklists need them." That is still
-right — onboarding is a presence task — but it left two things unsaid:
-
-1. **How the service gets them.** Answered above: they ride the log.
-2. **Who creates products for filament nobody has onboarded.** *Decided: the
-   service.* See the next section.
-
-## Products created by the service
-
-The lifecycle is: a product is created on the service, put on the stock list,
-ordered, received, and onboarded at the station as "another spool of X". So
-the station must know products it did not create — which reverses the split
-doc's "the service reads products, it does not write them."
-
-What that requires:
-
-- **A downward path.** The station pushes and nothing can reach in, so the
-  station **pulls** new products — most simply in the response to each upload,
-  or a periodic fetch on the same connection. Onboarding still works offline;
-  a product created on the service since the last contact just is not offered
-  yet, and "a new product" remains available.
-- **Identity that cannot collide.** Today a product id is a small integer from
-  the station's NVS counter. The service cannot draw from that counter. A
-  product needs a globally unique identity — the OPT `package_uuid` where the
-  database supplies one, otherwise one minted by whichever side creates the
-  product — with the station's integer kept as a local index only.
-- **Matching still runs.** A service-created product arriving at the station
-  goes through the same ladder as any other source, so a product created on
-  both sides converges instead of doubling.
-- **A default tare is required** at creation (see above).
-
-## Who edits a product
-
-*Decided 2026-09-28:* **both sides create products; only the service edits
-and merges them.** Until the service exists, the station's `/product?id=N`
-remains the editor, and merge is built there first.
-
-- **Curating products is not a presence task.** Fixing a product's name or
-  folding two entries together needs no spool on the scale, so under the
-  split's rule it belongs with the service.
-- **The service is the only place duplicates can all be seen.** Once it creates
-  products for ordering and the station creates them at onboarding, both will
-  create copies of the same filament, and neither can see that alone.
-- **One editor means no conflict rule.** Edits and merges travel down the same
-  pull path as new products; the station applies them as events, and tags
-  follow on next placement through the existing reconcile loop. Offline, they
-  simply wait.
-- **The station still fixes spools.** A spool attached to the wrong product is
-  re-onboarded as "another spool of" the right one. That edits the spool, not
-  the product, and needs the spool on the scale.
-
-When the station's editor retires, `/product?id=N` becomes read-only on the
-station and links out.
+- **A source adds, it never overwrites.** Same rule as a tag and a product: a
+  tag may create a vocabulary row but not change one, or one odd tag rewrites
+  what every later onboarding is offered. A disagreement is reported, the way
+  `storeAdoptProduct()`'s `outDiffers` is.
+- **Junk never gets in.** `"Unknown"`, empty strings and a 0 tare are not
+  vocabulary.
+- **The abbreviation is required on every path, or inferred.** Inference can
+  come from the vocabulary (a known vendor + product) or the database's `type`;
+  failing both, the form asks.
+- **The tables stay where they are** — JSON under `/config/`, backed up by
+  `/config/export`. Moving them into the event log was proposed for the
+  service's upload; with the service on hold it is deferred (*If the service
+  resumes*).
+- **The last-used defaults stay as they are**, fed by hand entry only.
+  Considered and dropped (2026-09-30): the defaults only matter to hand entry,
+  a database pick or a tagged spool never uses the picklists, and letting them
+  write the defaults would overwrite one workflow's memory with another's.
 
 ## Duplicate products
 
-Nothing reconciles duplicates today: there is no merge and no split. The
-matcher's own comment (`store.cpp:883`) calls an over-merge something "a human
-can see and split", but no tool exists for either. Duplicates arise whenever
-the ladder misses — hand entry falls to the name rung, names differ in shape
-by source, and after the split two sides create products independently.
+Duplicates arise whenever the ladder misses: hand entry falls to the name
+rung, and names differ in shape by source.
 
 ### Merging B into A
 
-A merge is an **event in the log**, never a rewrite of history.
+A merge is an **event in the log**, never a rewrite of history. Done on
+`/product?id=N`, the only place products are edited.
 
 1. **A person picks the survivor and confirms.** Conflicting fields are shown
    side by side, and the page names the spools that will move, as `/product`
    already does for an edit. No automatic merge: the destructive step takes
    one explicit click, the same rule as erase and audit close.
 2. **B's spools are re-pointed to A** — one `Reconcile` each, exactly as
-   propagation works. Each keeps its own tare and cost (*Tare belongs to the
-   spool*).
+   propagation works. Each keeps its own tare and cost. Their tags follow on
+   next placement.
 3. **B's identifiers become aliases of A**: its package UUID, GTIN, material
    UUID and names. This is the load-bearing step. Without it the next tag or
    database pick carrying B's identity misses A and re-creates B. Every merge
    teaches the matcher; the ladder checks aliases on each rung.
 4. **B becomes a redirect, not a deletion.** Anything still holding B's id
-   resolves to A — a Stock List row, a service reference, an old event during
-   replay. Chains resolve (C → B → A). The same idea as a spool tombstone:
-   an identity that once existed keeps answering.
+   resolves to A — a Stock List row, an old event during replay. Chains
+   resolve (C → B → A). The same idea as a spool tombstone: an identity that
+   once existed keeps answering.
 5. **Stock List rows that now point at the same product** are shown to a person
    to combine. Two reorder thresholds cannot be merged automatically.
 
@@ -314,13 +268,10 @@ The monthly usage rollup is unaffected — it groups by vendor + abbreviation,
 not product — though vendor spellings still need the alias table. Popularity
 follows the redirect, so B's history counts toward A.
 
-Constraints this inherits:
-
-- **Merge and alias events are global and `uuid`-less.** While compaction
-  exists they need re-emission from live state like Products; under the split
-  the finished-spool filter must keep them.
-- **Product identity must be globally unique** before merges can cross
-  station and service (*Products created by the service*).
+**Merge and alias events are global and `uuid`-less**, so `storeCompact()`
+must re-emit them from live state, exactly as it does Products and audit
+markers — or they silently vanish across a fold (see the *Gotchas* in
+`CLAUDE.md`). `tools/store/` should cover a merge surviving compaction.
 
 ### Finding duplicates
 
@@ -340,8 +291,8 @@ rare enough that this is acceptable.
 
 ## Normalizing names: two options
 
-Only needed if the data from step 1 shows real mismatch. Both keep the
-display name OPT-shaped.
+Only needed if the data from the earlier steps shows real mismatch. Both keep
+the display name OPT-shaped.
 
 - **A — one normalizing function for every source.** Split any incoming name
   into material / variant / colour and canonicalize the vendor. Cleanest
@@ -357,54 +308,76 @@ risk, and fixes the vendor half of the problem outright.
 
 ## What must not change
 
-- **A tag never updates a product, and now never updates a vocabulary row
+- **Every tag we write stays OPT-compliant**, so Prusa software and other
+  OPT readers can read it. A write that would break that is refused, never
+  approximated.
+- **A tag never updates a product, and never updates a vocabulary row
   either.** Create only; disagreements reported.
 - **A catalog pick's identifiers still reach the tag** — UUIDs, GTIN, and the
   rule that switching back to manual entry clears them first.
 - **The spool profile picker starts neutral**, and a manual onboard without a
-  profile is still refused (400) before anything is written.
+  tare is refused (400) before anything is written.
 - **A blank field never erases a recorded value** — the rule cost already
   follows. Learning from a source adds data; it does not blank what a person
   entered.
 
-## Decisions to make
+## Questions
 
-1. **Service-side product creation.** *Decided: yes* (2026-09-28).
-2. **Who edits a product after creation.** *Decided* (2026-09-28): the
-   service edits and merges; the station only creates, and edits only until
-   the service exists.
-3. **Option A or C** — *deferred* until step 1 has run long enough to show how
-   often names actually disagree.
-4. **Does tare distinguish products?** *Decided: no* (2026-09-28). Tare is per
-   spool, defaulted from the product.
-5. **Unknown tare.** *Decided: not allowed* (2026-09-28). Always supplied by
-   the database or a person; a foreign tag without one goes to onboarding.
+1. **What identifies a spool body?** Vendor + label ("Bambu reusable
+   plastic"), material (cardboard vs. plastic), or the database's own
+   container entries? For database picks the container entry may be the
+   natural key. Needed before step 5.
+2. **Option A or C** — *deferred* until the earlier steps have run long enough
+   to show how often names actually disagree.
 
 ## Migration
 
-- First boot on the new firmware emits one vocabulary event per existing
-  `/config/` row, the same way `migrateStockIds_()` backfilled Stock List ids.
-  Existing spools and products are untouched.
 - Spools and products already carrying tare 0 are not guessed at. They are
-  listed for fixing, and a spool with one on the scale is sent to onboarding.
+  listed for fixing (the Products page, and a spool's own page).
+- Records with `foreign` set need nothing: the flag simply stops blocking
+  writes. Their tags are brought up to date on next placement.
 
 ## Sequencing
 
-1. **Local, standalone:** tare required on every path and per spool (the tare
-   box honoured on "another spool of X", propagation preserving it, tag tare
-   no longer a disagreement, foreign tags without one sent to onboarding);
-   tag and database sources feed the picklists and spool profiles
-   (create-only); abbreviation required or inferred; last-used defaults learn
-   from every path; the `cfgMaterialByName(abbr)` name/abbreviation mismatch
-   fixed. Fixes the silently wrong remaining weights and makes the sources
-   interchangeable.
-2. **Vocabulary into the log,** with the migration above. Still station-only;
-   makes `/export` complete.
-3. **Product merge on the station:** merge and alias events, redirects, the
-   duplicate suggestions on the Products page. Independent of the service,
-   and useful now — duplicates already happen.
-4. **Vendor alias table, then A or C,** once step 1 shows the size of the name
-   problem.
-5. **The service reads vocabulary events, creates products, and takes over
-   editing and merging,** with the downward product path and globally unique
-   product identity. The station's `/product` editor becomes read-only.
+Each step is independently shippable.
+
+1. **The `cfgMaterialByName(abbr)` fix.** A few lines; the catalog and
+   "another spool" paths look up by abbreviation against the name field.
+2. **Every tag written the same way**, then the Prusament bench test above
+   before relying on it.
+3. **Tare belongs to the spool:** "another spool of X" honours the tare box;
+   `storePropagateProduct()` preserves each spool's tare; `productDiffers_()`
+   stops comparing tare. Native test in `tools/store/` for the propagation.
+4. **Tare required** on hand entry, on database picks with no container
+   weight, and on the Stock List; existing zero tares listed.
+5. **Every source feeds the picklists and spool profiles**, create-only, with
+   the junk guard — after question 1 is answered.
+6. **Abbreviation required or inferred.**
+7. **Product merge** on `/product`, with aliases, redirects, duplicate
+   suggestions and compaction survival.
+8. **Vendor alias table, then A or C**, once there is data.
+
+Steps 1–3 are the recommended first change set: small, self-contained, and
+they fix remaining weights and tags that are wrong today.
+
+## If the service resumes
+
+Decided 2026-09-28 for the hosted service, and parked with it:
+
+- **The service creates products** — created, ordered, then received and
+  onboarded at the station. That needs a downward path (the station pulls,
+  since nothing can reach in) and a product identity that cannot collide:
+  the OPT `package_uuid` where the database supplies one, otherwise one minted
+  by whichever side creates it, with the station's integer kept as a local
+  index.
+- **The service edits and merges products; the station only creates them.**
+  Curating products is not a presence task, and only the service would see
+  duplicates created on both sides. `/product?id=N` would become read-only on
+  the station.
+- **The vocabulary moves into the event log**, so the one upload carries it
+  and `/export` is complete. Costs recorded when this was proposed: vocabulary
+  events should reuse existing `StoreEvent` fields (the ~375-byte union), are
+  `uuid`-less and so need re-emission through compaction or keeping by the
+  finished-spool filter, and the Settings raw-JSON editors and `/config/import`
+  would have to emit events for their differences instead of replacing
+  tables.

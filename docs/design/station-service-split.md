@@ -1,7 +1,10 @@
 # Design: station/service split
 
-Status: **proposed** (2026-09-28) — nothing built. Written so the boundary can
-be argued about before any code moves.
+Status: **on hold** (2026-09-30, on direct user decision) — nothing built.
+Proposed 2026-09-28 and written so the boundary could be argued about before
+any code moved. The station stays self-contained for now; the onboarding and
+data-entry work continues station-only in `onboarding-vocabulary.md`, which
+keeps the service-dependent decisions under *If the service resumes*.
 
 | step | state |
 |---|---|
