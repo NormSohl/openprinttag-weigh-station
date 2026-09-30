@@ -12,7 +12,7 @@ resumes*, not in the plan.
 | 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | not started |
 | 3. Tare belongs to the spool | not started |
 | 4. Tare required wherever a person or the database supplies it | not started |
-| 5. Every source feeds the picklists and spool profiles | not started |
+| 5. Every source feeds the picklists; spool types replace spool profiles | not started |
 | 6. Abbreviation required or inferred | not started |
 | 7. Product merge | not started |
 | 8. Name normalization (vendor aliases, then option A or C) | not started — wait for data |
@@ -36,6 +36,8 @@ All on direct user decision.
   every tag we write equals the record's.
 - **Products are edited only on `/product?id=N`**, as today. Merge is built
   there too.
+- **A spool type is identified by spool vendor + type** (2026-09-30), e.g.
+  "Seattle Makers Plywood", "eSun Cardboard". See *Spool types*.
 
 ## The problem
 
@@ -106,9 +108,10 @@ And what each one feeds back:
    and nothing flags it. The sources that can produce it are a database package
    with no container file and a Stock List product.
 6. **Spool bodies are learned from one source.** A real tare from a database
-   container or a vendor tag never becomes a spool profile, so the next
-   hand-entered spool of the same body needs one created by hand. `CfgProfile`
-   carries no vendor at all — its label is free text.
+   container never becomes a spool profile, so the next hand-entered spool of
+   the same body needs one created by hand. `CfgProfile` carries no vendor at
+   all — its label is free text, and it bundles the spool's tare with the
+   package's nominal weight.
 7. **Tare is treated as a product fact, but it is a spool fact.** The same
    filament can arrive on a different spool body. Today:
    - "Another spool of X" inherits the product's tare and **ignores the tare
@@ -185,9 +188,9 @@ and may differ. On the tag it is OPT's `empty_container_weight`, which is
 per tag anyway.
 
 - **Onboarding always shows the tare, on every path**, prefilled from the
-  product's default (or the spool body picked), and a changed value wins —
-  including on "another spool of X", which today ignores it. The spool profile
-  picker becomes the list of known spool bodies to pick from.
+  product's default (or the spool type picked), and a changed value wins —
+  including on "another spool of X", which today ignores it. The spool type
+  picker (*Spool types*) is the list to pick from.
 - **A product edit does not touch a spool's tare.** `storePropagateProduct()`
   snapshots and re-asserts it, exactly as it already does for cost. Changing
   the product's default affects spools onboarded afterwards.
@@ -199,7 +202,7 @@ per tag anyway.
   record's tare; an adopted vendor tag's is taken as correct as it arrives.
 - **Never unknown.** Enforced where a person or the database supplies it:
   - *Hand entry:* already refused (400) without a spool profile; the rule
-    becomes "without a tare".
+    becomes "without a tare", from a spool type or typed.
   - *Database pick:* if the package has no container weight, the form
     requires one before saving.
   - *Stock List:* requires a default tare, from the database or typed. It no
@@ -216,7 +219,7 @@ Four tables, each fed by all three sources:
 | **Vendors** | canonical name, plus aliases | `brand_uuid` when known | `brand_name`, `brand_uuid` | brand `name`, `uuid` |
 | **Materials** | abbreviation | class, type, diameter, print/bed temps | `material_abbreviation`, temps, class/type | `abbreviation`/`type`, `properties` |
 | **Colours** | name | rgba | — (OPT has no colour name) | — |
-| **Spool bodies** | *open — see Questions* | tare, nominal | `empty_container_weight`, nominal | container `empty_weight`, package nominal |
+| **Spool types** | spool vendor + type | tare; the database container UUID when known | — (see *Spool types*) | container brand, name, UUID, `empty_weight` |
 
 - **A source adds, it never overwrites.** Same rule as a tag and a product: a
   tag may create a vocabulary row but not change one, or one odd tag rewrites
@@ -235,6 +238,43 @@ Four tables, each fed by all three sources:
   Considered and dropped (2026-09-30): the defaults only matter to hand entry,
   a database pick or a tagged spool never uses the picklists, and letting them
   write the defaults would overwrite one workflow's memory with another's.
+
+## Spool types
+
+*Decided 2026-09-30:* a spool type is **spool vendor + type** —
+"Seattle Makers Plywood", "eSun Cardboard". It replaces the free-text spool
+profile, and it is what the onboarding picker offers.
+
+- **The spool vendor is not the filament vendor.** A Seattle Makers plywood
+  spool can carry anyone's filament; an eSun cardboard spool usually carries
+  eSun's. So the spool type is its own vendor + type pair, never derived from
+  the product's vendor.
+- **It carries a tare, not a nominal weight.** How much filament a spool holds
+  belongs to the product (the package), not the spool body. Today's spool
+  profile bundles both ("Prusament 1kg PETG", tare + nominal), and hand entry
+  takes its nominal weight from it. Hand entry therefore needs the nominal
+  from somewhere else: the product when one is picked, otherwise its own
+  field on the form.
+- **Sizes that weigh differently are different types.** Where a vendor makes
+  the same body in more than one size, the size is part of the type
+  ("Prusament Spool 1kg" / "2kg"), because the tares differ.
+- **From the database:** checked 2026-09-30, the OpenPrintTag database has 101
+  container entries. 51 name a brand (e.g. "Elegoo Cardboard Spool 1kg",
+  brand `elegoo`), each with a UUID; only 35 give an `empty_weight`; about 50
+  are generic sizes ("1000g") with neither brand nor weight. So:
+  - a container with a brand and a weight proposes a spool type — vendor from
+    the brand, type from the name, which a person confirms the first time — and
+    the type keeps the container UUID so the next pick of it finds it
+    directly;
+  - a generic or weightless container proposes nothing, and the person picks
+    or adds a spool type, which is also where the required tare comes from.
+- **From a tag:** the tag's `empty_container_weight` is that spool's tare, as
+  today. The Main fields this firmware reads say nothing about which spool
+  body it is, so a tag does not create a spool type.
+- **Existing spool profiles** have free-text labels and no vendor. They are
+  kept, listed for a person to assign a vendor and type, and dropped from the
+  picker once converted. They cannot be converted automatically: "Prusament
+  1kg PETG" names a product, not a spool body.
 
 ## Duplicate products
 
@@ -315,7 +355,7 @@ risk, and fixes the vendor half of the problem outright.
   either.** Create only; disagreements reported.
 - **A catalog pick's identifiers still reach the tag** — UUIDs, GTIN, and the
   rule that switching back to manual entry clears them first.
-- **The spool profile picker starts neutral**, and a manual onboard without a
+- **The spool type picker starts neutral**, and a manual onboard without a
   tare is refused (400) before anything is written.
 - **A blank field never erases a recorded value** — the rule cost already
   follows. Learning from a source adds data; it does not blank what a person
@@ -323,11 +363,7 @@ risk, and fixes the vendor half of the problem outright.
 
 ## Questions
 
-1. **What identifies a spool body?** Vendor + label ("Bambu reusable
-   plastic"), material (cardboard vs. plastic), or the database's own
-   container entries? For database picks the container entry may be the
-   natural key. Needed before step 5.
-2. **Option A or C** — *deferred* until the earlier steps have run long enough
+1. **Option A or C** — *deferred* until the earlier steps have run long enough
    to show how often names actually disagree.
 
 ## Migration
@@ -350,8 +386,10 @@ Each step is independently shippable.
    stops comparing tare. Native test in `tools/store/` for the propagation.
 4. **Tare required** on hand entry, on database picks with no container
    weight, and on the Stock List; existing zero tares listed.
-5. **Every source feeds the picklists and spool profiles**, create-only, with
-   the junk guard — after question 1 is answered.
+5. **Every source feeds the picklists and spool types**, create-only, with
+   the junk guard. Spool types replace spool profiles (*Spool types*), so this
+   step also gives hand entry its own nominal-weight field and lists existing
+   profiles for conversion.
 6. **Abbreviation required or inferred.**
 7. **Product merge** on `/product`, with aliases, redirects, duplicate
    suggestions and compaction survival.
