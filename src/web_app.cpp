@@ -1493,7 +1493,41 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     SpoolRecord r;
     storeGetSpool((uint32_t)cur, r);
 
-    p += "<h3>Onboard spool #" + String((unsigned)cur) + "</h3>";
+    // ── A spool that is ALREADY onboarded ─────────────────────────────────────
+    // This page acts on whatever is on the scale, and it is also the only
+    // place to add a price later, fix a spool attached to the wrong product,
+    // or give a pre-product spool one -- so it can't simply refuse. But the
+    // form used to open on "a new product" with blank fields, so a re-save
+    // silently replaced a finished spool's identity, product, tare and
+    // nominal weight and rewrote its tag. Found live: someone placing a known
+    // spool, opening this tab, and reading the blank form as "not filled in".
+    //
+    // So: a notice first and the form behind a deliberate click; the form
+    // opens on "another spool of <its current product>", so re-saving it
+    // unchanged (e.g. only to add a price) keeps the identity as it was; and
+    // choosing a different identity asks before submitting.
+    const bool already = !r.needs_ob;
+    ProductRecord curProd;
+    const bool haveCur = already && r.product && storeGetProduct(r.product, curProd);
+
+    if (already) {
+        p += "<div class='card'><h3>Spool #" + String((unsigned)cur)
+           + " is already onboarded</h3>"
+             "<p><a href='/spool?id=" + String((unsigned)cur) + "'>"
+           + swatch(r.rgba) + esc(r.vendor) + " "
+           + esc(r.material[0] ? r.material : "Unknown") + "</a></p>"
+             "<p class='muted'>Nothing needs entering. Only change its details to "
+             "add a price, or if it was attached to the wrong product &mdash; "
+             "saving rewrites its tag.</p>"
+             "<button type='button' class='sec' onclick=\""
+               "document.getElementById('obwrap').style.display='block';"
+               "this.style.display='none'\">Change this spool's details</button>"
+             "</div>";
+        p += "<div id='obwrap' style='display:none'>";
+    }
+
+    p += "<h3>" + String(already ? "Change" : "Onboard") + " spool #"
+       + String((unsigned)cur) + "</h3>";
     // The submit check mirrors handleApiOnboard's: a manual-entry onboard (not
     // "another spool of X", not a catalog pick) takes its nominal weight and
     // tare from the spool profile alone, so it needs one. The server enforces
@@ -1502,6 +1536,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // It also checks the tare the same way the server does (tare is never
     // unknown): the typed value, else what the chosen path supplies — the
     // product's (data-tare on its option), the catalog's, or the profile's.
+    //
+    // For an already-onboarded spool, anything other than "another spool of
+    // X" (a new product, typed or from the catalog) replaces its identity, so
+    // that asks first. Picking a different existing product doesn't ask: it
+    // is an explicit choice from a list, not a form left on its default. The
+    // question comes last, after the checks, so nobody confirms a replacement
+    // only to be told a field is missing.
     p += "<form method='POST' action='/api/onboard' onsubmit=\""
            "var d=document.getElementById('prod'),"
                "s=document.getElementById('cat-source'),"
@@ -1519,8 +1560,12 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
            "}"
            "if(t<=0){alert('This spool needs a tare (empty spool weight). Pick a spool "
              "profile, type it, or use Capture tare.');document.getElementById('tare').focus();"
-             "return false;}"
-           "return true;\">";
+             "return false;}";
+    if (already)
+        p += String("if((!d||d.value=='0')&&!confirm('This replaces spool #")
+           + String((unsigned)cur) + "\\'s identity and rewrites its tag. Continue?'))"
+             "return false;";
+    p +=   "return true;\">";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
 
     // Applies regardless of which of the three paths below resolves the rest
@@ -1567,18 +1612,23 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
+            const bool isCur = haveCur && q.id == curProd.id;
             p += "<option value='" + String((unsigned)q.id) + "' data-tare='"
-               + String(q.empty_g, 1) + "'>"
+               + String(q.empty_g, 1) + "'"
+               + (isCur ? " selected" : "") + ">"
                + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
                + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
                + (q.provisional ? " (provisional)" : "")
+               + (isCur ? " (current)" : "")
                + "</option>";
         }
         p += "</select>";
-        // The default selection is now "a new product", so the detail
-        // fields start visible to match -- they hide once an existing
-        // product is actually picked (the onchange handler above).
-        p += "<div id='newprod'>";
+        // The default selection is "a new product" for a spool that needs
+        // onboarding, so the detail fields start visible to match -- they
+        // hide once an existing product is actually picked (the onchange
+        // handler above). An already-onboarded spool opens on its current
+        // product instead (see `already` above), so they start hidden.
+        p += haveCur ? "<div id='newprod' style='display:none'>" : "<div id='newprod'>";
     } else {
         // Nothing stocked yet, so there is no "another spool of X" to offer.
         p += "<input type='hidden' name='product' value='0'>";
@@ -1724,6 +1774,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
 
     p += "<div><button type='submit'>Save &amp; write tag</button></div>";
     p += "</form>";
+    if (already) p += "</div>";   // #obwrap
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
     p += onboardWatchScript(cur);

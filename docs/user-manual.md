@@ -141,6 +141,23 @@ right away if the spool is still on the scale, or the next time it's placed.
 4. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
    weights) is written to the tag and the record is saved.
 
+### Changing a spool that's already onboarded
+
+If the spool on the scale has already been onboarded, the **Onboard** page
+says so and shows what it is, instead of showing an empty form. Nothing needs
+entering. Two reasons to go further:
+
+- **Adding a price you didn't have at onboarding.**
+- **Fixing a spool attached to the wrong product**, or giving a product to an
+  old spool that predates products.
+
+Click **Change this spool's details** to open the form. It opens on the
+spool's current product (marked *(current)*), so to add a price, just type it
+and save; the spool's identity stays as it was. To attach it to a different
+product, pick that product from the list. Choosing **a new product** instead
+(typed in or from the catalog) replaces the spool's identity, and the page
+asks you to confirm before it does. Saving always rewrites the tag.
+
 ### Applying an NFC tag to a new spool
 
 Use an OpenPrintTag MK1 sticker — sourced directly from
@@ -227,7 +244,8 @@ still work as a fallback.)
   you spot spools still needing one. This is also where a physical stock
   **audit** is started — see below.
 - **Onboard** — fill in details for a new/blank spool, or add another spool of
-  something already on file.
+  something already on file. For a spool that's already onboarded it says so,
+  and keeps the form behind a **Change this spool's details** button.
 - **Reorder** — Stock List items at or below threshold; download a CSV to
   place the order.
 - **Stock List** (`/stock`) — the curated list of what the lab keeps in stock,
