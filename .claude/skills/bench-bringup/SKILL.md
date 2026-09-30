@@ -83,7 +83,7 @@ A large session (nav reorg, `9f67947`..`c04df15`) added onboarding-catalog searc
 
 ### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
 
-Source-only; `pio run` could not reach the registry from the session that wrote it. `opt_tag.cpp` and `store.cpp` are covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`); `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` are not compiled anywhere yet.
+**Compiles clean** — `4443a99` built with `pio run` on 2026-09-30 with no changes, the first compile of `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` for this set (the session that wrote it could not reach the registry). `opt_tag.cpp` and `store.cpp` are also covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`). **Not yet flashed or run on the bench.**
 
 1. **Our own tags still round-trip.** Onboard a fresh blank tag by hand entry, then `DUMP TAG`. Expect: no 0 °C temperatures unless the material row has them, no `material_type` unless a material row was matched, no empty abbreviation, and the tag reads in the Prusa app. Re-place it: no rewrite on the second placement (no "Updating tag…" flash), which is what proves the reconcile comparison agrees with the encoder.
 2. **Long vendor name.** Onboard with a vendor longer than 31 characters. `DUMP TAG` shows it cut to 31 bytes; re-placing does **not** trigger a rewrite every time.

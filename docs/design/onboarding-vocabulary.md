@@ -8,9 +8,9 @@ resumes*, not in the plan.
 
 | step | state |
 |---|---|
-| 1. `cfgMaterialByName(abbr)` lookup fix | **built** 2026-09-30 (`cfgMaterialByAbbr()`), source-only — needs `pio run` |
-| 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | **built** 2026-09-30, source-only; native tests pass. Third-party bench test deferred until a third-party spool is available |
-| 3. Tare belongs to the spool | **built** 2026-09-30, source-only; native tests pass |
+| 1. `cfgMaterialByName(abbr)` lookup fix | **built** 2026-09-30 (`cfgMaterialByAbbr()`); `4443a99` compiles clean with `pio run`; not yet run on the bench |
+| 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | **built** 2026-09-30; compiles clean (`4443a99`), native tests pass; not yet run on the bench. Third-party bench test deferred until a third-party spool is available |
+| 3. Tare belongs to the spool | **built** 2026-09-30; compiles clean (`4443a99`), native tests pass; not yet run on the bench |
 | 4. Tare required wherever a person or the database supplies it | not started |
 | 5. Every source feeds the picklists; spool types replace spool profiles | not started |
 | 6. Abbreviation required or inferred | not started |
