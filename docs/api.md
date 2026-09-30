@@ -268,7 +268,19 @@ title has no wrap) and rejects empty — `400` on either.
 `/api/product` is the widest-reaching write here: it appends one `Reconcile`
 per spool of the product, and each of those spools rewrites its physical tag
 the next time it is placed on the scale. Tags a vendor marked write-protected
-are skipped rather than retried forever.
+are skipped rather than retried forever. **Each spool keeps its own tare**: the
+product's `empty_g` is only the default for spools onboarded later (and for a
+spool that has none), since the same filament can arrive on a different spool
+body.
+
+**A tare is required** (never unknown). `/api/onboard`, `/api/product`,
+`/api/stock/add` and `/api/stock/update` answer `400`, having written nothing,
+when the tare they would end up with is 0:
+- `/api/onboard`: the form's `empty_g`, else the chosen product's, the catalog
+  pick's `cat_empty_g`, or the spool profile's — whichever the path uses.
+- `/api/product`: its `empty_g`.
+- `/api/stock/add` and `/update`: `empty_g`, else `cat_empty_g` — only when
+  the row could create a product (no existing `product` picked).
 
 ---
 

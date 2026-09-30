@@ -634,10 +634,14 @@ static String kv(const char* label, const String& value) {
 // now nothing displayed them back — so a wrong spool profile (the commonest
 // onboarding mistake, and the one that makes every later remaining-weight
 // wrong) was invisible. Omit anything still zero rather than printing "0 g",
-// which reads like a measurement instead of a blank.
+// which reads like a measurement instead of a blank — except the tare, which
+// is shown even when missing: it is never meant to be unknown, and remaining
+// is gross minus tare, so a missing one is a wrong number worth pointing at
+// (the same reasoning as cost's "not recorded").
 static String specStrip(const SpoolRecord& r) {
     String s;
-    if (r.empty_g > 0.0f) s += kv("Tare",    String(r.empty_g, 0) + " g");
+    s += kv("Tare", r.empty_g > 0.0f ? String(r.empty_g, 0) + " g"
+                                     : String("<span class='ob'>not recorded</span>"));
     if (r.nom_g   > 0.0f) s += kv("Nominal", String(r.nom_g,   0) + " g");
     if (r.dia     > 0.0f) s += kv("&Oslash;",  String(r.dia,   2) + " mm");
     return s;
@@ -998,7 +1002,8 @@ static void handleProducts(AsyncWebServerRequest* req) {
            + "</td><td>" + esc(q.vendor)
            + "</td><td>" + String((unsigned)spoolsPer[i])
            + "</td><td>" + String(remPer[i], 0) + " g"
-           + "</td><td>" + (q.empty_g > 0 ? String(q.empty_g, 0) + " g" : String("&mdash;"))
+           + "</td><td>" + (q.empty_g > 0 ? String(q.empty_g, 0) + " g"
+                                           : String("<span class='ob'>not recorded</span>"))
            + "</td><td>" + (q.nom_g   > 0 ? String(q.nom_g,   0) + " g" : String("&mdash;"))
            + "</td><td>"
            // Provisional means this was inferred from a tag and no human has
@@ -1126,6 +1131,14 @@ static void handleApiProduct(AsyncWebServerRequest* req) {
     q.dia     = arg("dia").toFloat();
     q.empty_g = arg("empty_g").toFloat();
     q.nom_g   = arg("nom_g").toFloat();
+    // Tare is never unknown. Checked before anything is written, like every
+    // other 4xx here. It is the product's DEFAULT: saving it does not change
+    // any spool's own tare (storePropagateProduct() keeps those), except a
+    // spool that had none, which takes this one.
+    if (q.empty_g <= 0.0f) {
+        req->send(400, "text/plain", "a product needs a default spool tare (empty spool weight)");
+        return;
+    }
     // A human just reviewed and saved these values, which is exactly what
     // "provisional" was waiting for. Confirming it is what re-admits the
     // product to tag write-back.
@@ -1485,6 +1498,10 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // "another spool of X", not a catalog pick) takes its nominal weight and
     // tare from the spool profile alone, so it needs one. The server enforces
     // it too; this just says so before the page is replaced by a bare 400.
+    //
+    // It also checks the tare the same way the server does (tare is never
+    // unknown): the typed value, else what the chosen path supplies — the
+    // product's (data-tare on its option), the catalog's, or the profile's.
     p += "<form method='POST' action='/api/onboard' onsubmit=\""
            "var d=document.getElementById('prod'),"
                "s=document.getElementById('cat-source'),"
@@ -1492,6 +1509,17 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&f&&f.value==''){"
              "alert('Pick a spool profile (next to the tare box) \\u2014 it sets "
              "this spool\\'s full and empty weights.');f.focus();return false;}"
+           "var t=parseFloat(document.getElementById('tare').value)||0;"
+           "if(t<=0){"
+             "if(d&&d.value!='0'){t=parseFloat(d.selectedOptions[0].dataset.tare)||0;}"
+             "else if(s&&s.value=='catalog'){var c=document.getElementById('cat-f-cat_empty_g');"
+               "t=parseFloat(c&&c.value)||0;}"
+             "else if(f&&f.value=='__new__'){t=parseFloat(document.getElementById('profile-new-empty').value)||0;}"
+             "else if(f&&f.selectedOptions[0]){t=parseFloat(f.selectedOptions[0].dataset.tare)||0;}"
+           "}"
+           "if(t<=0){alert('This spool needs a tare (empty spool weight). Pick a spool "
+             "profile, type it, or use Capture tare.');document.getElementById('tare').focus();"
+             "return false;}"
            "return true;\">";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
 
@@ -1539,7 +1567,8 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
-            p += "<option value='" + String((unsigned)q.id) + "'>"
+            p += "<option value='" + String((unsigned)q.id) + "' data-tare='"
+               + String(q.empty_g, 1) + "'>"
                + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
                + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
                + (q.provisional ? " (provisional)" : "")
@@ -1683,7 +1712,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<label>New profile label</label>"
          "<input type='text' name='profile_new_label' placeholder='e.g. Filamentive 1kg PETG'>"
          "<label>Nominal full weight (g)</label><input type='number' step='0.1' name='profile_new_nom'>"
-         "<label>Empty spool weight / tare (g)</label><input type='number' step='0.1' name='profile_new_empty'>"
+         "<label>Empty spool weight / tare (g)</label><input type='number' step='0.1' name='profile_new_empty' id='profile-new-empty'>"
          "</div>";
 
     // Tare override (optional). "Capture tare" reads the load cell once.
@@ -1781,6 +1810,42 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
                                   arg("profile_new_nom").toFloat() <= 0.0f)) {
             req->send(400, "text/plain",
                       "a new spool profile needs a label and a nominal full weight");
+            return;
+        }
+    }
+
+    // Tare is never unknown (docs/design/onboarding-vocabulary.md): every
+    // path must end with a real one, or remaining silently counts the spool
+    // body as filament. Resolved here exactly as the branches below will
+    // resolve it — a typed tare first, then whatever the path supplies — and
+    // checked before any of them writes anything, for the same 4xx rule.
+    {
+        float tare = arg("empty_g").toFloat();
+        const char* missing = nullptr;
+        if (tare <= 0.0f) {
+            if (haveChosen) {
+                tare = q.empty_g;
+                missing = "this product has no tare on record: enter this spool's "
+                          "tare (or pick a spool profile), or fix the product's on its page";
+            } else if (arg("source") == "catalog") {
+                tare = arg("cat_empty_g").toFloat();
+                missing = "the catalog has no empty weight for this package: enter "
+                          "the spool's tare, pick a spool profile, or capture it from the scale";
+            } else {
+                const String prof = arg("profile");
+                if (prof == "__new__") {
+                    tare = arg("profile_new_empty").toFloat();
+                } else {
+                    CfgProfile pr;
+                    for (size_t i = 0; i < cfgProfileCount(); i++)
+                        if (cfgProfileAt(i, pr) && prof == pr.label) { tare = pr.empty_g; break; }
+                }
+                missing = "no tare: the spool profile has none, so enter the spool's "
+                          "tare or capture it from the scale";
+            }
+        }
+        if (tare <= 0.0f) {
+            req->send(400, "text/plain", missing ? missing : "no tare");
             return;
         }
     }
@@ -2412,6 +2477,16 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += String("<label>Nominal spool weight (g)</label>"
          "<input type='number' step='0.1' name='spool_g' value='") + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'" + resetSrc + ">";
     p += "</details>";
+    // Default tare for a product this row creates. The Stock List never weighs
+    // anything, but tare is never unknown (docs/design/onboarding-vocabulary.md)
+    // and a product created here is the one its first onboarded spool will
+    // inherit from, so it has to start with a real value. Only a DEFAULT: each
+    // spool keeps its own, and can differ when a different spool body arrives.
+    // Blank uses the catalog's container weight when it has one. Hidden with
+    // the rest of #stocknew when an existing product is picked, which already
+    // has its own.
+    p += "<label>Default spool tare (g) &mdash; blank uses the catalog's, if it has one</label>"
+         "<input type='number' step='0.1' name='empty_g' id='stock-tare' placeholder='empty spool weight'>";
     p += "</div>";   // #stocknew
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
@@ -2524,7 +2599,14 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
          "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
     p += "<div class='card'>";
-    p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "'>";
+    // Same tare check as stockTareError(), before the page is replaced by a 400.
+    p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "' "
+         "onsubmit=\"var d=document.getElementById('sprod');if(d&&d.value!='0')return true;"
+           "var t=parseFloat(document.getElementById('stock-tare').value)||0,"
+               "s=document.getElementById('cat-source'),c=document.getElementById('cat-f-cat_empty_g');"
+           "if(t<=0&&s&&s.value=='catalog')t=parseFloat(c&&c.value)||0;"
+           "if(t<=0){alert('Enter a default spool tare (empty spool weight) for this product.');"
+             "document.getElementById('stock-tare').focus();return false;}return true;\">";
     if (haveEdit) p += "<input type='hidden' name='id' value='" + String((unsigned)editId) + "'>";
     stockFormFields(p, editRow);
     p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
@@ -2536,6 +2618,29 @@ static void handleStockPage(AsyncWebServerRequest* req) {
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
+}
+
+// Tare is never unknown: a Stock List row that may create a product (a catalog
+// pick, or manual entry) must end with a real default tare — the typed one,
+// else the catalog's container weight. Picking an existing product creates
+// nothing. Returns an error message, or an empty String when fine.
+//
+// A separate, pure check on purpose: parseStockForm() below writes to flash
+// (products, catalog rows, last-used memory), and a request that answers 400
+// must not have changed anything — see handleApiStockUpdate()'s comment.
+static String stockTareError(AsyncWebServerRequest* req) {
+    auto arg = [&](const char* k) -> String {
+        const AsyncWebParameter* pp = req->getParam(k, true);
+        return pp ? pp->value() : String();
+    };
+    if (arg("product").toInt() != 0) return String();
+    float tare = arg("empty_g").toFloat();
+    const bool catalog = arg("source") == "catalog" && arg("cat_vendor").length();
+    if (tare <= 0.0f && catalog) tare = arg("cat_empty_g").toFloat();
+    if (tare > 0.0f) return String();
+    return catalog ? "the catalog has no empty weight for this package: enter a "
+                     "default spool tare"
+                   : "enter a default spool tare (empty spool weight) for this product";
 }
 
 static CfgStock parseStockForm(AsyncWebServerRequest* req) {
@@ -2563,7 +2668,8 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         prod.dia = arg("cat_dia").toFloat();
         if (prod.dia <= 0.0f) prod.dia = 1.75f;
         prod.nom_g   = arg("cat_nom_g").toFloat();
-        prod.empty_g = arg("cat_empty_g").toFloat();
+        const float tareOvr = arg("empty_g").toFloat();
+        prod.empty_g = (tareOvr > 0.0f) ? tareOvr : arg("cat_empty_g").toFloat();
         strlcpy(prod.pkg_uuid,   arg("cat_pkg_uuid").c_str(),   sizeof(prod.pkg_uuid));
         strlcpy(prod.mat_uuid,   arg("cat_mat_uuid").c_str(),   sizeof(prod.mat_uuid));
         strlcpy(prod.brand_uuid, arg("cat_brand_uuid").c_str(), sizeof(prod.brand_uuid));
@@ -2646,11 +2752,10 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         // as the existing-product/catalog paths above -- a manually-typed
         // entry (a vendor colour the catalog doesn't have yet, or updated
         // info) still gets the exact FK match against Inventory, not the
-        // fragile name-probe fallback. Tare (empty_g) is deliberately left
-        // unset: the Stock List never weighs anything, so it has none to
-        // offer -- whoever eventually onboards a real physical spool of
-        // this product supplies it then, or it's fixed after via
-        // /product?id=N, same as any other product with an approximate tare.
+        // fragile name-probe fallback. The tare is the typed default,
+        // required by stockTareError(): the Stock List never weighs
+        // anything, but a product must never start with an unknown tare.
+        // If this matches an existing product, that product keeps its own.
         String display = matName;
         if (colName.length()) display += " " + colName;
         ProductRecord prod;
@@ -2659,6 +2764,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         if (haveMat) strlcpy(prod.abbr, m.abbr, sizeof(prod.abbr));
         memcpy(prod.rgba, col.rgba, 4);
         prod.dia = dia; prod.nom_g = spoolG;
+        prod.empty_g = arg("empty_g").toFloat();
         pid = findOrCreateProduct(prod);
 
         ProductRecord np;
@@ -2689,6 +2795,8 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
 
 static void handleApiStockAdd(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
+    const String tareErr = stockTareError(req);
+    if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
     cfgStockAdd(parseStockForm(req));
     req->redirect("/stock");
 }
@@ -2717,6 +2825,8 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
                                       "or edited elsewhere since this page loaded)");
         return;
     }
+    const String tareErr = stockTareError(req);
+    if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
     if (!cfgStockUpdate(id, parseStockForm(req))) {
         req->send(500, "text/plain", "stock item vanished mid-update");
         return;

@@ -47,6 +47,8 @@ untagged reel.
      entry** (it also sets the full weight); optional after a catalog pick.
      You can still type the tare yourself, or use **Capture tare** with a
      matching empty spool.
+   - **A tare is required.** If the form says it needs one, type it, pick a
+     profile that has one, or use **Capture tare**.
 7. **Cost for this spool** — optional, near the top. Enter what this reel
    cost if you know it; leave it blank if you don't. It feeds the dollar
    figures on the Usage page. The box starts empty every time, on purpose —

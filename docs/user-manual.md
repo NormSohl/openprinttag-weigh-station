@@ -126,6 +126,13 @@ right away if the spool is still on the scale, or the next time it's placed.
    you chose **another spool of X**, a blank tare box means the product's
    tare; anything you pick or type is used for this spool only.)
 
+   **Every spool needs a tare.** The form won't save if it would end up with
+   none — for example a catalog product with no empty weight listed, or a
+   spool profile without one. Type it, pick a profile that has one, or use
+   **Capture tare**. Without it the station would count the empty spool as
+   filament. A spool or product saved before this rule shows its tare as
+   *not recorded*; fix a product's on its own page.
+
    **Cost for this spool** is optional: enter what the reel cost if you know
    it, leave it blank if you don't. It drives the dollar columns on the Usage
    page. The field is deliberately blank every time the form opens — coming
@@ -305,6 +312,13 @@ filament:
   entry)? Expand **Or enter manually** and pick vendor / material / colour
   from the lists, each with a **+ Add new** option. These default to whatever
   you chose last time, which speeds up entering several at once.
+
+For the catalog and manual routes, fill in **Default spool tare** — the empty
+spool's weight. It becomes the product's starting tare, so the first real spool
+onboarded against it weighs correctly. Leave it blank after a catalog pick that
+already lists an empty weight; otherwise it's required. It's only a default: a
+spool that arrives on a different kind of spool gets its own tare when it's
+onboarded.
 
 All three routes are equal — each one files the entry against a real product,
 so the Stock List can match it against Inventory exactly rather than guessing
