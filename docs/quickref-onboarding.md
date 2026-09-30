@@ -34,7 +34,8 @@ untagged reel.
    **"a new product"**:
    - Already have this exact product on file? **Scroll down to select
      "another spool of X"** — it inherits vendor/material/colour/tare with
-     nothing to retype.
+     nothing to retype. Different kind of spool this time? Set its tare
+     below; it applies to this spool only.
    - New product (the default)? **Search the catalog first** — picking a
      real result fills in brand, material, colour, print temps, and vendor
      identifiers automatically.

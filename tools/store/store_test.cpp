@@ -96,28 +96,54 @@ static void products() {
     CHECK(p3 != p1, "5 kg merged into the 1 kg product — sizes must stay apart");
 
     // 3) A tag that disagrees must be REPORTED and must not rewrite anything.
-    ProductRecord odd = tag("eSun", "PLA+ Black", "PLA+", 1000, 999);
+    ProductRecord odd = tag("eSun", "PLA+ Black", "PLA+", 1000, 200);
+    odd.dia = 2.85f;
     uint32_t p4 = storeAdoptProduct(odd, &differs);
     CHECK(p4 == p1, "a disagreeing tag should still match, not fork a product");
-    CHECK(differs, "a tare of 999 g against 200 g should have been reported");
+    CHECK(differs, "a 2.85 mm tag against a 1.75 mm product should have been reported");
     ProductRecord back;
+    CHECK(storeGetProduct(p1, back) && back.dia == 1.75f,
+          "the tag UPDATED the product (diameter now %.2f) — a tag must never do that",
+          back.dia);
+
+    // 3b) ...but a different TARE is not a disagreement. Tare belongs to the
+    //     spool: the same filament sometimes arrives on a different spool
+    //     body. It still must not touch the product's default.
+    uint32_t p5 = storeAdoptProduct(tag("eSun", "PLA+ Black", "PLA+", 1000, 250), &differs);
+    CHECK(p5 == p1, "a different spool body forked a product — tare must not split them");
+    CHECK(!differs, "a tag's own tare (250 g vs the product's 200 g) was reported "
+                    "as a disagreement");
     CHECK(storeGetProduct(p1, back) && back.empty_g == 200.0f,
-          "the tag UPDATED the product (tare now %.0f) — a tag must never do that",
-          back.empty_g);
+          "the tag UPDATED the product's tare (now %.0f)", back.empty_g);
+    // A spool on that other body, and a legacy spool that never got a tare.
+    ProductRecord body250 = tag("eSun", "PLA+ Black", "PLA+", 1000, 250);
+    spoolFor("aaaa0000000000000000000000000003", p1, body250);
+    ProductRecord noTare = tag("eSun", "PLA+ Black", "PLA+", 1000, 0);
+    spoolFor("aaaa0000000000000000000000000004", p1, noTare);
 
     // 4) Provisional until a human confirms it.
     CHECK(back.provisional, "a tag-derived product must be provisional");
 
-    // 5) Editing a product propagates to its spools and clears provisional.
+    // 5) Editing a product propagates to its spools and clears provisional —
+    //    the identity, that is. Each spool KEEPS its own tare; the product's
+    //    new default reaches only a spool that had none.
     back.empty_g = 205.0f;
+    strlcpy(back.material, "PLA+ Jet Black", sizeof(back.material));
     back.provisional = false;
     CHECK(storeUpsertProduct(back), "upsert failed");
     size_t n = storePropagateProduct(p1);
-    CHECK(n == 2, "propagated to %u spools, expected 2", (unsigned)n);
+    CHECK(n == 4, "propagated to %u spools, expected 4", (unsigned)n);
     SpoolRecord s;
-    CHECK(storeFindByUuid("aaaa0000000000000000000000000002", s) && s.empty_g == 205.0f,
-          "spool 2 still has tare %.0f after propagation", s.empty_g);
+    CHECK(storeFindByUuid("aaaa0000000000000000000000000002", s)
+          && strcmp(s.material, "PLA+ Jet Black") == 0,
+          "spool 2 did not pick up the product's new name (%s)", s.material);
+    CHECK(s.empty_g == 200.0f,
+          "a product edit overwrote spool 2's own tare (200 -> %.0f)", s.empty_g);
     CHECK(s.product == p1, "propagation dropped the product reference");
+    CHECK(storeFindByUuid("aaaa0000000000000000000000000003", s) && s.empty_g == 250.0f,
+          "a product edit overwrote the other spool body's tare (250 -> %.0f)", s.empty_g);
+    CHECK(storeFindByUuid("aaaa0000000000000000000000000004", s) && s.empty_g == 205.0f,
+          "a spool with no tare did not take the product's default (got %.0f)", s.empty_g);
 
     const size_t before = storeProductCount();
     printf("\n>>> products before fold\n");
@@ -143,12 +169,12 @@ static void products() {
           "spool lost its product across the fold");
 
     printf("\n%s\n", fails ? "FAIL" : "PASS: product paths (adoption converges, "
-                                      "tags never update, edits propagate, "
-                                      "products survive compaction)");
+                                      "tags never update, tare is per spool, "
+                                      "edits propagate, products survive compaction)");
 }
 
-// Build a spool we MINTED (foreign=false, ours to write) and a spool ADOPTED
-// from a genuine vendor tag (foreign=true, read-only for life), then confirm and
+// Build a spool we MINTED (foreign=false) and a spool ADOPTED from a genuine
+// vendor tag (foreign=true — provenance; it no longer blocks tag writes), then confirm and
 // EDIT the vendor product so its edit propagates down as a Reconcile — the case
 // that must not clear foreign. Left on disk so a fresh process can replay it.
 static const char* kMintedUuid = "bbbb0000000000000000000000000001";
@@ -168,10 +194,11 @@ static void foreignSetup() {
 
     // A human confirms and edits the vendor product; the edit propagates to its
     // spool as a Reconcile. foreign MUST survive that — a propagated edit carries
-    // foreign=false, and clearing it here would silently make the tag writable.
+    // foreign=false, and clearing it here would silently erase where it came from.
     ProductRecord pe;
     storeGetProduct(pv, pe);
-    pe.empty_g = 210.0f; pe.provisional = false;
+    strlcpy(pe.material, "PLA Galaxy Black Edited", sizeof(pe.material));
+    pe.provisional = false;
     storeUpsertProduct(pe);
     storePropagateProduct(pv);
 }
@@ -181,14 +208,16 @@ static void foreignTest() {
 
     SpoolRecord s;
     CHECK(storeFindByUuid(kMintedUuid, s) && !s.foreign,
-          "a spool we minted was marked foreign — it would wrongly be read-only");
+          "a spool we minted was marked foreign (adopted)");
     CHECK(storeFindByUuid(kVendorUuid, s) && s.foreign,
-          "an adopted vendor spool was NOT marked foreign — its tag would be writable");
-    CHECK(s.empty_g == 210.0f,
-          "the product edit did not reach the adopted spool (tare %.0f)", s.empty_g);
+          "an adopted vendor spool was NOT marked foreign — its provenance was lost");
+    CHECK(strcmp(s.material, "PLA Galaxy Black Edited") == 0,
+          "the product edit did not reach the adopted spool (%s)", s.material);
+    CHECK(s.empty_g == 201.0f,
+          "the product edit overwrote the adopted spool's own tare (201 -> %.0f)", s.empty_g);
 
     // Survives compaction: the Checkpoint must carry foreign, or a folded store
-    // silently makes every adopted vendor tag writable again.
+    // silently forgets where every adopted spool came from.
     run("SEED 12 200");   // > STORE_LOG_KEEP_EVENTS, so the fold actually runs
     run("COMPACT");
     CHECK(storeFindByUuid(kVendorUuid, s) && s.foreign,

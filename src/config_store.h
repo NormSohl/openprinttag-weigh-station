@@ -81,6 +81,12 @@ bool   cfgVendorAt(size_t i, char* out, size_t outlen);
 size_t cfgMaterialCount();
 bool   cfgMaterialAt(size_t i, CfgMaterial& out);
 bool   cfgMaterialByName(const char* name, CfgMaterial& out);
+// Look up by OPT material_abbreviation ("PLA"), for paths that only know the
+// abbreviation (a catalog pick, an existing product). A row whose NAME equals
+// the abbreviation wins, so "PLA" finds the plain PLA row rather than whichever
+// "PLA Silk"-style variant happens to sort first; failing that, the first row
+// whose abbr matches.
+bool   cfgMaterialByAbbr(const char* abbr, CfgMaterial& out);
 size_t cfgProfileCount();
 bool   cfgProfileAt(size_t i, CfgProfile& out);
 size_t cfgColorCount();

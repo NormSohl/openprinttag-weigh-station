@@ -81,6 +81,16 @@ struct OptMain {
     // 80x4) less our own ~113 B of output, so overflow should be unreachable.
     // If it happens anyway `extra_overflow` says so, and nfcTask refuses the
     // write rather than dropping a vendor's data on the floor.
+    // Which modelled Main keys this tag actually carried, one bit per key
+    // number (bit 9 = material_type, ...). Set by optDecode(); a writer that
+    // assigns a field whose zero is a real value calls optMarkPresent().
+    //
+    // Needed because these structs are zero-initialised, so a key the tag never
+    // had decodes as 0 — and 0 is not "unknown" for every field: material_type
+    // 0 is PLA. optEncodeMain() writes such a field only if the tag carried it
+    // or a writer set it, so a rewrite never adds values nobody stated (0 °C
+    // temperatures, "PLA" for a material of unknown type) to someone's tag.
+    uint64_t present;
     uint8_t  extra[192];
     uint16_t extra_len;
     bool     extra_overflow;
@@ -175,6 +185,40 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen);
 // Add OptMeta.main_region_offset / aux_region_offset to this to get absolute write positions.
 size_t optPayloadOffset(const uint8_t* tagBytes, size_t len);
 
+// OPT's max_length for the Main text fields we write (data/main_fields.yaml),
+// in bytes. optEncodeMain() never writes past them; anything comparing a
+// record against a tag read back must clamp the same way (optClampText), or
+// a long name differs from its own stored copy forever.
+static constexpr size_t OPT_MAX_BRAND_NAME            = 31;
+static constexpr size_t OPT_MAX_MATERIAL_NAME         = 63;
+static constexpr size_t OPT_MAX_MATERIAL_ABBREVIATION = 7;
+
+// Length of s once cut to at most maxBytes, never splitting a UTF-8 sequence.
+inline size_t optClampedLen(const char* s, size_t maxBytes) {
+    size_t n = 0;
+    while (s[n] && n < maxBytes) n++;
+    if (s[n])                                        // it was cut: back up over
+        while (n > 0 && ((uint8_t)s[n] & 0xC0) == 0x80) n--;   // continuation bytes
+    return n;
+}
+// Truncate s in place to what optEncodeMain() would write.
+inline void optClampText(char* s, size_t maxBytes) { s[optClampedLen(s, maxBytes)] = 0; }
+
+// Record that a writer has set a Main field whose zero value is meaningful
+// (see OptMain::present). key is the MAIN_KEY_* number.
+inline void optMarkPresent(OptMain& m, int key) {
+    if (key >= 0 && key < 64) m.present |= (uint64_t)1 << key;
+}
+inline bool optIsPresent(const OptMain& m, int key) {
+    return key >= 0 && key < 64 && (m.present >> key) & 1;
+}
+// material_type (key 9) is the one modelled field a writer sets whose 0 is a
+// real value (PLA), so it gets a setter that records the assignment.
+inline void optSetMaterialType(OptMain& m, int8_t type) {
+    m.material_type = type;
+    optMarkPresent(m, 9);
+}
+
 // Offset AND length of the OPT CBOR payload. Returns false if no OPT record.
 //
 // The length matters as much as the offset, because "how much of this tag is
@@ -184,6 +228,18 @@ size_t optPayloadOffset(const uint8_t* tagBytes, size_t len);
 // run past the formatted region into a block that refuses it. See writeSection().
 bool optPayloadExtent(const uint8_t* tagBytes, size_t len,
                       size_t* outOffset, size_t* outLength);
+
+// The bytes one section may occupy, [*outStart, *outEnd), relative to the NDEF
+// payload start — taken from the tag's own Meta, so it holds for a vendor's
+// layout as well as ours. A region with no declared size runs to the start of
+// the other region if that comes after it, else to the end of the payload.
+// Returns false when the tag declares no such region (e.g. no Aux).
+//
+// Bounding by the whole payload is not enough: a Main rewrite longer than the
+// Main region would run straight into the Aux region and overwrite it, and a
+// vendor tag can pack its Main region tight. See writeSection().
+bool optRegionBounds(const OptMeta& meta, bool aux, size_t payloadLen,
+                     size_t* outStart, size_t* outEnd);
 
 // Build a complete initialised (data-empty) OPT tag byte array for a blank tag.
 // outBuf must be at least numBlocks * blockSize bytes.

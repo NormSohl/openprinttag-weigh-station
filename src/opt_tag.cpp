@@ -477,6 +477,7 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                     case MAIN_KEY_WRITE_PROTECTION: if (cborTakeInt(&mm, &v)) main->write_protection = (int8_t)v; break;
                 }
                 if (!consumed && !cborStep(&mm)) break;
+                if (known) optMarkPresent(*main, (int)key);
 
                 // Now that the value has been stepped over, the pair's extent is
                 // known. Keep the bytes of anything we did not understand.
@@ -548,6 +549,25 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
     return true;
 }
 
+// Text key, omitted when empty, cut to maxBytes without splitting a UTF-8
+// sequence (backing up over continuation bytes 10xxxxxx).
+static void encodeTextMax(CborEncoder* map, int key, const char* s, size_t maxBytes) {
+    const size_t n = optClampedLen(s, maxBytes);
+    if (n == 0) return;
+    cbor_encode_int(map, key);
+    cbor_encode_text_string(map, s, n);
+}
+static void encodeFloatIf(CborEncoder* map, int key, float v, const OptMain& m) {
+    if (v == 0.0f && !optIsPresent(m, key)) return;
+    cbor_encode_int(map, key);
+    cbor_encode_float(map, v);
+}
+static void encodeIntIf(CborEncoder* map, int key, int64_t v, const OptMain& m) {
+    if (v == 0 && !optIsPresent(m, key)) return;
+    cbor_encode_int(map, key);
+    cbor_encode_int(map, v);
+}
+
 size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     CborEncoder enc, map;
     cbor_encoder_init(&enc, buf, maxLen, 0);
@@ -575,14 +595,15 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
         cbor_encode_uint(&map, m.gtin);
     }
 
-    cbor_encode_int(&map, MAIN_KEY_BRAND_NAME);
-    cbor_encode_text_stringz(&map, m.brand_name);
-
-    cbor_encode_int(&map, MAIN_KEY_MATERIAL_NAME);
-    cbor_encode_text_stringz(&map, m.material_name);
-
-    cbor_encode_int(&map, MAIN_KEY_MATERIAL_ABBREVIATION);
-    cbor_encode_text_stringz(&map, m.material_abbreviation);
+    // Text, only when there is some, and never past the spec's max_length
+    // (data/main_fields.yaml): brand_name 31, material_name 63,
+    // material_abbreviation 7. Our buffers are larger than that, so a long
+    // vendor name typed on the web form would otherwise produce a tag other
+    // OPT readers are entitled to reject. An empty string is not a value:
+    // OPT says a missing abbreviation inherits the material type's.
+    encodeTextMax(&map, MAIN_KEY_BRAND_NAME,            m.brand_name,            OPT_MAX_BRAND_NAME);
+    encodeTextMax(&map, MAIN_KEY_MATERIAL_NAME,         m.material_name,         OPT_MAX_MATERIAL_NAME);
+    encodeTextMax(&map, MAIN_KEY_MATERIAL_ABBREVIATION, m.material_abbreviation, OPT_MAX_MATERIAL_ABBREVIATION);
 
     // Only when a colour is actually assigned. OPT says primary_color "can be
     // null" when a material has no single colour, and an absent key is the
@@ -606,35 +627,33 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
 
     // Encode floats as float32; reference uses CompactFloat (may use int for whole numbers)
     // TODO: mirror CompactFloat logic to minimise tag bytes if space becomes an issue
-    cbor_encode_int(&map, MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT);
-    cbor_encode_float(&map, m.nominal_netto_full_weight);
+    // Numbers: a key the tag carried is written back as it was (even a 0 —
+    // it was the tag's value, not ours to drop); otherwise only a value
+    // someone actually set. Zero-initialised structs make "never set" read as
+    // 0, and 0 g, 0 mm or 0 °C is not information: writing it would state on
+    // someone's tag a figure nobody gave. See OptMain::present.
+    encodeFloatIf(&map, MAIN_KEY_NOMINAL_NETTO_FULL_WEIGHT, m.nominal_netto_full_weight, m);
+    encodeFloatIf(&map, MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT,  m.actual_netto_full_weight,  m);
+    encodeFloatIf(&map, MAIN_KEY_EMPTY_CONTAINER_WEIGHT,    m.empty_container_weight,    m);
+    encodeFloatIf(&map, MAIN_KEY_FILAMENT_DIAMETER,         m.filament_diameter,         m);
 
-    cbor_encode_int(&map, MAIN_KEY_ACTUAL_NETTO_FULL_WEIGHT);
-    cbor_encode_float(&map, m.actual_netto_full_weight);
-
-    cbor_encode_int(&map, MAIN_KEY_EMPTY_CONTAINER_WEIGHT);
-    cbor_encode_float(&map, m.empty_container_weight);
-
-    cbor_encode_int(&map, MAIN_KEY_FILAMENT_DIAMETER);
-    cbor_encode_float(&map, m.filament_diameter);
-
+    // material_class is REQUIRED by OPT, so always written; 0 is FFF, which
+    // is every spool this station handles.
     cbor_encode_int(&map, MAIN_KEY_MATERIAL_CLASS);
     cbor_encode_int(&map, m.material_class);
 
-    cbor_encode_int(&map, MAIN_KEY_MATERIAL_TYPE);
-    cbor_encode_int(&map, m.material_type);
+    // material_type 0 is PLA, so zero cannot mean unset here: written only
+    // if the tag carried it or a writer set it (optSetMaterialType). OPT says
+    // it "can be left unspecified" when no type fits.
+    if (optIsPresent(m, MAIN_KEY_MATERIAL_TYPE)) {
+        cbor_encode_int(&map, MAIN_KEY_MATERIAL_TYPE);
+        cbor_encode_int(&map, m.material_type);
+    }
 
-    cbor_encode_int(&map, MAIN_KEY_MIN_PRINT_TEMPERATURE);
-    cbor_encode_int(&map, m.min_print_temperature);
-
-    cbor_encode_int(&map, MAIN_KEY_MAX_PRINT_TEMPERATURE);
-    cbor_encode_int(&map, m.max_print_temperature);
-
-    cbor_encode_int(&map, MAIN_KEY_MIN_BED_TEMPERATURE);
-    cbor_encode_int(&map, m.min_bed_temperature);
-
-    cbor_encode_int(&map, MAIN_KEY_MAX_BED_TEMPERATURE);
-    cbor_encode_int(&map, m.max_bed_temperature);
+    encodeIntIf(&map, MAIN_KEY_MIN_PRINT_TEMPERATURE, m.min_print_temperature, m);
+    encodeIntIf(&map, MAIN_KEY_MAX_PRINT_TEMPERATURE, m.max_print_temperature, m);
+    encodeIntIf(&map, MAIN_KEY_MIN_BED_TEMPERATURE,   m.min_bed_temperature,   m);
+    encodeIntIf(&map, MAIN_KEY_MAX_BED_TEMPERATURE,   m.max_bed_temperature,   m);
 
     // Everything the tag carried that this firmware does not model, back
     // untouched. Last, so our own keys keep their order and a reader diffing two
@@ -686,6 +705,23 @@ bool optPayloadExtent(const uint8_t* tagBytes, size_t len,
     if (!findNdefPayload(tagBytes, len, &payload, &payloadLen)) return false;
     if (outOffset) *outOffset = (size_t)(payload - tagBytes);
     if (outLength) *outLength = payloadLen;
+    return true;
+}
+
+bool optRegionBounds(const OptMeta& meta, bool aux, size_t payloadLen,
+                     size_t* outStart, size_t* outEnd) {
+    if (aux && meta.aux_region_offset == 0) return false;   // no Aux region
+    const size_t start = aux ? meta.aux_region_offset : meta.main_region_offset;
+    const size_t size  = aux ? meta.aux_region_size   : meta.main_region_size;
+    const size_t other = aux ? meta.main_region_offset : meta.aux_region_offset;
+    size_t end;
+    if (size > 0)                         end = start + size;
+    else if (other > start)               end = other;      // next region begins
+    else                                  end = payloadLen;
+    if (end > payloadLen) end = payloadLen;
+    if (start >= end) return false;
+    if (outStart) *outStart = start;
+    if (outEnd)   *outEnd   = end;
     return true;
 }
 

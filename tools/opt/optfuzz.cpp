@@ -81,6 +81,91 @@ static bool checkLayout(uint8_t numBlocks, uint8_t blockSize) {
     return fits && clearsEnd && ccOk;
 }
 
+// optRegionBounds() is what stops a section write from running into the next
+// region. Checked against hand-built Meta shapes a vendor might write, and
+// against our own blank layout, both as built and as a reader decodes it.
+static bool checkRegions() {
+    struct Case { const char* what; OptMeta m; bool aux; size_t plen;
+                  bool ok; size_t start, end; };
+    const Case cases[] = {
+        // Sizes declared: the region ends where it says, not at the next one.
+        {"main, sized",           {4, 100, 110, 0},  false, 300, true,   4, 104},
+        {"aux, unsized",          {4, 100, 110, 0},  true,  300, true, 110, 300},
+        // No sizes, the usual shape (ours and the Prusa app's): Main stops at Aux.
+        {"main, stops at aux",    {4, 0, 250, 0},    false, 300, true,   4, 250},
+        {"aux, sized",            {4, 0, 250, 24},   true,  300, true, 250, 274},
+        // No Aux declared at all.
+        {"main, no aux",          {4, 0, 0, 0},      false, 300, true,   4, 300},
+        {"aux, none declared",    {4, 0, 0, 0},      true,  300, false,  0,   0},
+        // Aux laid out before Main: each still stops at the other.
+        {"aux first, aux",        {40, 0, 4, 0},     true,  300, true,   4,  40},
+        {"aux first, main",       {40, 0, 4, 0},     false, 300, true,  40, 300},
+        // A declared size running past the payload is clipped to it.
+        {"main, oversized",       {4, 900, 0, 0},    false, 300, true,   4, 300},
+        {"main, starts past end", {400, 0, 0, 0},    false, 300, false,  0,   0},
+    };
+    bool allOk = true;
+    for (const Case& c : cases) {
+        size_t s = 0, e = 0;
+        const bool got = optRegionBounds(c.m, c.aux, c.plen, &s, &e);
+        const bool ok  = got == c.ok && (!got || (s == c.start && e == c.end));
+        if (!ok) {
+            std::printf("  %-22s got %d [%zu,%zu) want %d [%zu,%zu) -> FAIL\n",
+                        c.what, got, s, e, c.ok, c.start, c.end);
+            allOk = false;
+        }
+    }
+
+    // Our own layout: a full-sized Main (every modelled field plus the most
+    // passthrough a tag can carry) and a priced Aux must each fit the region
+    // the tag declares for it, or writeSection() would refuse our own writes.
+    const uint8_t numBlocks = 80, blockSize = 4;
+    std::vector<uint8_t> buf((size_t)numBlocks * blockSize, 0);
+    OptMeta built{};
+    size_t payloadOff = optBuildBlankTag(numBlocks, blockSize, buf.data(), buf.size(), &built);
+    size_t payloadOff2 = 0, payloadLen = 0;
+    OptMeta decoded{};
+    optDecode(buf.data(), buf.size(), &decoded, nullptr, nullptr);
+    const bool extentOk = optPayloadExtent(buf.data(), buf.size(), &payloadOff2, &payloadLen)
+                       && payloadOff2 == payloadOff;
+
+    OptMain m{};
+    std::snprintf(m.brand_name, sizeof m.brand_name, "%s", "Seattle Makers Test Vendor");
+    std::snprintf(m.material_name, sizeof m.material_name, "%s",
+                  "PLA Basic Fire Engine Red With A Long Descriptive Name");
+    std::snprintf(m.material_abbreviation, sizeof m.material_abbreviation, "PLA");
+    for (int i = 0; i < 16; i++) {
+        m.instance_uuid[i] = m.package_uuid[i] = m.material_uuid[i] = m.brand_uuid[i] = (uint8_t)(i + 1);
+    }
+    m.gtin = 8594173675094ULL;
+    m.nominal_netto_full_weight = m.actual_netto_full_weight = 1000.0f;
+    m.empty_container_weight = 201.0f; m.filament_diameter = 1.75f;
+    m.min_print_temperature = 230; m.max_print_temperature = 250;
+    m.min_bed_temperature = 70; m.max_bed_temperature = 90;
+    uint8_t mainOut[320];
+    const size_t mainLen = optEncodeMain(m, mainOut, sizeof mainOut);
+
+    OptAuxiliary a{};
+    a.consumed_weight = 123.5f; a.has_purchase = true; a.purchase_price = 24.99f;
+    std::strcpy(a.purchase_currency, "USD");
+    uint8_t auxOut[64];
+    const size_t auxLen = optEncodeAux(a, auxOut, sizeof auxOut);
+
+    for (const OptMeta* meta : {&built, &decoded}) {
+        size_t ms = 0, me = 0, as = 0, ae = 0;
+        const bool mOk = optRegionBounds(*meta, false, payloadLen, &ms, &me);
+        const bool aOk = optRegionBounds(*meta, true,  payloadLen, &as, &ae);
+        const bool ok  = extentOk && mOk && aOk && me <= as
+                      && ms + mainLen <= me && as + auxLen <= ae;
+        std::printf("  our 80x4 layout (%s Meta): main [%zu,%zu) holds %zu B, "
+                    "aux [%zu,%zu) holds %zu B -> %s\n",
+                    meta == &built ? "as built" : "as decoded",
+                    ms, me, mainLen, as, ae, auxLen, ok ? "ok" : "FAIL");
+        allOk &= ok;
+    }
+    return allOk;
+}
+
 // Build a well-formed tag image, then let callers damage it.
 static std::vector<uint8_t> goodTag() {
     OptMain m{};
@@ -163,6 +248,10 @@ int main() {
     if (!layoutOk) { std::printf("\nFAIL: Aux does not fit its region\n"); return 1; }
     std::printf("\n");
 
+    std::printf("Region bounds (optRegionBounds):\n");
+    if (!checkRegions()) { std::printf("\nFAIL: region bounds\n"); return 1; }
+    std::printf("  10 Meta shapes -> ok\n\n");
+
     std::vector<uint8_t> good = goodTag();
     std::printf("built a %zu-byte reference tag image\n", good.size());
 
@@ -171,6 +260,95 @@ int main() {
         return 1;
     }
     std::printf("reference image decodes: ok\n");
+
+    // A rewrite never invents a field. A vendor Main that carries only some of
+    // the keys we model must come back with exactly those: no 0 °C
+    // temperatures, no material_type 0 (= PLA), no 0 g weights, no empty
+    // abbreviation. A key the tag DID carry keeps its value even when that is
+    // 0 (a min bed temperature of 0 is the vendor's statement, not ours to drop).
+    {
+        uint8_t hand[96];
+        CborEncoder e, m2;
+        cbor_encoder_init(&e, hand, sizeof hand, 0);
+        cbor_encoder_create_map(&e, &m2, CborIndefiniteLength);
+        uint8_t uuid[16]; for (int i = 0; i < 16; i++) uuid[i] = (uint8_t)(0xA0 + i);
+        cbor_encode_int(&m2, 0);  cbor_encode_byte_string(&m2, uuid, 16);
+        cbor_encode_int(&m2, 8);  cbor_encode_int(&m2, 0);            // class FFF
+        cbor_encode_int(&m2, 10); cbor_encode_text_stringz(&m2, "Galaxy Black");
+        cbor_encode_int(&m2, 11); cbor_encode_text_stringz(&m2, "Prusament");
+        cbor_encode_int(&m2, 18); cbor_encode_float(&m2, 193.0f);     // tare
+        cbor_encode_int(&m2, 37); cbor_encode_int(&m2, 0);            // min bed 0, stated
+        cbor_encoder_close_container(&e, &m2);
+        const size_t handLen = cbor_encoder_get_buffer_size(&e, hand);
+
+        std::vector<uint8_t> t(320, 0);
+        OptMeta meta{};
+        size_t payloadOff = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+        std::memcpy(t.data() + payloadOff + meta.main_region_offset, hand, handLen);
+        OptMain in{};
+        optDecode(t.data(), t.size(), nullptr, &in, nullptr);
+
+        uint8_t out[320];
+        const size_t outLen = optEncodeMain(in, out, sizeof out);
+        std::vector<uint8_t> t2(320, 0);
+        OptMeta m3{};
+        optBuildBlankTag(80, 4, t2.data(), t2.size(), &m3);
+        std::memcpy(t2.data() + payloadOff + m3.main_region_offset, out, outLen);
+        OptMain back{};
+        optDecode(t2.data(), t2.size(), nullptr, &back, nullptr);
+
+        const int absent[] = {9, 16, 17, 30, 34, 35, 38, 52};
+        bool ok = outLen > 0;
+        for (int k : absent) if (optIsPresent(back, k)) {
+            std::printf("  rewrite invented key %d\n", k); ok = false;
+        }
+        const int kept[] = {0, 8, 10, 11, 18, 37};
+        for (int k : kept) if (!optIsPresent(back, k)) {
+            std::printf("  rewrite dropped key %d\n", k); ok = false;
+        }
+        ok = ok && back.empty_container_weight == 193.0f && back.min_bed_temperature == 0
+                && std::strcmp(back.brand_name, "Prusament") == 0;
+
+        // A writer that sets the type (0 = PLA) gets it written.
+        OptMain typed = in;
+        optSetMaterialType(typed, 0);
+        const size_t typedLen = optEncodeMain(typed, out, sizeof out);
+        std::memcpy(t2.data() + payloadOff + m3.main_region_offset, out, typedLen);
+        OptMain back2{};
+        optDecode(t2.data(), t2.size(), nullptr, &back2, nullptr);
+        ok = ok && optIsPresent(back2, 9) && back2.material_type == 0;
+
+        std::printf("absent fields stay absent: 8 not invented, 6 kept (incl. a "
+                    "stated 0), a set material_type written -> %s\n", ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+    }
+
+    // Text is cut to OPT's max_length (brand_name 31) without splitting a
+    // UTF-8 sequence, and what optClampText() predicts is what lands.
+    {
+        OptMain m{};
+        for (int i = 0; i < 16; i++) m.instance_uuid[i] = (uint8_t)(i + 1);
+        // 30 ASCII bytes, then "é" (2 bytes) straddling byte 31, then more.
+        std::snprintf(m.brand_name, sizeof m.brand_name, "%s",
+                      "ABCDEFGHIJKLMNOPQRSTUVWXYZABCD" "\xC3\xA9" "FGHIJ");
+        std::snprintf(m.material_name, sizeof m.material_name, "PLA");
+        uint8_t out[320];
+        const size_t outLen = optEncodeMain(m, out, sizeof out);
+        std::vector<uint8_t> t(320, 0);
+        OptMeta meta{};
+        size_t payloadOff = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+        std::memcpy(t.data() + payloadOff + meta.main_region_offset, out, outLen);
+        OptMain back{};
+        optDecode(t.data(), t.size(), nullptr, &back, nullptr);
+        char predicted[64];
+        std::snprintf(predicted, sizeof predicted, "%s", m.brand_name);
+        optClampText(predicted, OPT_MAX_BRAND_NAME);
+        const bool ok = std::strlen(back.brand_name) == 30
+                     && std::strcmp(back.brand_name, predicted) == 0;
+        std::printf("brand_name clamp: %zu B written (max %zu, UTF-8 intact) -> %s\n",
+                    std::strlen(back.brand_name), OPT_MAX_BRAND_NAME, ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+    }
 
     // Verbatim passthrough. We encode 16 of the spec's 61 Main keys; rewriting a
     // compliant vendor tag must not destroy the other 45. Build a Main map that

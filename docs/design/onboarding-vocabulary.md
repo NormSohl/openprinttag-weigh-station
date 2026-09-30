@@ -8,9 +8,9 @@ resumes*, not in the plan.
 
 | step | state |
 |---|---|
-| 1. `cfgMaterialByName(abbr)` lookup fix | not started |
-| 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | not started |
-| 3. Tare belongs to the spool | not started |
+| 1. `cfgMaterialByName(abbr)` lookup fix | **built** 2026-09-30 (`cfgMaterialByAbbr()`), source-only — needs `pio run` |
+| 2. Every tag written the same way (drop the read-only rule for adopted tags), verified on a real Prusament spool | **built** 2026-09-30, source-only; native tests pass. Third-party bench test deferred until a third-party spool is available |
+| 3. Tare belongs to the spool | **built** 2026-09-30, source-only; native tests pass |
 | 4. Tare required wherever a person or the database supplies it | not started |
 | 5. Every source feeds the picklists; spool types replace spool profiles | not started |
 | 6. Abbreviation required or inferred | not started |
@@ -123,7 +123,7 @@ And what each one feeds back:
    - A tag whose tare differs from its product's is reported as a
      *disagreement* (`productDiffers_()`, `store.cpp:1004`), when a different
      spool body is a legitimate reason for it.
-8. **Adopted tags are never written.** Neither Main nor Aux (`sForeign`,
+8. **Adopted tags are never written.** *(Fixed by step 2.)* Neither Main nor Aux (`sForeign`,
    `sync_task.cpp:650`, `:795`). So a correction to an adopted spool's record
    never reaches its tag, and our weighings never reach its `consumed_weight`
    — which is what Prusa software reads, and which OPT requires to stay
@@ -179,6 +179,27 @@ where the spool came from; it no longer blocks writes.
    unchanged, apart from the ones we meant to write.
 4. The tag still reads correctly in Prusa's own app, including the remaining
    weight computed from our `consumed_weight`.
+
+### What step 2 found
+
+Writing vendor tags forced a closer look at what a rewrite actually puts on a
+tag, and turned up three gaps that already affected our own tags:
+
+- **Invented fields.** `optEncodeMain()` wrote all four temperatures,
+  `material_type`, the weights, the diameter and the abbreviation
+  unconditionally, so any tag lacking them came back claiming 0 °C and PLA
+  (type 0). `OptMain::present` now records what the tag carried; the encoder
+  writes only that plus values a writer actually set.
+- **Over-long names.** OPT caps `brand_name` at 31 bytes and
+  `material_abbreviation` at 7; our buffers allowed 64 and 16. The encoder now
+  clamps (UTF-8 safe), and the reconcile comparison clamps the same way so a
+  long name does not rewrite on every placement.
+- **Unbounded region writes.** `writeSection()` was bounded only by the end of
+  the payload, so a Main longer than its region would overwrite Aux. It is now
+  bounded by the tag's own declared region (`optRegionBounds()`).
+
+Also: the store's `"Unknown"` placeholder is no longer written onto tags as a
+brand or material name.
 
 ## Tare belongs to the spool
 

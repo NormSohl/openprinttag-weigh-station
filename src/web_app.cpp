@@ -1624,6 +1624,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     colorPickerField(p, lastOnboardColor());
 
     p += "</details>";
+    p += "</div>";   // #newprod — everything below applies to every path
 
     // ── Spool profile: the tare preset, OUTSIDE the manual-entry details ─────
     // A spool profile is a weight fact (tare + nominal full), not an identity
@@ -1636,11 +1637,12 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // having presets at all.
     //
     // Picking one fills the tare box client-side. That is what makes it work
-    // on every path without touching handleApiOnboard: a typed tare already
-    // beats the catalog's own value and the profile's, on every branch that
-    // reads it. ("Another spool of X" deliberately ignores both and inherits
-    // the product's tare — that is the point of that path, and #newprod is
-    // hidden for it anyway.)
+    // on every path: a typed tare beats the catalog's own value, the
+    // profile's, and — on "another spool of X" — the product's, on every
+    // branch that reads it. Tare belongs to the spool, not the product
+    // (docs/design/onboarding-vocabulary.md): the same filament sometimes
+    // arrives on a different spool body, so this block sits outside #newprod
+    // and stays visible when an existing product is picked.
     //
     // Deliberately does NOT fill on page load, only on an actual pick: blank
     // has to keep meaning "use whatever this path already knows", or every
@@ -1685,12 +1687,11 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "</div>";
 
     // Tare override (optional). "Capture tare" reads the load cell once.
-    p += "<label>Empty spool tare (g) &mdash; blank uses the catalog or profile value</label>"
-         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='from profile or catalog'>";
+    p += "<label>Empty spool tare (g) &mdash; blank uses the product, catalog or profile value</label>"
+         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='from product, profile or catalog'>";
     p += "<button type='button' class='sec' onclick=\"fetch('/api/tare',{method:'POST'})"
          ".then(r=>r.json()).then(d=>{document.getElementById('tare').value=d.weight.toFixed(1)})\">"
          "Capture tare from scale</button>";
-    p += "</div>";   // #newprod
 
     p += "<div><button type='submit'>Save &amp; write tag</button></div>";
     p += "</form>";
@@ -1790,13 +1791,20 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         display = q.material;
         abbr    = q.abbr;
         memcpy(rgba, q.rgba, 4);
-        dia = q.dia; empty = q.empty_g; nominal = q.nom_g;
+        // Everything is inherited from the product EXCEPT a typed tare: the
+        // product's is only a default. Tare belongs to the spool, and the same
+        // filament sometimes arrives on a different spool body. The product
+        // itself is left alone — its default changes only on /product.
+        const float tareOvr = arg("empty_g").toFloat();
+        dia = q.dia; nominal = q.nom_g;
+        empty = (tareOvr > 0.0f) ? tareOvr : q.empty_g;
         pkgUuid = q.pkg_uuid; matUuid = q.mat_uuid; brandUuid = q.brand_uuid; gtin = q.gtin;
         // The tag also wants print/bed temps and the material class/type, which
         // live on the config catalog rather than on the product. Look them up
-        // by abbreviation; if there is no matching row the tag simply keeps the
-        // temps it already had, which is what happens today for a foreign tag.
-        haveMat = cfgMaterialByName(abbr.c_str(), m);
+        // by abbreviation — cfgMaterialByAbbr, not ByName, since a row can be
+        // named "PLA Silk" but abbreviated "PLA". If there is no matching row
+        // the tag simply keeps the temps it already had.
+        haveMat = cfgMaterialByAbbr(abbr.c_str(), m);
     } else if (arg("source") == "catalog") {
         // Picked from the OpenPrintTag catalog search (see CATALOG_SCRIPT) —
         // the browser already resolved package -> material + container + brand
@@ -1832,8 +1840,9 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         }
         // Local material class/type enum still comes from the config catalog
         // (the OPT database's class/type strings aren't mapped to our enum) —
-        // by abbreviation, same lookup the manual path uses.
-        haveMat = cfgMaterialByName(abbr.c_str(), m);
+        // by abbreviation, which is all a catalog pick knows. The manual path
+        // looks up by the material row's name instead, because it has one.
+        haveMat = cfgMaterialByAbbr(abbr.c_str(), m);
 
         ProductRecord prod;
         strlcpy(prod.vendor,     vendor.c_str(),    sizeof(prod.vendor));
@@ -2005,7 +2014,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         }
         if (haveMat) {
             gTagMain.material_class = m.cls;
-            gTagMain.material_type  = m.type;
+            optSetMaterialType(gTagMain, m.type);
         }
         // Real vendor identity (GTIN, the three OPT UUIDs) — set unconditionally,
         // same as every other identity field above. This is a REPLACE, not a

@@ -35,7 +35,7 @@ echo "--- product paths ---"
 STORE_TEST_ROOT="$OUT/fs1" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --products | tail -3
 
 echo
-echo "--- foreign (read-only) flag: set at creation, sticky, survives compaction ---"
+echo "--- foreign (provenance) flag: set at creation, sticky, survives compaction ---"
 STORE_TEST_ROOT="$OUT/fs3" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --foreign | tail -1
 
 echo

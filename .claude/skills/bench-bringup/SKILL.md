@@ -81,6 +81,16 @@ A large session (nav reorg, `9f67947`..`c04df15`) added onboarding-catalog searc
     - **Bench-confirmed the core regression, live:** clock already NTP-synced (`clock: set`) on this unit. `WIPE ALL` → `SEED 12 200` (2412 lines, 395082 bytes, ~129 s at real LittleFS speed) → `COMPACT` reported **`compact skipped/failed: 395082 -> 395082 bytes, 2412 -> 2412 lines`** — byte-for-byte unchanged, exactly the intended refusal, where the pre-fix code would have silently folded roughly the oldest 412 lines and corrupted any Stock List popularity reading still inside the 90-day window. Cleaned up afterward with `WIPE ALL` (bench unit, test data only, per standing permission from earlier in this session).
     - **Not independently reverified on hardware:** the "old material still folds normally, in-window material stays exact" half and the unset-clock fallback — both are mechanically the same code path exercised above, already proven exactly and repeatably on the host (`tools/store/run.sh --popularity`, 3 scenarios), and the device's serial `SEED` command has no way to backdate synthetic events to construct that scenario over serial. Treat as covered by the native suite unless `applyInto_`/`storeCompact`'s floor logic changes again.
 
+### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
+
+Source-only; `pio run` could not reach the registry from the session that wrote it. `opt_tag.cpp` and `store.cpp` are covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`); `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` are not compiled anywhere yet.
+
+1. **Our own tags still round-trip.** Onboard a fresh blank tag by hand entry, then `DUMP TAG`. Expect: no 0 °C temperatures unless the material row has them, no `material_type` unless a material row was matched, no empty abbreviation, and the tag reads in the Prusa app. Re-place it: no rewrite on the second placement (no "Updating tag…" flash), which is what proves the reconcile comparison agrees with the encoder.
+2. **Long vendor name.** Onboard with a vendor longer than 31 characters. `DUMP TAG` shows it cut to 31 bytes; re-placing does **not** trigger a rewrite every time.
+3. **Stub tags.** A freshly formatted blank's stub no longer writes "Unknown" as brand or material onto the tag.
+4. **Region bound.** Watch the serial log on every Main write: a `Main write REFUSED: … do not fit the tag's N-byte Main region` line on one of our own tags means the encoder outgrew the layout — investigate, don't ignore.
+5. **Third-party tag — deferred until one is available** (no third-party spools on hand, 2026-09-30). With a genuine Prusament or other vendor spool: `DUMP TAG` before any write; place it (Aux write) and edit its record (Main write); `DUMP TAG` again — every field present before is still there and unchanged apart from the ones meant to change; it still reads correctly in Prusa's own app, remaining weight included. Also watch for `Aux write REFUSED` — a vendor tag may declare less Aux space than our 18 bytes.
+
 ### Due on the bench (2026-08-10)
 
 **Nothing since `dafb4d5` has been flashed** — that is the build that validated Aux write-back, and everything after it is source-only. The PlatformIO registry is unreachable from the Claude Code sandbox, so `pio run` is the first real compile. Expect to fix compile errors before any of this runs; that is the expected state, not a surprise.
@@ -101,11 +111,12 @@ Run in this order — each step's failure mode is cheapest to diagnose before th
 - Second placement: **unchanged** — still product #1, still `1 spool`. Lifting and replacing the same physical spool re-reads the same `instance_uuid`, so it takes the known-spool path, not adoption. What this proves is that re-placement does not fork a product; it is not the convergence test.
 - **Convergence needs a SECOND tagged spool of the same filament** — a different `instance_uuid`, same vendor/material/nominal. That one must land on product #1 with `2 spools`, not create #2. A second product means the matching ladder missed, and `/products` is where it shows. Without a second physical spool this can only be checked via `tools/store/run.sh --products`, which does exactly this and passes.
 
-**3. The onboarding paths.** `/onboard` should offer "another spool of X" with the detail fields hidden. Pick the product → the new spool inherits vendor, filament, colour, tare and nominal, and `DUMP prod` shows the spool count rise with no new product. Then onboard one as "a new product" and confirm the full form still works.
+**3. The onboarding paths.** `/onboard` should offer "another spool of X" with the detail fields hidden — but the spool profile picker and the tare box stay visible (tare is per spool since 2026-09-30). Pick the product with the tare box blank → the new spool inherits vendor, filament, colour, tare and nominal, and `DUMP prod` shows the spool count rise with no new product. Pick it again with a different tare typed → that spool gets the typed tare, the product's tare is unchanged. Then onboard one as "a new product" and confirm the full form still works.
 
-**4. Product edit propagation.** Open `/product?id=1`, change the tare, save.
+**4. Product edit propagation.** Open `/product?id=1`, change the name (and the tare), save.
 - The page must name the spools it will touch *before* you save.
-- After saving: `provisional` is gone, every spool of that product shows the new tare on its detail page, and placing one on the scale rewrites its tag (`DUMP TAG` confirms).
+- After saving: `provisional` is gone, every spool of that product shows the new name on its detail page, and placing one on the scale rewrites its tag (`DUMP TAG` confirms).
+- **Each spool keeps its own tare.** Only a spool that had no tare takes the product's new one. The product's tare is the default for spools onboarded afterwards.
 
 **5. `/reorder`.** Rows should say `product #N` in the "Matched by" column once products exist; the mailto: link should open a mail client with the list intact and no truncation at the first newline.
 

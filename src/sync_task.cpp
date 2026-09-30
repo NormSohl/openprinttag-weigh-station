@@ -74,12 +74,28 @@ static void uidToHex16(const uint8_t* uid, char* out17) {
 
 // ── Tag ⇄ store field mapping ─────────────────────────────────────────────────
 
+// "Unknown" is the store's placeholder for a record nobody has described yet
+// (a blank tag's stub, a tag that arrived with no brand or material name). It
+// is not a brand or a material, so it never goes onto a tag: the tag field is
+// left empty, which optEncodeMain() omits. recordDiffersFromMain() uses the
+// same mapping, or the placeholder and the empty field would differ forever
+// and the reconcile loop would rewrite the tag on every poll.
+static const char* tagText(const char* recordValue) {
+    return strcmp(recordValue, "Unknown") == 0 ? "" : recordValue;
+}
+
 // Overlay the store record's identity fields onto an OptMain, preserving the
 // tag-only fields (instance_uuid, material_class/type, actual weight, temps).
 static void overlayRecordOntoMain(const SpoolRecord& r, OptMain& m) {
-    strlcpy(m.brand_name,            r.vendor,   sizeof(m.brand_name));
-    strlcpy(m.material_name,         r.material, sizeof(m.material_name));
+    // Clamped to OPT's max_length here, not only at encode, so gTagMain and
+    // the snapshot hold exactly what lands on the tag and compare equal to it
+    // when it is read back on the next placement.
+    strlcpy(m.brand_name,            tagText(r.vendor),   sizeof(m.brand_name));
+    strlcpy(m.material_name,         tagText(r.material), sizeof(m.material_name));
     strlcpy(m.material_abbreviation, r.abbr,     sizeof(m.material_abbreviation));
+    optClampText(m.brand_name,            OPT_MAX_BRAND_NAME);
+    optClampText(m.material_name,         OPT_MAX_MATERIAL_NAME);
+    optClampText(m.material_abbreviation, OPT_MAX_MATERIAL_ABBREVIATION);
     memcpy(m.primary_color_rgba, r.rgba, 4);
     m.filament_diameter         = r.dia;
     m.empty_container_weight    = r.empty_g;
@@ -90,12 +106,21 @@ static void overlayRecordOntoMain(const SpoolRecord& r, OptMain& m) {
         m.actual_netto_full_weight = r.nom_g;
 }
 
+// Would overlaying the record change this tag text? Same placeholder mapping
+// and max_length clamp as overlayRecordOntoMain(), without building a whole
+// OptMain (~500 B) on syncTask's stack to find out.
+static bool textDiffers(const char* recordValue, const char* tagValue, size_t maxBytes) {
+    const char*  want = tagText(recordValue);
+    const size_t n    = optClampedLen(want, maxBytes);
+    return strlen(tagValue) != n || strncmp(want, tagValue, n) != 0;
+}
+
 // True if the store record's identity differs from what's on the tag's Main.
 // Only the fields the store tracks are compared (temps/class/type are tag-only).
 static bool recordDiffersFromMain(const SpoolRecord& r, const OptMain& m) {
-    return strcmp(r.vendor,   m.brand_name)            != 0
-        || strcmp(r.material, m.material_name)         != 0
-        || strcmp(r.abbr,     m.material_abbreviation) != 0
+    return textDiffers(r.vendor,   m.brand_name,            OPT_MAX_BRAND_NAME)
+        || textDiffers(r.material, m.material_name,         OPT_MAX_MATERIAL_NAME)
+        || textDiffers(r.abbr,     m.material_abbreviation, OPT_MAX_MATERIAL_ABBREVIATION)
         || memcmp(r.rgba,     m.primary_color_rgba, 4) != 0
         || r.dia     != m.filament_diameter
         || r.empty_g != m.empty_container_weight
@@ -389,12 +414,16 @@ void syncTask(void* param) {
     // consumed_weight is never store-driven, it's computed fresh each
     // placement.
     float   sCostSnapshot = 0;
-    // True while the spool on the scale is a FOREIGN tag (valid OPT, adopted from
-    // its own data, not one we formatted). Such a tag carries another writer's
-    // layout — writing our Main/Aux encoding onto it corrupts it (observed: a
-    // Prusa tag stopped reading after we "adopted" it, its UUID rewritten). A
-    // foreign tag is therefore READ-ONLY: we record it and its weighs in our log,
-    // and never write back to it. See "Valid tags not yet in the store" in CLAUDE.md.
+    // True while the spool on the scale was ADOPTED from a tag someone else
+    // wrote (valid OPT, not one we formatted). Provenance only: it is recorded
+    // on the record as `foreign` and no longer blocks writes. Every tag gets its
+    // Main reconciled and its Aux written the same way, whoever made it
+    // (2026-09-30) — OPT is public, and writing it correctly is our job. The
+    // read-only rule this used to enforce dates from 2026-08-14, when a rewrite
+    // in our old encoding broke a Prusa tag; what made rewrites dangerous has
+    // been fixed since (unmodelled keys pass through, write_protection is
+    // honoured, writes stay inside the tag's declared regions, and absent
+    // fields are never invented). See docs/design/onboarding-vocabulary.md.
     bool    sForeign  = false;
 
     // Link watch. A station-mode drop is otherwise completely silent: the
@@ -541,7 +570,7 @@ void syncTask(void* param) {
             xSemaphoreGive(gTagMutex);
             char physHex[17]; uidToHex16(physUid, physHex);
 
-            // "Foreign" (read-only) is an OWNERSHIP fact, decided when the record
+            // "Foreign" (adopted) is a PROVENANCE fact, decided when the record
             // was created and carried on the record — NOT inferred from tag bytes.
             // It has to be: since our tags now match the OPT reference layout
             // byte-for-byte (2026-08-14), a genuine vendor tag is indistinguishable
@@ -644,10 +673,7 @@ void syncTask(void* param) {
 
                     OptMain updated = main;
                     overlayRecordOntoMain(r, updated);
-                    // Known, but if it is a foreign tag we adopted earlier
-                    // (r.foreign), never push edits down to it — that would rewrite
-                    // another vendor's Main in our encoding.
-                    if (!sForeign && recordDiffersFromMain(r, main)) {
+                    if (recordDiffersFromMain(r, main)) {
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         gTagMain = updated;
                         xSemaphoreGive(gTagMutex);
@@ -664,7 +690,7 @@ void syncTask(void* param) {
                     xSemaphoreTake(gTagMutex, portMAX_DELAY);
                     OptAuxiliary auxNow = gTagAux;
                     xSemaphoreGive(gTagMutex);
-                    if (!sForeign && recordDiffersFromAux(r, auxNow)) {
+                    if (recordDiffersFromAux(r, auxNow)) {
                         overlayRecordOntoAux(r, auxNow);
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         gTagAux = auxNow;
@@ -704,10 +730,9 @@ void syncTask(void* param) {
             if (wasNil) generateUUIDv4(main.instance_uuid);
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
-            // A tag reaching adoption with a real UUID is a genuine foreign spool:
-            // read-only for life. Only the (defensive) nil-UUID case — one of ours
-            // after a store wipe, safe to stamp — is ours to write. This is the
-            // same wasNil the write-back guard below already keys on.
+            // A tag reaching adoption with a real UUID is a genuine foreign spool,
+            // recorded as such (provenance; it is written like any other tag).
+            // The nil-UUID case — one of ours after a store wipe — is not.
             sForeign = !wasNil;
 
             // Resolve the product this spool is an instance of, creating one
@@ -733,7 +758,7 @@ void syncTask(void* param) {
             strlcpy(e.uuid, hex, sizeof(e.uuid));
             identityFromMain(main, e);
             e.needs_ob = false;
-            e.foreign  = sForeign;   // adopted from a vendor tag → read-only for life
+            e.foreign  = sForeign;   // adopted from someone else's tag (provenance)
             strlcpy(e.nfc_uid, physHex, sizeof(e.nfc_uid));
             e.product  = pid;
             e.spool = storeNextSpoolId();
@@ -743,12 +768,11 @@ void syncTask(void* param) {
             gSpoolId = sSpoolId;
             gSpoolNeedsOnboarding = false;
 
-            // Write the minted UUID back ONLY if the tag arrived with a nil UUID
-            // (equivalently !sForeign here) — a tag with no identity of its own
-            // that is safe for us to stamp, e.g. one of ours after a store wipe.
-            // A genuine foreign tag has its own UUID; rewriting its Main in our
-            // encoding corrupts it (this is what destroyed a Prusa tag during
-            // debugging). Such a tag stays read-only: adopted, never written back.
+            // Write the minted UUID back only if the tag arrived with a nil UUID
+            // (equivalently !sForeign here) — the one thing adoption itself
+            // changes. A tag with its own UUID needs no write: the record was
+            // just built from it, so the two already agree. Later edits reach it
+            // through the normal reconcile, like any other tag.
             if (wasNil && !sForeign) {
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
                 memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
@@ -789,10 +813,9 @@ void syncTask(void* param) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             gTagAux.consumed_weight = used;
             xSemaphoreGive(gTagMutex);
-            // A foreign tag is read-only: the weigh below still records in our log
-            // (the source of truth), but we do NOT write consumed_weight back onto
-            // another vendor's tag — its Aux layout is not ours to assume.
-            if (!sForeign) gWriteAuxPending = true;
+            // Every tag, ours or adopted: OPT requires Aux to stay writable, and
+            // consumed_weight is what Prusa software reads remaining from.
+            gWriteAuxPending = true;
 
             StoreEvent w; w.ev = StoreEv::Weigh;
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
@@ -830,9 +853,7 @@ void syncTask(void* param) {
                 SpoolRecord r;
                 if (storeFindByUuid(hex, r)) {
                     gSpoolNeedsOnboarding = r.needs_ob;
-                    // Never reconcile-write a foreign tag: a web-side edit to its
-                    // record must not rewrite another vendor's Main in our layout.
-                    if (!sForeign && recordDiffersFromMain(r, sSnapshot)) {
+                    if (recordDiffersFromMain(r, sSnapshot)) {
                         OptMain updated;
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         updated = gTagMain;
@@ -854,7 +875,7 @@ void syncTask(void* param) {
                     // weigh with no display transition at all) -- this stays
                     // consistent with that instead of inventing a second kind
                     // of reconcile just for cost.
-                    if (!sForeign && r.cost != sCostSnapshot) {
+                    if (r.cost != sCostSnapshot) {
                         OptAuxiliary updatedAux;
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         updatedAux = gTagAux;

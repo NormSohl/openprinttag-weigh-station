@@ -98,7 +98,9 @@ right away if the spool is still on the scale, or the next time it's placed.
    phone or laptop on the same network.
 2. Open **Onboard**. If this is another spool of something already on file,
    pick **another spool of X** — it inherits the vendor, material, colour and
-   tare with nothing to retype. For something new, choose **a new product**.
+   tare with nothing to retype. If this one came on a different kind of spool
+   (a vendor sometimes switches spool bodies), set its tare below; the product
+   keeps its own. For something new, choose **a new product**.
 3. **Search the catalog first.** Typing a vendor or material name searches the
    published OpenPrintTag catalog directly; picking a real result fills in the
    brand, material, colour, print temperatures, and the manufacturer's own
@@ -111,8 +113,8 @@ right away if the spool is still on the scale, or the next time it's placed.
    no need to visit Settings first to add it.
 
    **Spool profile** sits next to the tare field, outside the manual section,
-   and works however you identified the filament — catalog pick or manual
-   entry. It's a preset for the empty spool's weight: picking one fills in
+   and works however you identified the filament — catalog pick, manual
+   entry, or **another spool of X**. It's a preset for the empty spool's weight: picking one fills in
    the **tare** box for you. It starts on **— choose a spool profile —**
    every time, rather than on the last one used, so what the tare box shows
    is always what will be saved. It has its own **+ Add new** option. If you
@@ -121,8 +123,8 @@ right away if the spool is still on the scale, or the next time it's placed.
    pick it's optional; leaving it unchosen keeps the catalog's own tare.
    Anything you type in the tare box yourself wins. You can also
    capture the tare from a matching empty spool with **Capture tare**. (If
-   you chose **another spool of X**, the tare comes from that product and
-   both of these are ignored.)
+   you chose **another spool of X**, a blank tare box means the product's
+   tare; anything you pick or type is used for this spool only.)
 
    **Cost for this spool** is optional: enter what the reel cost if you know
    it, leave it blank if you don't. It drives the dollar columns on the Usage

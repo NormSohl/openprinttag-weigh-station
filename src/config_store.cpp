@@ -417,6 +417,12 @@ bool cfgMaterialByName(const char* name, CfgMaterial& out) {
     for (auto& m : sMaterials) if (!strcasecmp(m.name, name)) { out = m; return true; }
     return false;
 }
+bool cfgMaterialByAbbr(const char* abbr, CfgMaterial& out) {
+    if (!abbr || !abbr[0]) return false;
+    if (cfgMaterialByName(abbr, out)) return true;
+    for (auto& m : sMaterials) if (!strcasecmp(m.abbr, abbr)) { out = m; return true; }
+    return false;
+}
 size_t cfgProfileCount() { return sProfiles.size(); }
 bool cfgProfileAt(size_t i, CfgProfile& out) {
     if (i >= sProfiles.size()) return false;

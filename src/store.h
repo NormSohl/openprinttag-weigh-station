@@ -75,7 +75,7 @@ struct StoreEvent {
     uint8_t  rgba[4] = {};
     float    dia = 0, empty_g = 0, nom_g = 0;
     bool     needs_ob = false;
-    // Read-only ownership marker (Onboard/Checkpoint). See SpoolRecord::foreign.
+    // Provenance marker (Onboard/Checkpoint). See SpoolRecord::foreign.
     // Established on the creating Onboard; a Reconcile leaves the record's value
     // untouched, so it need not be set on propagated Reconcile events.
     bool     foreign = false;
@@ -141,13 +141,12 @@ struct SpoolRecord {
     float    dia = 0, empty_g = 0, nom_g = 0;
     float    remaining_g = 0, used_g = 0;
     bool     needs_ob = false;
-    // True iff this record was ADOPTED from a foreign tag (a genuine vendor spool
-    // we did not format). Such a tag is read-only for life: we record weighs in
-    // our own log but never write its Main or Aux — its layout is not ours to
-    // assume, and a product edit propagating down must not rewrite another
-    // vendor's tag. Set once at creation, sticky across reconciles. Since our
-    // tags now match the OPT reference layout byte-for-byte, this ownership fact
-    // can no longer be inferred from tag bytes — it must be carried on the record.
+    // True iff this record was ADOPTED from a tag someone else wrote (a genuine
+    // vendor spool we did not format). Provenance only, since 2026-09-30: it no
+    // longer makes the tag read-only — every tag is written the same way
+    // (docs/design/onboarding-vocabulary.md). Set once at creation, sticky
+    // across reconciles. Our tags match the OPT reference layout byte-for-byte,
+    // so where a tag came from cannot be read off its bytes; it is carried here.
     bool     foreign = false;
     // Physical NFC chip UID (16 lowercase hex chars). See StoreEvent::nfc_uid.
     char     nfc_uid[17] = {};
@@ -330,7 +329,8 @@ uint32_t storeAdoptProduct(const ProductRecord& fromTag, bool* outDiffers);
 // "fix it once, every tag updates itself" needs no new mechanism, only this.
 //
 // Returns the number of spools updated. Weights are untouched: a Reconcile
-// carries the identity group only.
+// carries the identity group only. Each spool keeps its own tare (and cost, and
+// needs_ob) — the product's tare is only the default for spools that have none.
 //
 // Cost is one log append per spool of the product, at roughly 50 ms each on
 // LittleFS, and it runs synchronously in the caller. At lab scale — single

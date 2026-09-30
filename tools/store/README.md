@@ -34,8 +34,13 @@ That buys two things the sandbox otherwise cannot have:
 product rather than one per spool, a disagreeing tag being reported without
 updating anything, an edit propagating to its spools, and products surviving a
 fold. It found a real bug on its first run — `productDiffers_()` was not
-comparing the tare, the field where a silent disagreement does the most damage,
-since remaining weight is gross minus tare.
+comparing the tare. That comparison was **deliberately removed** on 2026-09-30:
+tare now belongs to the spool, not the product (the same filament sometimes
+arrives on a different spool body), so a tag whose tare differs from its
+product's is that spool's tare, not a conflict. The suite now asserts both
+directions — a different tare is *not* reported and does not fork a product,
+and a product edit leaves each spool's own tare alone (a spool with none takes
+the product's default).
 
 `--audit` covers the physical-inventory audit state machine — phase
 transitions, Found/Close semantics, and specifically the two real bugs found on

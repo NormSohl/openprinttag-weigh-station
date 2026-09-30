@@ -168,13 +168,34 @@ static ISO15693ErrorCode writeBlockRetry(PN5180ISO15693& nfc, uint8_t* uid,
     return rc;
 }
 
-// Write a CBOR section back into the tag at the position given by the Meta offsets.
-// sectionOffset is relative to the NDEF payload start (from OptMeta).
+// Write a CBOR section (Main, or Aux when aux is true) back into the tag, at
+// the region the tag's own Meta declares for it and never past its end.
 static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
-                         uint8_t blockSize, size_t sectionOffset,
+                         uint8_t blockSize, const OptMeta& meta, bool aux,
                          const uint8_t* cborData, size_t cborLen) {
     if (sPayloadOffset == SIZE_MAX) return false;
-    size_t absStart = sPayloadOffset + sectionOffset;
+
+    // Bound by the section's OWN region first, from the tag's Meta. Without it
+    // a Main rewrite longer than the Main region runs on into the Aux region
+    // and overwrites it: harmless on our own layout, which leaves Main room to
+    // grow, but a vendor tag may pack its Main tight, and we now rewrite those
+    // too. The payload check below stays as the backstop.
+    const size_t payloadLen = (sPayloadLen > 0) ? sPayloadLen
+                                                : sRawLen - sPayloadOffset;
+    size_t regionStart = 0, regionEnd = 0;
+    if (!optRegionBounds(meta, aux, payloadLen, &regionStart, &regionEnd)) {
+        Serial.printf("[nfc] %s write REFUSED: the tag declares no %s region\n",
+                      aux ? "Aux" : "Main", aux ? "Aux" : "Main");
+        return false;
+    }
+    if (regionStart + cborLen > regionEnd) {
+        Serial.printf("[nfc] %s write REFUSED: %u bytes do not fit the tag's "
+                      "%u-byte %s region\n", aux ? "Aux" : "Main",
+                      (unsigned)cborLen, (unsigned)(regionEnd - regionStart),
+                      aux ? "Aux" : "Main");
+        return false;
+    }
+    size_t absStart = sPayloadOffset + regionStart;
 
     // Bound by what is FORMATTED, not by how big the tag is.
     //
@@ -707,7 +728,8 @@ void nfcTask(void* param) {
             uint8_t cborBuf[64];
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptAuxiliary aux = gTagAux;
-            uint16_t auxOffset = gTagMeta.aux_region_offset;
+            OptMeta  meta      = gTagMeta;
+            uint16_t auxOffset = meta.aux_region_offset;
             xSemaphoreGive(gTagMutex);
             if (auxOffset > 0 && !optAuxPreservesAll(aux)) {
                 // Same rule as Main: refusing costs an edit (consumed_weight/
@@ -722,7 +744,7 @@ void nfcTask(void* param) {
                     // releases the bus per block. gSpiMutex is not recursive, so
                     // holding it across this call deadlocks the task against
                     // itself and freezes displayTask with it.
-                    writeSection(nfc, uid, blockSize, auxOffset, cborBuf, n);
+                    writeSection(nfc, uid, blockSize, meta, true, cborBuf, n);
                 }
             }
         }
@@ -737,7 +759,7 @@ void nfcTask(void* param) {
             uint8_t cborBuf[320];
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain  main      = gTagMain;
-            uint16_t mainOffset = gTagMeta.main_region_offset;
+            OptMeta  meta      = gTagMeta;
             xSemaphoreGive(gTagMutex);
             // Not every tag is ours to rewrite. OPT key 13 marks a tag as write
             // protected — irreversibly, or behind a PROTECT PAGE password — and
@@ -767,7 +789,7 @@ void nfcTask(void* param) {
                     // and releases the bus per block. gSpiMutex is not
                     // recursive, so holding it across this call deadlocks the
                     // task against itself and freezes displayTask with it.
-                    writeSection(nfc, uid, blockSize, mainOffset, cborBuf, n);
+                    writeSection(nfc, uid, blockSize, meta, false, cborBuf, n);
                 }
             }
             // Either way we are done reconciling this tag: a protected one will

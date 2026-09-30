@@ -258,9 +258,8 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.product  = doc["prod"]    | 0u;
     }
     if (ident) e.needs_ob = doc["needs_ob"] | false;
-    // Absent on every line written before this field existed → false, i.e. "ours
-    // to write". Option A migration: pre-existing adopted-foreign records lose
-    // read-only protection until re-adopted (see the commit that added this).
+    // Absent on every line written before this field existed → false: not
+    // known to be adopted. Provenance only; it no longer gates tag writes.
     if (ident) e.foreign = doc["fgn"] | false;
     // Absent on every line written before tag reuse existed → "", which
     // storeFindActiveByNfcUid() never matches -- pre-existing records simply
@@ -494,12 +493,12 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             // appending, the same way it already does for needs_ob, so a
             // product edit never clobbers what a spool actually cost.
             r.cost = e.cost;
-            // Ownership is established at creation and STICKY: an Onboard sets it,
-            // a Checkpoint (folded state, built from the live record) preserves it,
-            // but a Reconcile must NOT touch it — a propagated product edit carries
-            // foreign=false and would otherwise clear a read-only adopted tag. The
-            // creating Onboard always precedes any Reconcile in the log, so the
-            // value is set before it is ever skipped.
+            // Provenance is established at creation and STICKY: an Onboard sets
+            // it, a Checkpoint (folded state, built from the live record)
+            // preserves it, but a Reconcile must NOT touch it — a propagated
+            // product edit carries foreign=false and would otherwise erase where
+            // the spool came from. The creating Onboard always precedes any
+            // Reconcile in the log, so the value is set before it is ever skipped.
             //
             // The physical NFC UID is the same shape of fact for the same reason:
             // it identifies the chip, not the material, so a product edit
@@ -949,9 +948,11 @@ size_t storePropagateProduct(uint32_t id) {
     // mutates sSpools through the index, so iterating it while appending would
     // be walking a container that is being rewritten underneath us. Only the
     // per-spool fields a product-level identity event has no business setting
-    // are needed here -- needs_ob and cost are facts about one spool, not
-    // about the product all of them share.
-    struct Target { char uuid[33]; uint32_t spool; bool needs_ob; float cost; };
+    // are needed here -- needs_ob, cost and tare are facts about one spool,
+    // not about the product all of them share. Tare especially: the same
+    // filament sometimes arrives on a different spool body, and the product's
+    // tare is only the default a new spool starts from.
+    struct Target { char uuid[33]; uint32_t spool; bool needs_ob; float cost; float empty_g; };
     std::vector<Target> targets;
     {
         Lock lk;
@@ -960,6 +961,7 @@ size_t storePropagateProduct(uint32_t id) {
             Target t;
             strlcpy(t.uuid, r.uuid, sizeof(t.uuid));
             t.spool = r.spool; t.needs_ob = r.needs_ob; t.cost = r.cost;
+            t.empty_g = r.empty_g;
             targets.push_back(t);
         }
     }
@@ -974,7 +976,11 @@ size_t storePropagateProduct(uint32_t id) {
         strlcpy(e.material, p.material, sizeof(e.material));
         strlcpy(e.abbr,     p.abbr,     sizeof(e.abbr));
         memcpy(e.rgba, p.rgba, 4);
-        e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
+        e.dia = p.dia; e.nom_g = p.nom_g;
+        // The spool's own tare, unless it has none yet (a record from before
+        // tare was per spool, or one that never got a value): then the
+        // product's default is the best there is.
+        e.empty_g = (t.empty_g > 0.0f) ? t.empty_g : p.empty_g;
         // Carried through, not cleared: whether a spool still needs details
         // entered, and what it cost, are facts about that spool, not its
         // product -- see StoreEvent::cost's comment for why cost can't use
@@ -995,13 +1001,13 @@ static bool productDiffers_(const ProductRecord& have, const ProductRecord& tag)
     if (tag.vendor[0]   && !normEq_(have.vendor,   tag.vendor))   return true;
     if (tag.abbr[0]     && !normEq_(have.abbr,     tag.abbr))     return true;
     if (tag.nom_g > 0   && !nomEq_(have.nom_g,     tag.nom_g))    return true;
-    // Tare is the one that matters most and was missed here at first: remaining
-    // weight is gross MINUS tare, so a product and a tag that disagree about it
-    // silently bias every reading taken against whichever one wins. It has to be
-    // flagged for a human, not quietly resolved in the product's favour.
-    // Guarded on the tag carrying a value at all, same as the fields above —
-    // absent is not a disagreement.
-    if (tag.empty_g > 0 && fabsf(have.empty_g - tag.empty_g) > 0.5f) return true;
+    // Tare is deliberately NOT compared (2026-09-30). It was, while tare was a
+    // product fact — remaining is gross minus tare, so a silent disagreement
+    // biased every reading. But tare belongs to the spool: the same filament
+    // sometimes arrives on a different spool body, so a tag whose tare differs
+    // from its product's default is that spool's tare, not a conflict. The
+    // spool keeps it (identityFromMain), and the weigh reads it from the tag.
+    // tools/store --products asserts this both ways.
     if (tag.dia   > 0   && fabsf(have.dia - tag.dia) > 0.01f)     return true;
     if (tag.rgba[3] && have.rgba[3] && memcmp(have.rgba, tag.rgba, 3)) return true;
     return false;
