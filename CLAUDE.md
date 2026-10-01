@@ -181,6 +181,7 @@ Full reference: `docs/api.md`. Shape of it:
 - **CORS** is `*` on everything, with `OPTIONS` answered 204. The wildcard makes browsers refuse to send credentials cross-origin, which is why cross-origin writes must use the `X-API-Key` header.
 - No TLS. The key is a guard rail against misaimed scripts and stray clicks, not transport security; the LAN is the real boundary.
 - `deviceStateName()` in `device_state.h` is part of the API surface — external dashboards match on those strings.
+- **Remote access** (`deploy/remote-access/`, 2026-10-01): never a port forward to the station. A container on a Docker host at the makerspace holds an outgoing SSH reverse tunnel to a public server, where nginx adds HTTPS and a login in front of every path. The tunnel key is confined by both an `authorized_keys` line and an sshd `Match` block (`AllowTcpForwarding remote` — `port-forwarding` alone also allows local forwards, and `permitopen="none"` gets the key rejected outright). Keep links and redirects in the web app **relative** so it keeps working behind the proxy, and keep `/events` unbuffered there.
 
 ## Products and instances
 

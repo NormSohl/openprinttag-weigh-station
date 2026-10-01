@@ -48,6 +48,8 @@ for the exact command. Building firmware from source is documented in
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — set up, build, and flash
 - [`docs/user-manual.md`](docs/user-manual.md) — operation (members + admins)
 - [`hardware/netlist.md`](hardware/netlist.md) — wiring diagram + pinout
+- [`deploy/remote-access/`](deploy/remote-access/README.md) — view the web app
+  from outside the lab, through an SSH tunnel and an HTTPS proxy with a login
 - [`docs/design/sd-local-ecosystem.md`](docs/design/sd-local-ecosystem.md) — the
   local-storage architecture
 
