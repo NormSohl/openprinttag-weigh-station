@@ -1,0 +1,16 @@
+# Runs on the Docker host at the makerspace (same LAN as the weigh station).
+# See README.md. Needs no ports, no host networking and no extra privileges:
+# it only makes one outgoing SSH connection.
+services:
+  weighstation-tunnel:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./keys:/keys:ro
+    # The tunnel itself is a few hundred kB of memory; cap it so it can
+    # never matter to anything else running on the host.
+    mem_limit: 32m
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "3" }
