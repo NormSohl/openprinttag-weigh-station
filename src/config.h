@@ -117,6 +117,15 @@
 // or that guarantee silently stops holding for whichever one moved.
 #define STOCK_POPULARITY_WINDOW_DAYS 90
 
+// Tare given to a spool adopted from a tag that carries no
+// empty_container_weight, when it matches no product that has one. Tare is
+// never unknown (docs/design/onboarding-vocabulary.md): without a default the
+// spool body is silently counted as filament. 170 g is what most of the lab's
+// eSUN spools weigh empty. The product it creates stays provisional, and a
+// provisional product's spools never have Main written back, so this guess
+// stays off the vendor's tag until someone confirms it on /product.
+#define DEFAULT_SPOOL_TARE_G 170.0f
+
 // ── Clock ─────────────────────────────────────────────────────────────────────
 // The ESP32-S3 has no battery-backed RTC, so the clock reads 1970 on every
 // power-up until SNTP answers. That matters more than it looks: the consumption

@@ -127,6 +127,17 @@ static bool recordDiffersFromMain(const SpoolRecord& r, const OptMain& m) {
         || r.nom_g   != m.nominal_netto_full_weight;
 }
 
+// May the record's identity be written to this spool's tag Main? Not while its
+// product is provisional: that product was inferred from a tag, and anything
+// the station filled in on its own (a default tare) is a guess that must not
+// be stamped onto someone else's tag as fact until a person confirms it on
+// /product, which clears the flag. Aux is not gated: OPT requires it to stay
+// writable, and consumed_weight is a measurement, not a guess.
+static bool mainWriteBackAllowed(const SpoolRecord& r) {
+    ProductRecord p;
+    return !(r.product && storeGetProduct(r.product, p) && p.provisional);
+}
+
 // Same idea as the pair above, for the one Aux field the store tracks:
 // what a spool cost. Currency is always "USD" here (see StoreEvent::cost),
 // so it never needs to be part of the comparison.
@@ -673,7 +684,11 @@ void syncTask(void* param) {
 
                     OptMain updated = main;
                     overlayRecordOntoMain(r, updated);
-                    if (recordDiffersFromMain(r, main)) {
+                    // Held back while provisional, and the snapshot then stays
+                    // the tag as read, so Holding's poll still sees the
+                    // difference and writes the moment the product is confirmed.
+                    const bool mainOk = mainWriteBackAllowed(r);
+                    if (recordDiffersFromMain(r, main) && mainOk) {
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         gTagMain = updated;
                         xSemaphoreGive(gTagMutex);
@@ -699,7 +714,7 @@ void syncTask(void* param) {
                     }
                     sCostSnapshot = r.cost;
 
-                    sSnapshot = updated;
+                    sSnapshot = mainOk ? updated : main;
                     ctrlPost(CtrlEvent::BeginWeigh);
                     sphase = SyncPhase::Weighing;
                 } else {
@@ -747,6 +762,11 @@ void syncTask(void* param) {
             // a human to adjudicate and nothing is written.
             ProductRecord probe;
             productFromMain(main, probe);
+            // Tare is never unknown. A tag with no empty weight would otherwise
+            // create a product and a spool with tare 0, counting the spool body
+            // as filament (how #64 and #94 came to read ~170 g heavy). Only
+            // reaches a product this creates; an existing one is never updated.
+            if (probe.empty_g <= 0.0f) probe.empty_g = DEFAULT_SPOOL_TARE_G;
             bool differs = false;
             const uint32_t pid = storeAdoptProduct(probe, &differs);
             if (differs)
@@ -757,6 +777,13 @@ void syncTask(void* param) {
             StoreEvent e; e.ev = StoreEv::Onboard;
             strlcpy(e.uuid, hex, sizeof(e.uuid));
             identityFromMain(main, e);
+            // The tag's own tare if it has one; else the matched product's, the
+            // default a spool of it starts from; else the station default.
+            if (e.empty_g <= 0.0f) {
+                ProductRecord prod;
+                e.empty_g = (pid && storeGetProduct(pid, prod) && prod.empty_g > 0.0f)
+                          ? prod.empty_g : DEFAULT_SPOOL_TARE_G;
+            }
             e.needs_ob = false;
             e.foreign  = sForeign;   // adopted from someone else's tag (provenance)
             strlcpy(e.nfc_uid, physHex, sizeof(e.nfc_uid));
@@ -862,7 +889,7 @@ void syncTask(void* param) {
                 SpoolRecord r;
                 if (storeFindByUuid(hex, r)) {
                     gSpoolNeedsOnboarding = r.needs_ob;
-                    if (recordDiffersFromMain(r, sSnapshot)) {
+                    if (recordDiffersFromMain(r, sSnapshot) && mainWriteBackAllowed(r)) {
                         OptMain updated;
                         xSemaphoreTake(gTagMutex, portMAX_DELAY);
                         updated = gTagMain;
