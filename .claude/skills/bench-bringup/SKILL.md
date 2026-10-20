@@ -111,6 +111,16 @@ Build `5918800`. A tag **written by Prusa's iPhone app** onto an already-used sp
   - After lifting and replacing (a fresh read of the tag itself), all 320 bytes are identical to the vendor's original except 282–285, which is Aux `consumed_weight`, the weight that legitimately changed. Bytes 179–180 read `00 00`. No `REFUSED`/`FAILED`.
 - **Adoption default (170 g) and the provisional gate: CLOSED UNTESTED (2026-10-20).** They need a third-party tag that carries no tare, and this one has 180 g. Compile-verified only.
 
+**Afterwards: the test spool turned out to be a duplicate, and three test records were deleted (2026-10-20).**
+- **The chip was already spool #43** (Cabbage PETG Clear Blue, chip `df590766080104e0`). The Prusa app had re-encoded #43's tag, and adoption never checked the chip UID, so the same physical spool became #100 as well. Erasing the tag then auto-retired #43, which counted its 883.9 g ($13.21) as October consumption. A ninety-day search of the log for shared chips found one more pair from 9/30: **#61** (Prusament PLA Natural) and **#64** (eSUN PLA+ Yellow) on chip `7d240966080104e0`, six minutes apart, both still active.
+- **#100, #43 and #61 were all test spools and were deleted, not retired** (on direct user decision). Each went the same way: export a restore point, strip every line carrying that spool's UUID (`stripuuid.js`, scratchpad), replay both versions through the real `store.cpp` on the host to preview the usage change, then `/import`.
+  - The #100 removal also stripped the 4 net-zero product #40 rename-test lines, and the result was byte-identical to the export taken just before the spool was first placed.
+  - Removing #43 took ~412 g / $3.12 of test weighs out of September's Cabbage PETG (609.4 → 197.5 g) and dropped the October retire row.
+  - Removing #61 dropped a 2.6 g Prusament PLA row.
+  - Final store: **85 spools, 430 lines, usage 1398.0 g**. Each live log was confirmed byte-identical to the uploaded file. The spool-ID counter stays ahead, so the next spool is #101.
+- **Note on `/import`:** its own validation only requires one decodable line, so the host replay is the real check. Stop erase mode before importing.
+- **Fix: `3ab5966`.** Adoption retires the spool that held the chip, and `/spool` shows "Tag previously on" / "Tag later on". Both pages rendered correctly on #61/#64 before #61 was deleted. The retire on re-adoption itself is **untested**: it needs a tag re-encoded elsewhere and then placed.
+
 ### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
 
 **Compiles clean** — `4443a99` built with `pio run` on 2026-09-30 with no changes, the first compile of `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` for this set (the session that wrote it could not reach the registry). `opt_tag.cpp` and `store.cpp` are also covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`). **Not yet flashed or run on the bench.**
