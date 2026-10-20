@@ -25,6 +25,8 @@
 //                                       every other suite's dollars are $0.00).
 //   store_test --popularity           — the Stock List's stockout-corrected
 //                                       popularity math (storeMaterialPopularity).
+//   store_test --tare                 — a tare change moves remaining weight at
+//                                       once and is never booked as consumption.
 #include "store.h"
 #include "config.h"
 #include <cstdio>
@@ -659,6 +661,153 @@ static void costTest() {
                                       "earlier grams, and dollars survive the fold)");
 }
 
+// ── Tare changes ──────────────────────────────────────────────────────────────
+// A weigh as syncTask writes one: remaining measured against `tare`.
+static void weighGross(const char* uuid, uint32_t spool, float gross, float tare) {
+    StoreEvent e;
+    e.ev = StoreEv::Weigh;
+    strlcpy(e.uuid, uuid, sizeof(e.uuid));
+    strlcpy(e.ts, "2026-10-01T12:00:00Z", sizeof(e.ts));
+    e.spool       = spool;
+    e.gross_g     = gross;
+    e.remaining_g = (gross - tare > 0.0f) ? gross - tare : 0.0f;
+    storeAppendEvent(e);
+}
+
+static SpoolRecord spoolNo(uint32_t id) {
+    SpoolRecord r;
+    CHECK(storeGetSpool(id, r), "spool #%u not found", (unsigned)id);
+    return r;
+}
+
+static float gramsFor(const char* vendor, const char* mat) {
+    UsageRow u;
+    return usageFor(vendor, mat, u) ? u.grams : 0.0f;
+}
+
+// A product edit (or the Onboard form) that gives a weighed spool a tare must
+// move its remaining weight at once and book NO consumption -- found on the
+// real store 2026-10-20, where four tare-0 spools would each have booked ~170 g
+// of filament nobody used on their next weigh.
+static void tareTest() {
+    run("WIPE ALL");
+
+    ProductRecord p = tag("Acme", "PLA Test", "PLA", 1000.0f, 0.0f);
+    CHECK(storeUpsertProduct(p), "upsert failed");
+
+    // S: weighed with no tare, so its remaining is the whole scale reading.
+    const char* us = "dddd0000000000000000000000000001";
+    spoolFor(us, p.id, p);
+    const uint32_t s = storeNextSpoolId() - 1;
+    weighGross(us, s, 1000.0f, 0.0f);
+    CHECK(fabsf(spoolNo(s).remaining_g - 1000.0f) < 0.05f, "baseline remaining");
+
+    // U: never weighed. A tare change has nothing to move.
+    const char* uu = "dddd0000000000000000000000000002";
+    spoolFor(uu, p.id, p);
+    const uint32_t u = storeNextSpoolId() - 1;
+
+    // F: adopted (foreign + chip UID), weighed with its own 200 g tare. A
+    // product tare edit must leave a spool's own tare -- and its provenance --
+    // alone.
+    const char* uf = "dddd0000000000000000000000000003";
+    {
+        ProductRecord own = p; own.empty_g = 200.0f;
+        spoolFor(uf, p.id, own, true);
+    }
+    const uint32_t f = storeNextSpoolId() - 1;
+    weighGross(uf, f, 700.0f, 200.0f);
+
+    // 1) The product gets a 170 g default; S and U had none, so they take it.
+    p.empty_g = 170.0f;
+    CHECK(storeUpsertProduct(p), "upsert failed");
+    storePropagateProduct(p.id);
+
+    SpoolRecord rs = spoolNo(s);
+    CHECK(fabsf(rs.empty_g - 170.0f) < 0.05f, "S tare %.1f, expected 170", rs.empty_g);
+    CHECK(fabsf(rs.remaining_g - 830.0f) < 0.05f,
+          "S remaining %.1f, expected 830 straight away (gross 1000 - tare 170)", rs.remaining_g);
+    CHECK(gramsFor("Acme", "PLA") < 0.05f,
+          "a tare change booked %.1f g of consumption", gramsFor("Acme", "PLA"));
+    SpoolRecord ru = spoolNo(u);
+    CHECK(fabsf(ru.empty_g - 170.0f) < 0.05f && ru.remaining_g < 0.05f,
+          "U (never weighed) tare %.1f remaining %.1f", ru.empty_g, ru.remaining_g);
+    SpoolRecord rf = spoolNo(f);
+    CHECK(fabsf(rf.empty_g - 200.0f) < 0.05f && fabsf(rf.remaining_g - 500.0f) < 0.05f,
+          "F changed: tare %.1f remaining %.1f", rf.empty_g, rf.remaining_g);
+    CHECK(rf.foreign, "F lost its provenance");
+
+    // 2) The next weigh, now against 170, books only what was really used.
+    weighGross(us, s, 900.0f, 170.0f);
+    CHECK(fabsf(gramsFor("Acme", "PLA") - 100.0f) < 0.05f,
+          "after a real 100 g: %.1f g booked", gramsFor("Acme", "PLA"));
+
+    // 3) A tare change through the Onboard form (a direct Reconcile on one
+    //    spool), on an adopted spool: the weight moves, foreign / nfc_uid /
+    //    retired stay as they were even though the line is now a Checkpoint.
+    {
+        StoreEvent e;
+        e.ev = StoreEv::Reconcile;
+        strlcpy(e.uuid, uf, sizeof(e.uuid));
+        strlcpy(e.vendor, p.vendor, sizeof(e.vendor));
+        strlcpy(e.material, p.material, sizeof(e.material));
+        strlcpy(e.abbr, p.abbr, sizeof(e.abbr));
+        e.dia = p.dia; e.nom_g = p.nom_g; e.empty_g = 150.0f;
+        e.product = p.id; e.spool = f;
+        storeAppendEvent(e);
+    }
+    rf = spoolNo(f);
+    CHECK(fabsf(rf.remaining_g - 550.0f) < 0.05f,
+          "F remaining %.1f, expected 550 (gross 700 - tare 150)", rf.remaining_g);
+    CHECK(rf.foreign, "a converted Reconcile cleared foreign");
+    CHECK(!rf.retired, "a converted Reconcile set retired");
+
+    // 4) A retired spool has nothing on the scale to re-measure.
+    CHECK(storeRetireSpool(f), "retire failed");
+    p.empty_g = 175.0f;   // S and F both keep their own tares (170, 150)
+    storeUpsertProduct(p);
+    storePropagateProduct(p.id);
+    rf = spoolNo(f);
+    CHECK(rf.retired && rf.remaining_g < 0.05f, "retired F came back: remaining %.1f", rf.remaining_g);
+
+    // 5) Replay: a reboot rebuilds the same state from the log.
+    const float gramsBefore = gramsFor("Acme", "PLA");
+    storeRebuildIndices();
+    rs = spoolNo(s);
+    CHECK(fabsf(rs.remaining_g - 730.0f) < 0.05f && fabsf(rs.gross_g - 900.0f) < 0.05f,
+          "after replay S remaining %.1f gross %.1f, expected 730 / 900", rs.remaining_g, rs.gross_g);
+    CHECK(fabsf(gramsFor("Acme", "PLA") - gramsBefore) < 0.05f, "replay changed usage");
+
+    // 6) Through a fold: the checkpoint carries gross, so a tare change after
+    //    compaction is still exact rather than a shift.
+    run("SEED 12 200");
+    const size_t linesSeeded = storeLogLineCount();
+    run("COMPACT");
+    CHECK(storeLogLineCount() < linesSeeded, "compaction folded nothing — step 6 would be vacuous");
+    CHECK(fabsf(gramsFor("Acme", "PLA") - gramsBefore) < 0.05f, "the fold changed usage");
+    rs = spoolNo(s);
+    CHECK(fabsf(rs.gross_g - 900.0f) < 0.05f, "gross lost in the fold: %.1f", rs.gross_g);
+    {
+        StoreEvent e;
+        e.ev = StoreEv::Reconcile;
+        strlcpy(e.uuid, us, sizeof(e.uuid));
+        strlcpy(e.vendor, p.vendor, sizeof(e.vendor));
+        strlcpy(e.material, p.material, sizeof(e.material));
+        strlcpy(e.abbr, p.abbr, sizeof(e.abbr));
+        e.dia = p.dia; e.nom_g = p.nom_g; e.empty_g = 200.0f;
+        e.product = p.id; e.spool = s;
+        storeAppendEvent(e);
+    }
+    rs = spoolNo(s);
+    CHECK(fabsf(rs.remaining_g - 700.0f) < 0.05f,
+          "after the fold S remaining %.1f, expected 700 (gross 900 - tare 200)", rs.remaining_g);
+    CHECK(fabsf(gramsFor("Acme", "PLA") - gramsBefore) < 0.05f, "post-fold tare change booked usage");
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: a tare change moves remaining at once and books "
+                                      "no consumption; own tares, provenance and retirement are "
+                                      "untouched; it replays and survives the fold");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--products"))      { products();       return fails != 0; }
@@ -667,6 +816,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--audit"))         { auditTest();      return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--cost"))          { costTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--popularity"))    { popularityTest(); return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;
 }

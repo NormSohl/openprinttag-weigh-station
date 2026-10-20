@@ -800,9 +800,18 @@ void syncTask(void* param) {
             float weight = gWeightGrams;
             xSemaphoreGive(gWeightMutex);
 
-            float remaining = (main.empty_container_weight > 0.0f)
-                            ? weight - main.empty_container_weight
-                            : weight;
+            // The store's tare, not the tag's, whenever the record has one. Tare
+            // is per spool and the record is where a person sets it; the tag
+            // only catches up at the reconcile AFTER this weigh. Reading the tag
+            // here measured the first placement after a tare edit against the
+            // old tare, and the next placement then booked the whole difference
+            // as filament consumed. An adopted tag's record was built from that
+            // tag, so the two agree unless someone has deliberately changed it.
+            float tare = main.empty_container_weight;
+            SpoolRecord rec;
+            if (sSpoolId > 0 && storeGetSpool((uint32_t)sSpoolId, rec) && rec.empty_g > 0.0f)
+                tare = rec.empty_g;
+            float remaining = (tare > 0.0f) ? weight - tare : weight;
             if (remaining < 0.0f) remaining = 0.0f;
 
             float used = (main.actual_netto_full_weight > 0.0f)

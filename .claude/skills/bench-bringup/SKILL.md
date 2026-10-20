@@ -81,6 +81,16 @@ A large session (nav reorg, `9f67947`..`c04df15`) added onboarding-catalog searc
     - **Bench-confirmed the core regression, live:** clock already NTP-synced (`clock: set`) on this unit. `WIPE ALL` → `SEED 12 200` (2412 lines, 395082 bytes, ~129 s at real LittleFS speed) → `COMPACT` reported **`compact skipped/failed: 395082 -> 395082 bytes, 2412 -> 2412 lines`** — byte-for-byte unchanged, exactly the intended refusal, where the pre-fix code would have silently folded roughly the oldest 412 lines and corrupted any Stock List popularity reading still inside the 90-day window. Cleaned up afterward with `WIPE ALL` (bench unit, test data only, per standing permission from earlier in this session).
     - **Not independently reverified on hardware:** the "old material still folds normally, in-window material stays exact" half and the unset-clock fallback — both are mechanically the same code path exercised above, already proven exactly and repeatably on the host (`tools/store/run.sh --popularity`, 3 scenarios), and the device's serial `SEED` command has no way to backdate synthetic events to construct that scenario over serial. Treat as covered by the native suite unless `applyInto_`/`storeCompact`'s floor logic changes again.
 
+### Verified on hardware (2026-10-20): a tare change moves remaining, books no consumption
+
+Flashed `a063959` + the tare-rebase fix (see *A tare change is not consumption* in `CLAUDE.md`) onto the **live makerspace store** (87 spools, 457 lines; no WIPE/SEED/COMPACT — it holds the real inventory). Set a 170 g default tare on products #41 #42 #48 #53 #55 #66 via `/api/product`, resending every other field unchanged.
+
+- The four spools that had no tare moved **at once**, by exactly 170 g, with no weigh: #46 406.7→236.7, #47 923.8→753.8, #64 1035.3→865.3, #94 887.7→717.7. Each change was written as a `checkpoint` (gross kept, chip UID and `fgn` carried over: #64/#94 still `fgn:true`).
+- #53 and #62 already had their own 170 g, so they got a plain `reconcile` and their weight was left alone.
+- `/api/usage` stayed **byte-identical** before and after. Before the fix this would have booked ~680 g of fake consumption on the next weighs.
+- #55 and #66 are no longer provisional, so #64 and #94 (adopted tags) get their Main rewritten on their next placement. **That's the first write to an adopted tag**: watch for `REFUSED` lines, and run `DUMP TAG` before and after if you can.
+- Not exercised yet: the weigh side (A), i.e. that the next placement measures against the store's 170 g rather than the tag's old tare. Place #46 or #47 and confirm the remaining stays put (± real use) and no ~170 g usage row appears.
+
 ### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
 
 **Compiles clean** — `4443a99` built with `pio run` on 2026-09-30 with no changes, the first compile of `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` for this set (the session that wrote it could not reach the registry). `opt_tag.cpp` and `store.cpp` are also covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`). **Not yet flashed or run on the bench.**

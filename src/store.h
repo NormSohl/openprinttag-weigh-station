@@ -140,6 +140,11 @@ struct SpoolRecord {
     uint8_t  rgba[4] = {};
     float    dia = 0, empty_g = 0, nom_g = 0;
     float    remaining_g = 0, used_g = 0;
+    // The last weigh's raw scale reading, so a later tare change can recompute
+    // remaining exactly (gross - new tare) rather than book the difference as
+    // consumption on the next weigh. 0 = unknown: never weighed, retired, or
+    // folded from a checkpoint written before this field existed.
+    float    gross_g = 0;
     bool     needs_ob = false;
     // True iff this record was ADOPTED from a tag someone else wrote (a genuine
     // vendor spool we did not format). Provenance only, since 2026-09-30: it no

@@ -474,6 +474,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         case StoreEv::Checkpoint:
             r.remaining_g = e.remaining_g;
             r.used_g      = e.used_g;
+            r.gross_g     = e.gross_g;
             r.retired     = e.retired;   // carry disposal status through the fold
             // fall through
         case StoreEv::Onboard:
@@ -511,6 +512,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         case StoreEv::Weigh:
             r.remaining_g = e.remaining_g;
             r.used_g      = e.used_g;
+            r.gross_g     = e.gross_g;
             // A real weigh reading is the strongest possible evidence a spool
             // is back in physical circulation -- e.g. one Closed at an audit
             // (removed and presumed used up) that quietly reappears and gets
@@ -523,6 +525,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             break;
         case StoreEv::Retire:
             r.remaining_g = 0;
+            r.gross_g     = 0;
             r.retired     = true;
             break;
         // Found touches only last_ts (set unconditionally above, for every
@@ -644,12 +647,57 @@ static void primeLogEndsNL_() {
     }
 }
 
+// A tare change moves a spool's remaining weight; it is not consumption.
+// remaining is gross - tare, but a Reconcile carries no weight fields, so on
+// its own the record keeps the remaining measured against the OLD tare until
+// the next weigh -- and that weigh then books the whole tare difference as
+// filament used, permanently, in the usage rollup and popularity. So a
+// Reconcile that changes the tare of a spool that has been weighed is
+// written as a Checkpoint instead: the same identity, plus the remaining
+// recomputed against the new tare. Both replays (applyInto_ and
+// storeMaterialPopularity) already treat a Checkpoint as setting remaining
+// without counting it as consumption, so nothing downstream changes, and
+// lines already in the log replay exactly as before.
+//
+// Checkpoint also sets foreign/nfc_uid/retired, which a Reconcile must
+// never touch, so those are carried over from the record unchanged.
+// Caller holds the lock.
+static void rebaseTareChange_(StoreEvent& e) {
+    if (e.ev != StoreEv::Reconcile) return;
+    const int i = findByUuid_(e.uuid);
+    if (i < 0) return;
+    const SpoolRecord& r = sSpools[i];
+    if (r.gross_g <= 0.0f && r.remaining_g <= 0.0f) return;   // never weighed: nothing to move
+    if (fabsf(r.empty_g - e.empty_g) < 0.05f) return;         // tare unchanged
+
+    // Exact from the last reading when we have it; otherwise shift by the
+    // difference, which is the same thing as long as the last weigh used the
+    // record's tare.
+    float rem = (r.gross_g > 0.0f) ? r.gross_g - e.empty_g
+                                   : r.remaining_g + r.empty_g - e.empty_g;
+    if (rem < 0.0f) rem = 0.0f;
+    // used = full weight - remaining, so it moves the other way. Left alone
+    // when it was 0, which means the tag gave no full weight to measure from.
+    float used = r.used_g;
+    if (used > 0.0f) { used += r.remaining_g - rem; if (used < 0.0f) used = 0.0f; }
+
+    e.ev          = StoreEv::Checkpoint;
+    e.gross_g     = r.gross_g;
+    e.remaining_g = rem;
+    e.used_g      = used;
+    e.retired     = r.retired;
+    e.foreign     = r.foreign;
+    strlcpy(e.nfc_uid, r.nfc_uid, sizeof(e.nfc_uid));
+}
+
 bool storeAppendEvent(const StoreEvent& in) {
     StoreEvent e = in;
     if (e.ts[0] == 0) storeNowIso(e.ts, sizeof(e.ts));
-    String line = encodeLine(e);
 
     Lock lk;
+    rebaseTareChange_(e);   // needs the record as of THIS append, so under the lock
+    String line = encodeLine(e);
+
     File f = LittleFS.open(LOG_PATH, "a");
     if (!f) { sWriteFailed = true; return false; }
 
@@ -1606,6 +1654,7 @@ bool storeCompact() {
         c.spool       = r.spool;
         c.remaining_g = r.remaining_g;
         c.used_g      = r.used_g;
+        c.gross_g     = r.gross_g;    // so a tare change after the fold stays exact
         strlcpy(c.vendor,   r.vendor,   sizeof(c.vendor));
         strlcpy(c.material, r.material, sizeof(c.material));
         strlcpy(c.abbr,     r.abbr,     sizeof(c.abbr));
