@@ -224,10 +224,26 @@ static bool writeSection(PN5180ISO15693& nfc, uint8_t* uid,
     }
     if (absStart + cborLen > sRawLen) return false;   // never past the buffer
 
+    // A section that SHRINKS must not leave its old tail behind. Found on a
+    // vendor tag 2026-10-20: renaming a product and renaming it back left the
+    // two bytes the longer name had pushed past the map's end, inside the Main
+    // region. No CBOR reader looks past the map, but the tag no longer matched
+    // what it said. sRawBuf mirrors the tag, so zero whatever is non-zero
+    // between the new end and the region's end. That costs nothing when the
+    // section did not shrink, and it never goes past this section's own region.
+    const size_t writeEnd     = absStart + cborLen;
+    size_t       regionAbsEnd = sPayloadOffset + regionEnd;
+    if (regionAbsEnd > formattedEnd) regionAbsEnd = formattedEnd;
+    if (regionAbsEnd > sRawLen)      regionAbsEnd = sRawLen;
+    size_t staleEnd = writeEnd;
+    for (size_t i = writeEnd; i < regionAbsEnd; i++)
+        if (sRawBuf[i]) staleEnd = i + 1;
+
     memcpy(sRawBuf + absStart, cborData, cborLen);
+    if (staleEnd > writeEnd) memset(sRawBuf + writeEnd, 0, staleEnd - writeEnd);
 
     size_t firstBlock = absStart / blockSize;
-    size_t lastBlock  = (absStart + cborLen - 1) / blockSize;
+    size_t lastBlock  = (staleEnd - 1) / blockSize;
     for (size_t b = firstBlock; b <= lastBlock; b++) {
         ISO15693ErrorCode rc = writeBlockRetry(nfc, uid, (uint8_t)b,
                                                sRawBuf + b * blockSize, blockSize);
