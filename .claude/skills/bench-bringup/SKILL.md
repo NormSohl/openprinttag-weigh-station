@@ -89,7 +89,11 @@ Flashed `a063959` + the tare-rebase fix (see *A tare change is not consumption* 
 - #53 and #62 already had their own 170 g, so they got a plain `reconcile` and their weight was left alone.
 - `/api/usage` stayed **byte-identical** before and after. Before the fix this would have booked ~680 g of fake consumption on the next weighs.
 - #55 and #66 are no longer provisional, so #64 and #94 (adopted tags) get their Main rewritten on their next placement. **That's the first write to an adopted tag**: watch for `REFUSED` lines, and run `DUMP TAG` before and after if you can.
-- Not exercised yet: the weigh side (A), i.e. that the next placement measures against the store's 170 g rather than the tag's old tare. Place #46 or #47 and confirm the remaining stays put (± real use) and no ~170 g usage row appears.
+- **CLOSED UNTESTED (2026-10-20):** none of #46, #47, #64 or #94 was available, so two things went unchecked.
+  - The weigh side (A): that the next placement measures against the store's 170 g rather than the tag's old tare. A pass would leave remaining where it is (± real use) with no ~170 g usage row.
+  - The first rewrite of #64/#94's adopted tags.
+
+  Both are covered only by code reading and `store_test --tare`. Check the usage page for an unexplained ~170 g row the first time any of those four spools is weighed.
 
 ### Verified on hardware (2026-10-20): first third-party tag, adoption + Aux write read back by Prusa's app
 
@@ -99,7 +103,8 @@ Build `5918800`. A tag encoded by someone else's OPT tooling: brand "eSUN", "PET
 - **Aux write → Prusa app: ✅.** On the second placement, `consumed_weight` 90.2 g was written. `DUMP RAW` shows `a1 00 fa 42 b4 61 20` at aux, and **Prusa's iPhone app reads "consumed weight 90.2"**, with "actual weight 1000 g" (key 17) unchanged. Our Aux encoding works on a vendor's tag.
 - **⚠️ Open: the adoption weigh wrote `used 0.0` / `consumed 0`** (gross 1081.5, remaining 901.5; it should have been 98.5). The next placement computed it correctly. Adopted spool #61 got a correct `used` on its first weigh, so this isn't inherent to adoption. Nothing found in the code zeroes `actual_netto_full_weight` on that path. It's harmless in practice (the store's remaining is right, and the next weigh fixes the tag), but it's unexplained. Worth reproducing on the next adoption with `DUMP TAG` before the spool is lifted.
 - **Main rewrite → Prusa app: ✅, both ways.** I renamed product #40 to "… X" on `/product` and placed the spool. The station rewrote Main, and **Prusa's app showed "PETG Basic Translucent Blue X"**. Reverting the name rewrote it again, and the app showed the original. A key-by-key CBOR diff (`maindiff.js`, scratchpad) against the vendor's original Main: 18/18 keys preserved, including unmodelled keys 28 and 29. After the round trip, **Main bytes 46–178 are byte-identical to the original**: same definite map and the same key order, since `opt_tag.cpp:152` converts our indefinite encode to definite before writing. No `REFUSED`/`FAILED` all session.
-- **Minor finding: a Main that shrinks leaves its old tail behind.** After the revert, bytes 179–180 still held `3d 14` from the 2-byte-longer " X" map. They sit past the map's end, inside the Main region, so no CBOR reader touches them, and Prusa's app reads the tag fine. `writeSection()` should zero `[new end, old end)` when a section shrinks. Not fixed yet.
+- **Minor finding: a Main that shrinks leaves its old tail behind.** After the revert, bytes 179–180 still held `3d 14` from the 2-byte-longer " X" map. They sit past the map's end, inside the Main region, so no CBOR reader touches them, and Prusa's app reads the tag fine. **Fixed in `145853d`** (`writeSection()` zeroes non-zero bytes between the new end and the region end). It can be bench-checked on this same spool (#100): rename #40 and revert it with the spool on the scale, then confirm `DUMP RAW` bytes 179–180 read `00 00`.
+- **Adoption default (170 g) and the provisional gate: CLOSED UNTESTED (2026-10-20).** They need a third-party tag that carries no tare, and this one has 180 g. Compile-verified only.
 
 ### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
 
