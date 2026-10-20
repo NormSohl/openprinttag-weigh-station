@@ -1311,6 +1311,26 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     spec += kv("Cost", r.cost > 0.0f
                           ? ("$" + String(r.cost, 2))
                           : String("<span class='muted'>not recorded</span>"));
+    // Tags are reused: erasing one, or re-encoding it with another tool,
+    // retires the spool that held the chip and hands the chip to the next.
+    // Every record keeps its chip UID, retired ones included, so the history is
+    // derived here rather than stored: other spools on this same chip, ordered
+    // by spool number, which only ever increases, so lower came before.
+    if (r.nfc_uid[0]) {
+        String before, after;
+        SpoolRecord o;
+        for (size_t i = 0; i < storeSpoolCount(); i++) {
+            if (!storeSpoolAt(i, o) || o.spool == r.spool || strcmp(o.nfc_uid, r.nfc_uid)) continue;
+            String link = "<a href='/spool?id=" + String((unsigned)o.spool)
+                        + "' style='color:#8f8'>#" + String((unsigned)o.spool) + "</a>"
+                        + (o.retired ? " <span class='muted'>(retired)</span>" : String());
+            String& dst = (o.spool < r.spool) ? before : after;
+            if (dst.length()) dst += ", ";
+            dst += link;
+        }
+        if (before.length()) spec += kv("Tag previously on", before);
+        if (after.length())  spec += kv("Tag later on", after);
+    }
     if (spec.length()) p += "<div class='spec'>" + spec + "</div>";
     p += "</div>";
 

@@ -750,6 +750,26 @@ void syncTask(void* param) {
             // The nil-UUID case — one of ours after a store wipe — is not.
             sForeign = !wasNil;
 
+            // A chip belongs to the spool that most recently claimed it. Tags are
+            // erased to be reused, and an erase retires the spool that held the
+            // chip (the blank-tag path above). A tag re-encoded by some other
+            // tool — the Prusa app, say — arrives here instead, with an identity
+            // we don't know, and used to be adopted as a SECOND spool while the
+            // old one stayed active on the same chip (found 2026-10-20: one
+            // physical spool as both #43 and #100). Same rule, so the same
+            // retire: its remaining counts as consumed, exactly as an erase's
+            // does. /spool shows the link both ways ("tag previously on #N").
+            {
+                SpoolRecord prior;
+                if (storeFindActiveByNfcUid(physHex, prior)) {
+                    Serial.printf("[sync] chip %s was spool #%u (%s %s); retired, "
+                                  "chip reassigned to this tag's new identity\n",
+                                  physHex, (unsigned)prior.spool, prior.vendor,
+                                  prior.material);
+                    storeRetireSpool(prior.spool);
+                }
+            }
+
             // Resolve the product this spool is an instance of, creating one
             // (provisional) if we have never seen this filament. This is what
             // makes an inventory of four genuine Prusament spools roll up as one
