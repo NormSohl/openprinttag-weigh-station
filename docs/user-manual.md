@@ -2,193 +2,145 @@
 
 ![The assembled weigh station on the workbench](images/device-full.jpg)
 
-The Weigh Station is a self-contained filament inventory tool for the Seattle
-Makers 3D-printing lab. Place a spool on the scale; it reads the NFC tag, weighs
-the spool, and records the remaining filament **on the device**. A built-in web
-app (`http://weighstation.local/`) shows inventory and history, onboards new
-spools, flags reorders, and takes backups. There is no external server.
+The Weigh Station tracks the 3D-printing lab's filament. Place a spool on the
+scale: it reads the spool's NFC tag, weighs it, and records the remaining
+filament on the device. The web app at `http://weighstation.local/` shows
+inventory and history, onboards new spools, flags reorders, and takes
+backups. There is no external server.
 
-**Printable one-page quick references**, for posting at the station itself:
-[Weighing a spool](quickref-weighing.md) ·
-[Onboarding a new spool](quickref-onboarding.md) ·
-[Inventorying](quickref-inventorying.md). (There's also a
-[Tag Erase](quickref-tag-erase.md) one-pager, but that workflow isn't in
-active use right now.)
+**Quick references** for posting at the station:
+[Weighing](quickref-weighing.md) ·
+[Onboarding](quickref-onboarding.md) ·
+[Inventorying](quickref-inventorying.md) ·
+[Tag Erase](quickref-tag-erase.md).
+**Printable PDF, one page each:** [weigh-station-quickrefs.pdf](weigh-station-quickrefs.pdf).
 
 ---
 
 ## For Members: Weighing a Spool
 
-1. **Place the spool on the scale.** The NFC reader and load cell activate
-   immediately — no button press needed.
-2. **Wait for the display to settle.** It shows the spool number, material, and
-   remaining weight for a second or two.
-3. **Remove the spool.** The display returns to the idle screen.
+1. **Place the spool on the scale.** No button needed.
+2. **Wait** until the display shows the spool number, material and remaining weight.
+3. **Remove the spool.** The reading is saved.
 
-That's it — the reading is saved locally, and a weigh entry is added to the
-spool's history.
+**Weigh every spool when you return it.**
 
 ### What the display shows
 
 ![The idle screen in person: Seattle Makers, Place spool to begin, the web app address, and a QR code](images/device-idle-screen.jpg)
 
-The 3.5" screen shows one of these, depending on what's happening:
-
 | Display | Meaning |
 |---|---|
-| <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Idle, ready** — place a spool to begin |
-| <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing** — reading the load cell |
-| <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done** — spool number, material, and remaining weight recorded locally |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered** — scan the QR or visit the **Onboard** page to fill in the material details (see *New Spools* below) |
-| <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag** — writing updated filament data back to the NFC tag |
-| <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Not calibrated** — shown on idle until the scale is calibrated (weights are unreliable until then) |
+| <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Ready.** Place a spool. |
+| <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing.** Don't lift yet. |
+| <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done.** Remove the spool. |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
+| <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag.** Don't lift yet. |
+| <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Scale not calibrated.** Tell an admin. |
+| Red **ERASE MODE** on the idle screen | **Erase mode is on.** Any tag placed is erased. |
 
-> **Opening the web app from your phone.** The idle screen shows a **QR code** on
-> the right — scan it with the camera and it opens the app directly. The address
-> is also printed as text: `weighstation.local` for typing, with the numeric IP
-> underneath as a fallback. Use the numeric one if `.local` doesn't resolve,
-> which happens on some Android browsers and across some networks. (The QR
-> always encodes the numeric address, for exactly that reason.)
+**Opening the web app from your phone:** scan the QR code on the idle screen.
+Or type `weighstation.local`; if that doesn't load, type the numeric address
+shown under it.
 
-### Status light (NeoPixel)
+### Status light
 
 | Color | Meaning |
 |---|---|
-| Dim green | Idle, ready |
-| Blue | Working (WiFi setup, weighing, writing tag) |
+| Dim green | Ready |
+| Blue | Working (WiFi setup, weighing, writing the tag) |
 | Green | Spool weighed and saved |
-| Yellow | Spool registered but needs details entered in the web app |
-| Amber (blinking, accelerating) | New-tag countdown — remove the spool to cancel |
-| Red | Tag read error — reposition the spool |
+| Yellow | Spool registered; needs details entered |
+| Amber, blinking faster | New-tag countdown; remove the spool to cancel |
+| Magenta | Erase mode is on |
+| Red | Tag read error; reposition the spool |
 
 ---
 
 ## For Members: New Spools
 
-When you place a spool with a **blank NFC tag** on the scale:
+### Applying a tag
 
-1. The display shows a **2-second countdown** — "New tag found / Remove to
-   cancel / Registering in: 2…". The window is short, so in the last second
-   the digit turns red and the text switches to "Writing tag now!" as a final
-   heads-up.
+Use an **OpenPrintTag MK1** sticker (from [Prusa](https://www.prusa3d.com/);
+reordering is in `docs/build-guide.md`). Stick it on the spool's flat hub
+face, centered so it sits over the reader. Press firmly for 5 seconds.
+
+**Don't reuse tags.** Peeling one off can crack its antenna. Use a new tag for
+every new spool.
+
+### Registering it
+
+1. **Place the spool on the scale.** The display counts down from 2 ("New tag
+   found / Remove to cancel").
 
    <img src="images/lcd/new-tag-countdown.svg" width="300" alt="New tag found screen with a large countdown digit">
 
-2. **Remove the spool within 2 seconds** to cancel, or **leave it in place** to
-   proceed.
-3. The station formats the tag and creates a placeholder record on the device.
-   The display shows `Registered!`, the spool number, and **NEEDS ONBOARDING**
-   — the spool has no vendor, material or colour yet, so it is not usable for
-   inventory until step 4. **Scan the QR code on that screen** to jump straight
-   to the form for this spool, or type either address it shows —
-   `weighstation.local/onboard` or the numeric one below it. Both go to the
-   **Onboard** page, which acts on whichever spool is currently on the scale.
+2. **Remove it** to cancel, or **leave it** to register.
+3. The display shows **Registered!**, the spool number and **NEEDS ONBOARDING**.
+   **Scan the QR code**, or open `weighstation.local/onboard`. Keep the spool
+   on the scale.
 
    <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code">
 
-4. **Open the web app and fill in the material details** for that spool — see
-   *Onboarding a spool* below.
+### Onboarding it (web app)
 
-Once the details are saved, the NFC tag is written with the real data — either
-right away if the spool is still on the scale, or the next time it's placed.
+On the **Onboard** page, under **"This spool is…"**:
 
-### Onboarding a spool (web app)
+- **Same product as one on file?** Pick it from the list. Everything is filled
+  in for you.
+- **New product?** Use the **catalog search**. The vendor, material type and
+  material fields show the last product picked. Same product? Leave them.
+  Different? Click a field to see the full list, or type to narrow it.
+- **Not in the catalog?** Open **Or enter manually** and pick the vendor,
+  material and colour. Use **+ Add new** for anything missing.
 
-1. With the spool on the scale, browse to `http://weighstation.local/` on any
-   phone or laptop on the same network.
-2. Open **Onboard**. If this is another spool of something already on file,
-   pick **another spool of X** — it inherits the vendor, material, colour and
-   tare with nothing to retype. If this one came on a different kind of spool
-   (a vendor sometimes switches spool bodies), set its tare below; the product
-   keeps its own. For something new, choose **a new product**.
-3. **Search the catalog first.** Typing a vendor or material name searches the
-   published OpenPrintTag catalog directly; picking a real result fills in the
-   brand, material, colour, print temperatures, and the manufacturer's own
-   identifiers — the same data a genuine vendor tag carries. If the filament
-   isn't in the catalog, expand **Enter details manually** and pick the
-   **vendor**, **material**, and **color** from the lab's own lists — each
-   picklist defaults to whichever choice was used last, so onboarding a batch
-   of the same shipment doesn't mean re-picking the same vendor for every
-   spool. Any of them has a **+ Add new** option if it isn't in the list yet —
-   no need to visit Settings first to add it.
+Then:
 
-   **Spool profile** sits next to the tare field, outside the manual section,
-   and works however you identified the filament — catalog pick, manual
-   entry, or **another spool of X**. It's a preset for the empty spool's weight: picking one fills in
-   the **tare** box for you. It starts on **— choose a spool profile —**
-   every time, rather than on the last one used, so what the tare box shows
-   is always what will be saved. It has its own **+ Add new** option. If you
-   entered details manually you must pick one: it also sets the spool's
-   nominal full weight, and the form won't save without it. After a catalog
-   pick it's optional; leaving it unchosen keeps the catalog's own tare.
-   Anything you type in the tare box yourself wins. You can also
-   capture the tare from a matching empty spool with **Capture tare**. (If
-   you chose **another spool of X**, a blank tare box means the product's
-   tare; anything you pick or type is used for this spool only.)
+1. **Set the tare** (the empty spool's weight; required). Either:
+   - pick a **spool profile**, or
+   - type the tare, or
+   - put an empty spool of the same type on the scale and press **Capture tare**.
 
-   **Every spool needs a tare.** The form won't save if it would end up with
-   none — for example a catalog product with no empty weight listed, or a
-   spool profile without one. Type it, pick a profile that has one, or use
-   **Capture tare**. Without it the station would count the empty spool as
-   filament. A spool or product saved before this rule shows its tare as
-   *not recorded*; fix a product's on its own page.
+   With manual entry, a spool profile is required (it also sets the full weight).
+2. **Cost** (optional): what the reel cost. Leave it blank if you don't know.
+   Blank keeps a price already recorded; `0` clears it.
+3. Press **Save & write tag.**
 
-   **Cost for this spool** is optional: enter what the reel cost if you know
-   it, leave it blank if you don't. It drives the dollar columns on the Usage
-   page. The field is deliberately blank every time the form opens — coming
-   back later to fix something else and leaving it empty keeps the price
-   already on record rather than wiping it. Enter `0` to clear one.
-4. **Save & write tag.** The full OpenPrintTag data (identity, print temps,
-   weights) is written to the tag and the record is saved.
+**Next spool:** place it. The page moves to it.
 
 ### Changing a spool that's already onboarded
 
-If the spool on the scale has already been onboarded, the **Onboard** page
-says so and shows what it is, instead of showing an empty form. Nothing needs
-entering. Two reasons to go further:
+Open **Onboard** with the spool on the scale. The page names the spool. Click
+**Change this spool's details**:
 
-- **Adding a price you didn't have at onboarding.**
-- **Fixing a spool attached to the wrong product**, or giving a product to an
-  old spool that predates products.
+- **To add a price:** type it and save. Nothing else changes.
+- **To attach it to a different product:** pick that product and save.
+- **To give it a new product:** choose **a new product**. The page asks you to
+  confirm.
 
-Click **Change this spool's details** to open the form. It opens on the
-spool's current product (marked *(current)*), so to add a price, just type it
-and save; the spool's identity stays as it was. To attach it to a different
-product, pick that product from the list. Choosing **a new product** instead
-(typed in or from the catalog) replaces the spool's identity, and the page
-asks you to confirm before it does. Saving always rewrites the tag.
+Saving rewrites the tag.
 
-### Applying an NFC tag to a new spool
+### Spools that arrive with a tag
 
-Use an OpenPrintTag MK1 sticker — sourced directly from
-[Prusa](https://www.prusa3d.com/), who created and promotes the OpenPrintTag
-format itself (see `docs/build-guide.md` if you need to reorder). Peel and
-apply to the flat hub face of the spool — away from the filament windings,
-centered so it sits over the NFC reader when placed on the scale. Press
-firmly for 5 seconds.
+Spools with a tag already on them (genuine Prusament, or tagged elsewhere)
+need no onboarding. **Just place them.** The station reads the tag's details
+and adds the spool. If the tag has no tare, it gets 170 g; correct it on the
+product's page if that's wrong.
 
-**Do not reuse tags.** Peeling a tag risks cracking the foil antenna invisibly.
-New tag for every new spool.
-
-### Pre-tagged spools (e.g. Prusament)
-
-Some spools arrive with an NFC tag already applied (genuine Prusament, or spools
-tagged by another maker's setup). The station recognizes these as legitimate and
-creates a local record from the data already on the tag — no countdown, no
-blank-tag flow. It then weighs and records normally.
+**Don't rewrite station tags with the Prusa app** or any other app. The
+station treats the rewritten tag as a new spool and retires the old one.
 
 ---
 
 ## For Administrators: Initial Setup
 
-Full build/flash steps are in [`DEVELOPMENT.md`](../DEVELOPMENT.md); a short
-version follows.
+Full build and flash steps: [`DEVELOPMENT.md`](../DEVELOPMENT.md).
 
 ### 1. Hardware assembly
 
-Wire the components per [`hardware/netlist.md`](../hardware/netlist.md). The
-NAU7802 connects via a Qwiic cable; the PN5180 NFC module and the ILI9488 TFT
-display share the SPI bus.
+Wire the parts per [`hardware/netlist.md`](../hardware/netlist.md). The
+NAU7802 connects by Qwiic cable; the PN5180 NFC module and the ILI9488 display
+share the SPI bus.
 
 ### 2. Flash the firmware
 
@@ -202,31 +154,27 @@ On first boot the display shows the WiFi setup screen:
 
 <img src="images/lcd/wifi-setup.svg" width="300" alt="WiFi Setup screen: Join network WeighStation-Setup, then open browser to 192.168.4.1">
 
-1. On any phone or laptop, join the `WeighStation-Setup` WiFi network.
-2. A captive-portal page opens automatically (or browse to `192.168.4.1`).
-3. Select your WiFi network and enter the password.
-4. Submit. The device connects to the lab network and the display shows the idle
-   screen with its address (`http://weighstation.local/`).
+1. On a phone or laptop, join the `WeighStation-Setup` network.
+2. The setup page opens (or browse to `192.168.4.1`).
+3. Pick the lab's network and enter its password.
+4. Submit. The idle screen shows `http://weighstation.local/`.
 
-If no network is configured (or it can't be reached), the station falls back to
-its own `WeighStation` access point so the web app stays reachable — the idle
-screen shows the SSID and address to use.
+The station only joins **2.4 GHz** networks with a **password** (not
+enterprise/802.1X logins). If it can't join, it runs its own `WeighStation`
+network instead; the idle screen shows what to join.
 
-### 4. Scale calibration (web)
+### 4. Calibrate the scale
 
-The scale reads raw counts until calibrated; the idle screen shows **"Scale not
-calibrated"** until you do this:
+The idle screen shows **"Scale not calibrated"** until this is done.
 
 <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code">
 
-1. With the spool on/off as directed, browse to `http://weighstation.local/` and
-   open **Settings → Calibrate**.
-2. **Step 1 — Zero:** clear the scale, then click **Zero (tare)**.
-3. **Step 2 — Calibrate:** place a known weight, type its exact mass in grams,
-   then **Set calibration**.
+1. Open **Settings → Calibrate**.
+2. **Clear the scale**, then press **Zero (tare)**.
+3. **Place a known weight**, type its mass in grams, then press **Set calibration**.
 
-The banner clears when it takes. (Serial `ZERO` / `CAL <grams>` at 115200 baud
-still work as a fallback.)
+The banner clears. (Over USB serial at 115200 baud, `ZERO` and `CAL <grams>`
+do the same.)
 
 ---
 
@@ -234,243 +182,134 @@ still work as a fallback.)
 
 ### The web app
 
-`http://weighstation.local/` provides:
+| Page | What it's for |
+|---|---|
+| **Inventory** | Remaining filament by material. Click a row for its spools; click a spool for its weigh history (CSV), its cost, and its product. Audits start here. |
+| **Onboard** | Enter details for the spool on the scale. |
+| **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
+| **Stock List** | What the lab keeps in stock, with a 90-day popularity score. |
+| **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
+| **Erase Tag** | Erase tags (see the Tag Erase quick reference). |
+| **Settings** | Picklists (vendors, materials, colours, spool profiles, stock items), WiFi, API key, timezone and clock format, station name, and **Calibrate**. |
+| **Backup** | Download or restore the event log, and the separate Settings backup. |
 
-- **Inventory** — remaining filament by material, grouped by vendor. Click a
-  row to expand it and see the individual spools, or a spool number to open
-  its weigh history + a remaining-over-time sparkline (with CSV export). A
-  spool's own page is also where you can check **what it cost** — it shows
-  the recorded price, or says plainly that none was recorded, which is how
-  you spot spools still needing one. This is also where a physical stock
-  **audit** is started — see below.
-- **Onboard** — fill in details for a new/blank spool, or add another spool of
-  something already on file. For a spool that's already onboarded it says so,
-  and keeps the form behind a **Change this spool's details** button.
-- **Reorder** — Stock List items at or below threshold; download a CSV to
-  place the order.
-- **Stock List** (`/stock`) — the curated list of what the lab keeps in stock,
-  each with a 90-day popularity score, sorted so the least-popular (or
-  never-in-stock) items surface first — see *Deciding what to stock* below.
-- **Usage** — the lab's permanent consumption record: how much filament has
-  gone through the station, per material, broken down by year, quarter and
-  month, all-time; CSV download. Also shows what that consumption **cost**,
-  for spools that had a price recorded at onboarding — filament used before
-  a price was entered counts its grams but contributes $0, since there's no
-  honest way to price it after the fact. (For deciding what belongs on the
-  Stock List, prefer the Stock List page's popularity score — it corrects for
-  spools that sold out early, which this page's plain totals do not.)
-- **Settings** — edit the vendor/material/color/spool-profile/stock-item
-  tables, set the WiFi/API-key, choose the display timezone and 12/24-hour
-  clock format, rename the station (the idle screen's greeting — "Seattle
-  Makers" by default, but any lab running this can make it their own), and
-  reach **Calibrate**.
-- **Backup** — download the event log; restore from an uploaded backup. Also
-  where the separate Settings-table backup lives (see *Recalibrating /
-  backups* below).
-
-A product's own edit page (`/product?id=N`) isn't in the top nav — reach it by
-clicking a spool's material name on its detail page. Editing there updates
-every spool of that product and rewrites their tags automatically the next
-time each is placed on the scale.
+**Editing a product** (name, colour, default tare…): on a spool's page, click
+its **Product #N** link, then click the product. Saving updates every spool of
+that product; their tags update the next time each is placed.
 
 ### Physical inventory audits
 
-Periodically (e.g. a monthly shelf count), do a physical audit: weigh and scan
-every spool the lab actually has, and let the station reconcile what wasn't
-seen.
+1. On **Inventory**, press **Start audit**. Keep the page open.
+2. **Weigh every spool.** Each weigh marks it found.
+3. Press **Finish audit.** The page lists the spools that weren't weighed.
+4. For each one, press:
+   - **Found** if it's on the shelf. Its weight doesn't change.
+   - **Close** if it's gone. Its last weight counts as used, and it's retired.
+5. The audit ends when every spool is resolved.
 
-1. On the **Inventory** page, click **Start audit**. Spools weighed from this
-   point on are marked found automatically — no separate step needed for
-   normal weighing during the count.
-2. When every spool has been physically checked, click **Finish audit**. The
-   page now lists each spool that was never seen during the count, with two
-   buttons per row:
-   - **Found** — it's on the shelf but wasn't weighed (e.g. you eyeballed it
-     without placing it on the scale). No weight change.
-   - **Close** — it's genuinely gone. The station records its last known
-     weight as consumed (the same as a normal weigh-to-zero) and marks it
-     **retired**.
-3. Every not-found spool must be resolved one of these two ways before the
-   audit finishes — there's no way to leave some undecided. Once the last one
-   is resolved, the audit closes itself; there's no separate "finish resolving"
-   button.
-4. **Abandon audit** drops the audit at any point without undoing anything
-   already marked Found or Closed.
+**Abandon audit** stops the audit. Found and Close already pressed stay.
 
-**Retired spools are not deleted.** They stay in the inventory history (their
-consumption still counts toward Usage and Stock List popularity) but are
-hidden from the normal Inventory view by default — a count next to a
-**show/hide** toggle reveals them. If a spool marked retired is later found
-and weighed again, it's automatically un-retired and rejoins normal tracking
-with no extra step.
+**Retired spools** are hidden from Inventory; use the **show/hide** toggle to
+see them. Their past use still counts. A retired spool that's weighed again
+comes back automatically.
 
 ### Deciding what to stock
 
-The **Stock List** page (`/stock`) is where the lab's day-to-day
-"what do we keep buying" decisions happen — it's a curated list, not a
-snapshot of everything currently on the shelf (that's Inventory). Each entry
-shows a **popularity score**: grams consumed over the trailing 90 days,
-corrected so a material that sold out early in that window isn't scored as
-if it sat unused the rest of the time. The list sorts lowest-popularity (and
-never-in-stock) first, since those are the candidates to reconsider. A
-material can be in the lab's inventory without being on the Stock List at
-all — that's normal for something being phased out, not an error.
+The **Stock List** is what the lab *wants* to keep in stock. Inventory is
+what it *has*. Items at the top of the list (least popular, or never in
+stock) are the candidates to drop. Material in inventory but not on the list
+is fine.
 
-**Adding an entry.** The list comes first on the page; the add/edit form is
-below it (the **Edit** link on a row jumps straight down to it). The
-"Item is…" dropdown at the top of the form decides how you identify the
-filament:
+**Adding an item.** Use the form below the list. Under **"Item is…"**:
 
-- **Pick one of the listed products** if the lab already has that filament on
-  file — nothing to retype.
-- Otherwise leave it on **Search catalog or type in** and use the **catalog
-  search**, which looks up any real vendor product, including ones the lab has
-  never stocked.
-- Not in the catalog (a colour the vendor added recently, or an out-of-date
-  entry)? Expand **Or enter manually** and pick vendor / material / colour
-  from the lists, each with a **+ Add new** option. These default to whatever
-  you chose last time, which speeds up entering several at once.
+- **Already on file?** Pick the product.
+- **Otherwise:** use the **catalog search**. It starts on the last product
+  picked during onboarding; click a field to change it.
+- **Not in the catalog?** Open **Or enter manually**.
 
-For the catalog and manual routes, fill in **Default spool tare** — the empty
-spool's weight. It becomes the product's starting tare, so the first real spool
-onboarded against it weighs correctly. Leave it blank after a catalog pick that
-already lists an empty weight; otherwise it's required. It's only a default: a
-spool that arrives on a different kind of spool gets its own tare when it's
-onboarded.
-
-All three routes are equal — each one files the entry against a real product,
-so the Stock List can match it against Inventory exactly rather than guessing
-from the spelling. That's why there's no separate Color column: a filed entry
-shows the product's full name, colour included (for example
-"PETG Magenta"), the same way the spool's own tag stores it.
+For the catalog and manual routes, enter a **Default spool tare** unless the
+catalog pick already lists one.
 
 ### Changing the WiFi network
 
-**Option A — web (device currently connected):** browse to
-`http://weighstation.local/reset` and press **Reset WiFi**. The device reboots
-and opens the `WeighStation-Setup` AP; connect and reconfigure as in initial
-setup. (Visiting the page does nothing on its own — the button is what triggers
-it, so a stray link can't wipe the network config. If an API key is set, you'll
-be asked for it.)
+- **Station reachable:** on **Settings**, press **Choose a WiFi network**.
+  The station restarts as `WeighStation-Setup`; set it up as in *First-time
+  WiFi setup*.
+- **Station unreachable:** power-cycle it. If it can't join its network, the
+  setup network opens for 2 minutes (it stays open while you're connected, up
+  to 10 minutes). Holding **BOOT** for 3 seconds at power-on also clears the
+  WiFi settings.
 
-**Option B — power cycle (device unreachable):** power-cycle it. If stored
-credentials fail, the captive portal opens for **2 minutes** — connect within
-that window and reconfigure. **Once your phone joins the AP the countdown
-stops**, so there's no time pressure while typing the password. The portal does
-close after **10 minutes** no matter what, so an abandoned session can't leave
-it open forever — just power-cycle to reopen it. (Holding the BOOT button for 3 s at power-on also
-clears WiFi credentials.)
+### Backups
 
-### Recalibrating / backups
+- **Event log:** **Backup → Download**. This one file holds every spool and
+  all usage history. **Restore** on the same page loads it back.
+- **Settings tables:** downloaded and restored separately on the same page.
+  Use this file to copy the picklists to another station.
 
-Recalibrate any time via **Settings → Calibrate**.
+Download a backup before a firmware update and at least monthly.
 
-**Back up by downloading the event log** from the **Backup** page — that one
-file is the whole backup. It carries current spool state *and* the permanent
-consumption totals, and **Restore** puts it back. There is no SD card: the
-ESP32-S3 ran out of SPI peripherals, so the slot on the display board is not
-wired and nothing is saved to it.
-
-Download a copy whenever you'd mind losing the data — before a firmware
-update, before a device swap, or on a monthly reminder. It can be automated;
-see the API section below.
-
-**About storage limits.** The log is append-only and the device has about 2 MB
-for it. Long before that fills, the station compacts the log on its own while
-nothing is on the scale: each spool's history collapses to a single checkpoint
-and recent events are kept as-is. **Monthly consumption totals are kept forever
-and are never affected.** What compaction gives up is individual weigh readings
-older than the retained tail — so if you want the complete weigh-by-weigh
-record long-term, download the log periodically. The **Backup** page shows the
-current log size and warns you if writes ever start failing.
-
-**The Settings tables (vendors/materials/colors/spool-profiles/Stock List)
-back up separately**, also from the **Backup** page: they download and
-restore as their own file, independent of the event log. Nothing in a spool's
-record points back into these tables by ID, so the two backups don't need to
-be kept in sync — and the Settings-only file is also the quick way to hand a
-second station the lab's picklists without dragging along this one's spool
-history.
+The station compacts its log on its own as it fills. Monthly usage totals
+are never lost; individual weigh readings older than a few thousand events
+are. Keep downloaded backups if you want every reading.
 
 ---
 
 ## For Administrators: HTTP API
 
-Other programs on the network can read from the station directly — a dashboard,
-a spreadsheet job, a monitoring script. Everything is plain HTTP on the same
-address as the web app. Full reference: [`api.md`](./api.md).
+Other programs can read from the station over plain HTTP at the web app's
+address. Full reference: [`api.md`](./api.md).
 
-### Reading data (no setup needed)
+### Reading data
 
-Read-only endpoints are open, so nothing needs configuring first:
+No setup needed.
 
 | URL | What you get |
 |---|---|
-| `/usage.csv` | Consumption per month per vendor + material — a spreadsheet file |
-| `/export` | The complete event log (the same file the Backup page downloads) |
-| `/config/export` | The Settings tables as one file (the separate backup mentioned above) |
-| `/api/status` | Everything at a glance: what the station is doing, what's on the scale, WiFi, storage health |
-| `/api/spools` | Every spool and its remaining filament, as JSON |
-| `/api/products` | Every product (filament SKU) the station knows about |
-| `/api/stock` | The Stock List with each item's 90-day popularity score |
-| `/stock.csv` | The Stock List as a plain spreadsheet — handy for checking against the physical bins |
-| `/api/usage` | The same data as `/usage.csv`, as JSON |
+| `/usage.csv` | Usage per month per vendor + material (spreadsheet) |
+| `/export` | The full event log (same as the Backup download) |
+| `/config/export` | The Settings tables |
+| `/api/status` | Station state, what's on the scale, WiFi, storage |
+| `/api/spools` | Every spool and its remaining filament (JSON) |
+| `/api/products` | Every product (JSON) |
+| `/api/stock` | The Stock List with popularity scores (JSON) |
+| `/stock.csv` | The Stock List (spreadsheet) |
+| `/api/usage` | Same as `/usage.csv`, as JSON |
 
-Automated monthly consumption pull:
+Monthly usage pull, and a nightly backup:
 
 ```bash
 curl -sf "http://weighstation.local/usage.csv" -o "usage-$(date +%F).csv"
-```
-
-Nightly off-device backup, which is the same thing the Backup page gives you:
-
-```bash
 curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
 ```
 
-> **Use the IP address, not `weighstation.local`, for anything scheduled.**
-> The `.local` name relies on mDNS, which is unreliable from some machines and
-> across network segments. Give the station a fixed address in your router's
-> DHCP reservations and use that.
-
-> **Poll gently** — every few seconds at most, one program at a time. The
-> station is a microcontroller and handles only a handful of connections.
-> `/api/status` exists so a dashboard can get everything in one request.
+- **For scheduled jobs, use the station's IP address**, not
+  `weighstation.local`. Give it a fixed address in the router.
+- **Poll gently:** every few seconds at most, one program at a time.
+  `/api/status` gives everything in one request.
 
 ### Protecting the write endpoints
 
-By default **anything on the network can change the station** — onboard spools,
-edit the config tables, recalibrate the scale, replace the event log, reset
-WiFi. On a trusted lab network that's usually fine and keeps things simple.
+Without an API key, **anything on the network can change the station**:
+onboard spools, edit tables, recalibrate, replace the log, reset WiFi.
 
-To require a password for those actions, set an **API key** on the **Settings**
-page (bottom of the page, *API access*). Reading stays open; only changes need
-the key. The web app will prompt you for it the first time you save something.
+To require a key for changes, set an **API key** on **Settings** (*API
+access*, at the bottom). Reading stays open. The web app asks for the key the
+first time you save something.
 
-Scripts pass it in whichever way suits them:
+Scripts pass it as a header or as the password:
 
 ```bash
 curl -X POST -H "X-API-Key: YOURKEY" http://weighstation.local/api/cal-zero
 curl -X POST -u :YOURKEY http://weighstation.local/api/cal-zero
 ```
 
-**If you lose the key,** connect a USB cable, open a serial monitor at 115200
-baud, and type:
+**Lost the key?** Connect USB, open a serial monitor at 115200 baud, and
+type `APIKEY none`. That's the only way back, so keep the USB port reachable.
+`APIKEY` on its own shows the current key.
 
-```
-APIKEY none
-```
-
-That clears it and reopens the write endpoints. It is the only way back —
-changing the key from the web app requires the current one — so the USB port is
-worth keeping accessible. `APIKEY` on its own shows the current key.
-
-**What the key is and isn't.** It stops mistakes and casual poking: a script
-aimed at the wrong machine, someone exploring endpoints, a browser following a
-link to something destructive. It is **not** encryption — the key travels over
-the network in the clear, so anyone able to watch lab traffic could capture it.
-Treat the network itself as the real boundary, and don't put the station
-somewhere a guest network can reach it.
+**The key is not encryption.** It travels in the clear, so anyone watching
+lab traffic could capture it. Keep the station off guest networks.
 
 ---
 
@@ -478,46 +317,32 @@ somewhere a guest network can reach it.
 
 ### Device won't connect to WiFi
 
-- Power-cycle the device and connect to `WeighStation-Setup` within 2 minutes
-  (the countdown pauses as soon as you join, so take your time on the form;
-  the portal closes after 10 minutes regardless) to reconfigure.
-- If the SSID list in the portal is empty, wait ~30 seconds for the scan and
-  refresh the page.
+- Power-cycle it and join `WeighStation-Setup` within 2 minutes, then set it up again.
+- If the portal's network list is empty, wait 30 seconds and refresh.
+- Check the network is **2.4 GHz** and uses a password (not an enterprise login).
 
-### Tag stuck on "Read error" after a failed registration
+### "Read Error" after a failed registration
 
-If registering a new tag failed partway, the tag is left half-written: it is no
-longer blank, but it isn't valid OpenPrintTag data either, so the station shows
-**Read Error** every time and there is no way back through the normal flow.
+The tag was left half-written.
 
-Recover it over USB serial (115200 baud):
+1. Open **Erase Tag**, press **Start erase mode**, and place the spool.
+2. Press **Stop erase mode**.
+3. Place the spool again. It registers as new.
 
-```
-TAGFORMAT
-```
+(Or over USB serial at 115200 baud: type `TAGFORMAT`, then lift and replace the spool.)
 
-Then lift the spool and place it again. The station rewrites the tag from
-scratch and registers it normally.
+### "Read Error" on a spool that used to work
 
-This is deliberately a manual command rather than something automatic — a tag
-the station can't read might be a legitimate tag in a format it doesn't
-understand, and reformatting is irreversible.
+- Move the spool so the tag sits over the reader.
+- Check the sticker is flat, with no bubbles near the center.
+- Still failing? The tag may be damaged. Replace it.
 
-### NFC tag not reading ("Read error")
+### Weights are zero or wildly wrong
 
-- Reposition the spool so the tag is centered over the reader.
-- Check that the tag sticker is fully adhered with no air bubbles near the center.
-- If the error persists, the tag antenna may be damaged — replace the tag.
-
-### Scale reads zero or wildly wrong values
-
-- Recalibrate: open **Settings → Calibrate**, **Zero** with the platform clear,
-  then **Set calibration** with a known weight.
-- Check that the load cell wiring hasn't shifted (particularly E+ / E− polarity).
+- Recalibrate: **Settings → Calibrate**.
+- Check the load cell wiring (especially E+ / E−).
 
 ### Display is blank
 
-- Check the TFT's SPI wiring — CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), and the
-  shared MOSI/SCK.
-- Make sure the backlight (`LED` pin) is powered (tied to 3.3 V) — the panel
-  shows nothing without it.
+- Check the display's SPI wiring: CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), MOSI and SCK.
+- Check the backlight (`LED` pin) has 3.3 V.
