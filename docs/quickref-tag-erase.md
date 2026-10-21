@@ -41,6 +41,4 @@ someone walks away. Placing a tag (or turning the mode on) resets that clock.
 - **No confirm window on the tag itself.** Staff are standing right there
   feeding a pre-sorted bin through, so placing a tag while this mode is on
   erases it right away, same as the `TAGFORMAT` recovery command.
-- If a tag with the same physical chip ID as an existing spool record is
-  erased by any means, that record is automatically retired — no separate
-  step needed.
+- **Erase only tags from finished spools.** Erasing retires the spool.

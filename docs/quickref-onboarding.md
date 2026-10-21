@@ -36,9 +36,9 @@ untagged reel.
      "another spool of X"** — it inherits vendor/material/colour/tare with
      nothing to retype. Different kind of spool this time? Set its tare
      below; it applies to this spool only.
-   - New product (the default)? **Search the catalog first** — picking a
-     real result fills in brand, material, colour, print temps, and vendor
-     identifiers automatically.
+   - New product (the default)? **Use the catalog search.** The catalog
+     fields show the last product picked. Same product? Leave them.
+     Different? Click a field to change it.
    - Not in the catalog? Expand **Enter details manually**. Vendor, material,
      and colour each default to whatever you picked last time, and each has
      a **+ Add new** option if it's not in the list yet.
@@ -61,7 +61,14 @@ Done — the tag now carries real identity, and the spool is in inventory.
 onboarding form — no need to click the Onboard nav link again. Handy for
 working through a stack of new reels back to back.
 
+**Spool already has a vendor tag?** Just place it. No onboarding needed.
+
+**Spool already onboarded?** Click **Change this spool's details** to edit it.
+
 ## If it goes wrong
+
+**Don't rewrite station tags with the Prusa app.** It retires the spool.
+
 
 **Tag stuck on "Read Error"** after a registration that failed partway (tag
 is half-written — no longer blank, but not valid either): open the
