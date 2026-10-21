@@ -5,6 +5,7 @@
 #include <Preferences.h>
 
 static String sVendor, sMaterial, sColor;
+static String sCatVendor, sCatType, sCatPkg;
 
 // Read-write, same reasoning as station_name.cpp/api_key.cpp: a read-only
 // open of a namespace that doesn't exist yet (first boot) logs an ESP_LOGE
@@ -19,6 +20,9 @@ void lastOnboardBegin() {
     sVendor   = loadOne(p, "vendor");
     sMaterial = loadOne(p, "material");
     sColor    = loadOne(p, "color");
+    sCatVendor = loadOne(p, "cat_vendor");
+    sCatType   = loadOne(p, "cat_type");
+    sCatPkg    = loadOne(p, "cat_pkg");
     p.end();
 }
 
@@ -36,5 +40,22 @@ void lastOnboardSet(const char* vendor, const char* material,
     p.putString("vendor",   sVendor);
     p.putString("material", sMaterial);
     p.putString("color",    sColor);
+    p.end();
+}
+
+const char* lastOnboardCatVendor()  { return sCatVendor.c_str(); }
+const char* lastOnboardCatType()    { return sCatType.c_str(); }
+const char* lastOnboardCatPackage() { return sCatPkg.c_str(); }
+
+void lastOnboardSetCatalog(const char* vendorSlug, const char* typeTok,
+                           const char* pkgPath) {
+    sCatVendor = vendorSlug ? vendorSlug : "";
+    sCatType   = typeTok    ? typeTok    : "";
+    sCatPkg    = pkgPath    ? pkgPath    : "";
+    Preferences p;
+    p.begin("last_ob", false);
+    p.putString("cat_vendor", sCatVendor);
+    p.putString("cat_type",   sCatType);
+    p.putString("cat_pkg",    sCatPkg);
     p.end();
 }

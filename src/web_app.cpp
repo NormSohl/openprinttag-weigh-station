@@ -387,6 +387,11 @@ function makeCombo(fieldId, inputId, panelId, placeholder){
   const field=$(fieldId), input=$(inputId), panel=$(panelId);
   let candidatesFn=()=>[], mruKey=null, mruCap=0, onPick=()=>{};
   let rows=[], hiIdx=-1;
+  // True only once the user has typed since focusing. A field showing a pick
+  // (or a replayed last pick) must open on the WHOLE list when clicked, not on
+  // the one row its own label happens to match (on direct user request,
+  // 2026-10-20).
+  let filtering=false;
 
   function setSource(cfg){ candidatesFn=cfg.candidatesFn; mruKey=cfg.mruKey||null; mruCap=cfg.mruCap||0; onPick=cfg.onPick; }
   function rowHtml(c,i){
@@ -396,14 +401,15 @@ function makeCombo(fieldId, inputId, panelId, placeholder){
   }
   function renderPanel(){
     const all=candidatesFn();
-    const filt=input.value.trim().toLowerCase();
+    const filt=filtering ? input.value.trim().toLowerCase() : "";
     const terms=filt.split(/\s+/).filter(Boolean);
     const match=c=>terms.every(t=>c.label.toLowerCase().includes(t));
     const mruVals=(!filt && mruKey) ? loadMru(mruKey) : [];
     const mruRows=mruVals.map(v=>all.find(c=>c.value===v)).filter(Boolean);
     let rest=all.filter(c=>!mruRows.includes(c));
-    if(filt) rest=rest.filter(match);
-    rest=rest.slice(0,80);
+    // Capped only while filtering, where it keeps typing responsive; the
+    // unfiltered list is the whole list.
+    if(filt) rest=rest.filter(match).slice(0,80);
     rows=[...mruRows, ...rest];
     hiIdx=-1;
     panel.innerHTML =
@@ -414,12 +420,14 @@ function makeCombo(fieldId, inputId, panelId, placeholder){
   function show(){ if(input.disabled) return; renderPanel(); panel.style.display="block"; }
   function hide(){ panel.style.display="none"; }
   function pick(c){
-    input.value=c.label; input.classList.add("picked"); hide();
+    input.value=c.label; input.classList.add("picked"); filtering=false; hide();
     if(mruKey) pushMru(mruKey, c.value, mruCap);
     onPick(c);
   }
-  input.addEventListener("focus", show);
-  input.addEventListener("input", ()=>{ input.classList.remove("picked"); show(); });
+  // Focus opens the whole list and selects the current text, so typing
+  // replaces it and starts a fresh filter instead of appending to the label.
+  input.addEventListener("focus", ()=>{ filtering=false; input.select(); show(); });
+  input.addEventListener("input", ()=>{ filtering=true; input.classList.remove("picked"); show(); });
   input.addEventListener("blur", ()=> setTimeout(hide, 150));
   input.addEventListener("keydown", e=>{
     if(panel.style.display!=="block") return;
@@ -436,7 +444,10 @@ function makeCombo(fieldId, inputId, panelId, placeholder){
   function reset(){ input.value=""; input.classList.remove("picked"); }
   function enable(text){ input.disabled=false; input.placeholder=text||placeholder; field.classList.remove("disabled"); }
   function disable(text){ input.disabled=true; reset(); input.placeholder=text; field.classList.add("disabled"); }
-  return { setSource, reset, enable, disable, renderPanel };
+  // Pick a candidate by its value, as though it had been clicked. False when
+  // it is not (or no longer) in the list, so a replay stops cleanly there.
+  function select(value){ const c=candidatesFn().find(x=>x.value===value); if(!c) return false; pick(c); return true; }
+  return { setSource, reset, enable, disable, renderPanel, select };
 }
 
 const vendorCombo   = makeCombo("#cat-field-vendor",   "#cat-in-vendor",   "#cat-panel-vendor",   "Type or tap to browse vendors…");
@@ -452,15 +463,20 @@ vendorCombo.setSource({
     typeCombo.reset(); typeCombo.enable();
     materialCombo.disable("Pick a material type first");
     resolvedEl.innerHTML = "";
+    // The catalog's own keys for this pick, which the station remembers so the
+    // next onboarding can replay it (see #cat-last below). Cleared downstream
+    // on every re-pick, so a half-finished change never leaves a stale path.
+    setField("cat_vendor_slug", c.value); setField("cat_type_tok", ""); setField("cat_pkg_path", "");
     typeCombo.setSource({
       candidatesFn: ()=>typeCandidatesFor(c.value),
       mruKey: "opt_mru_type", mruCap: 4,
       onPick(tc){
         materialCombo.reset(); materialCombo.enable();
         resolvedEl.innerHTML = "";
+        setField("cat_type_tok", tc.value); setField("cat_pkg_path", "");
         materialCombo.setSource({
           candidatesFn: ()=>materialCandidatesFor(c.value, tc.value || null),
-          onPick(mc){ resolvePick(mc.value); }
+          onPick(mc){ setField("cat_pkg_path", mc.value); resolvePick(mc.value); }
         });
       }
     });
@@ -543,6 +559,14 @@ function applyPick(pkg, mat, cont, brand, brandSlug){
     await loadIndex();
     vendorCombo.enable();
     setStatus(`${PACKAGES.length.toLocaleString()} packages, ${new Set(PACKAGES.map(p=>p.brand)).size} vendors ready.`);
+    // Start on the last catalog pick, when the page supplied one (/onboard,
+    // for a spool that still needs onboarding). Replayed as three ordinary
+    // picks, so the material resolves and fills the form exactly as a click
+    // would. Stops at the first value the catalog no longer has, leaving the
+    // rest for a person to choose.
+    const last = document.getElementById("cat-last");
+    if (last && vendorCombo.select(last.dataset.vendor) && typeCombo.select(last.dataset.type || ""))
+      materialCombo.select(last.dataset.pkg);
   } catch(e){
     setStatus(`Couldn't load the catalog: <b>${esc(e.message)}</b> &mdash; use manual entry below.`, true);
     const det = document.getElementById("cat-manual-details");
@@ -1667,23 +1691,37 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<label>Search filament catalog</label>"
          "<div class='cat-status' id='cat-status'>Loading catalog&hellip;</div>"
          "<div class='cat-field' id='cat-field-vendor'>"
-           "<label>Vendor</label>"
+           "<label>Vendor (click to change)</label>"
            "<input class='cat-input' id='cat-in-vendor' placeholder='Loading&hellip;' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-vendor'></div>"
          "</div>"
          "<div class='cat-field disabled' id='cat-field-type'>"
-           "<label>Material type</label>"
+           "<label>Material type (click to change)</label>"
            "<input class='cat-input' id='cat-in-type' placeholder='Pick a vendor first' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-type'></div>"
          "</div>"
          "<div class='cat-field disabled' id='cat-field-material'>"
-           "<label>Material</label>"
+           "<label>Material (click to change)</label>"
            "<input class='cat-input' id='cat-in-material' placeholder='Pick a vendor first' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-material'></div>"
          "</div>"
          "<div id='cat-resolved'></div>"
          "</div>";
+    // The last catalog pick, for CATALOG_SCRIPT to replay once the catalog has
+    // loaded (see last_onboard.h). Only for a spool that still needs
+    // onboarding: on an already-onboarded spool the form opens on the spool's
+    // own product, and a different, remembered product appearing in the
+    // catalog fields would read as the spool's identity. /stock never emits
+    // this element, so its catalog search starts empty as before. Double-quoted
+    // attributes: esc() escapes " but not '.
+    if (!already && lastOnboardCatPackage()[0])
+        p += "<div id=\"cat-last\" hidden data-vendor=\"" + esc(lastOnboardCatVendor())
+           + "\" data-type=\"" + esc(lastOnboardCatType())
+           + "\" data-pkg=\"" + esc(lastOnboardCatPackage()) + "\"></div>";
     p += "<input type='hidden' name='source' id='cat-source' value='manual'>"
+         "<input type='hidden' name='cat_vendor_slug' id='cat-f-cat_vendor_slug'>"
+         "<input type='hidden' name='cat_type_tok'    id='cat-f-cat_type_tok'>"
+         "<input type='hidden' name='cat_pkg_path'    id='cat-f-cat_pkg_path'>"
          "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
          "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
          "<input type='hidden' name='cat_abbr'        id='cat-f-cat_abbr'>"
@@ -1991,6 +2029,13 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         memcpy(prod.rgba, rgba, 4);
         prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
         pid = findOrCreateProduct(prod);
+
+        // So the next onboarding's catalog search starts on this pick (see
+        // last_onboard.h). Past the tare check above, like the manual path's
+        // lastOnboardSet(): a refused submit must not change what is remembered.
+        if (arg("cat_pkg_path").length())
+            lastOnboardSetCatalog(arg("cat_vendor_slug").c_str(), arg("cat_type_tok").c_str(),
+                                  arg("cat_pkg_path").c_str());
     } else {
         String matName  = arg("material");
         String colName  = arg("color");
@@ -2490,22 +2535,32 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<label>Search filament catalog</label>"
          "<div class='cat-status' id='cat-status'>Loading catalog&hellip;</div>"
          "<div class='cat-field' id='cat-field-vendor'>"
-           "<label>Vendor</label>"
+           "<label>Vendor (click to change)</label>"
            "<input class='cat-input' id='cat-in-vendor' placeholder='Loading&hellip;' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-vendor'></div>"
          "</div>"
          "<div class='cat-field disabled' id='cat-field-type'>"
-           "<label>Material type</label>"
+           "<label>Material type (click to change)</label>"
            "<input class='cat-input' id='cat-in-type' placeholder='Pick a vendor first' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-type'></div>"
          "</div>"
          "<div class='cat-field disabled' id='cat-field-material'>"
-           "<label>Material</label>"
+           "<label>Material (click to change)</label>"
            "<input class='cat-input' id='cat-in-material' placeholder='Pick a vendor first' disabled autocomplete='off'>"
            "<div class='cat-panel' id='cat-panel-material'></div>"
          "</div>"
          "<div id='cat-resolved'></div>"
          "</div>";
+    // Start on the last catalog pick from ONBOARDING (last_onboard.h), on
+    // direct user request (2026-10-20): the same stored values, read only. A
+    // Stock List save never writes them, so a stock session still cannot shift
+    // onboarding's defaults (the reason last_stock.h is separate). Add only:
+    // an Edit form is about one existing row, and a different remembered
+    // product in its catalog fields would read as that row's.
+    if (s.id == 0 && lastOnboardCatPackage()[0])
+        p += "<div id=\"cat-last\" hidden data-vendor=\"" + esc(lastOnboardCatVendor())
+           + "\" data-type=\"" + esc(lastOnboardCatType())
+           + "\" data-pkg=\"" + esc(lastOnboardCatPackage()) + "\"></div>";
     p += "<input type='hidden' name='source' id='cat-source' value='manual'>"
          "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
          "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
