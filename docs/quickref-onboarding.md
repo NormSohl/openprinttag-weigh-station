@@ -2,64 +2,32 @@
 
 *Print this page and keep it at the station. Full detail: [user-manual.md](user-manual.md).*
 
-Mainly for processing new stock as it arrives from a vendor — once per new,
-untagged reel.
+For each new, untagged reel.
 
 ## Steps
 
-1. **Apply an OpenPrintTag sticker** to the spool's flat hub face — centered
-   so it lands over the reader. Press firmly.
+1. **Stick an OpenPrintTag sticker** on the flat hub face, centered. Press firmly.
 2. **Place the spool on the scale.**
-3. The display shows a 2-second countdown, then in the last second the digit
-   turns **red** and the text switches to **"Writing tag now!"**:
+3. The display counts down from 2 ("New tag found / Remove to cancel").
+   - **Remove the spool** to cancel.
+   - **Leave it** to register.
+4. The display shows **"Registered! Spool #N / NEEDS ONBOARDING"** and a QR code.
+5. **Scan the QR code**, or open `weighstation.local/onboard`. Keep the spool
+   on the scale.
+6. Under **"This spool is…"**:
+   - **Same product as one on file?** Pick it from the list.
+   - **New product?** Use the catalog search. The catalog fields show the
+     last product picked. Same product? Leave them. Different? Click a field
+     to change it.
+   - **Not in the catalog?** Open **Or enter manually**. Use **+ Add new** for
+     anything missing.
+7. **Set the tare** (required): pick a **spool profile**, type it, or put an
+   empty spool of the same type on the scale and press **Capture tare**.
+8. **Cost** (optional): type what the reel cost. Blank keeps the current
+   price; `0` clears it.
+9. Press **Save & write tag.**
 
-   > New tag found
-   > Remove to cancel
-   > Registering in: 2…
-
-   - **Remove the spool** within the countdown to cancel (e.g. it landed on
-     the scale by accident).
-   - **Leave it in place** to confirm — the station formats the tag and
-     assigns a spool number.
-4. Display shows the spool number and a QR code:
-
-   > Registered!  Spool #58  212 g
-   > NEEDS ONBOARDING
-
-   The spool is now trackable but has no material data yet.
-5. **Enter data for the new spool from any web browser.** Scan the QR code
-   with your phone or tablet, or browse to `weighstation.local/onboard` on
-   any device on the same network, while the spool is still on the scale.
-6. On the **Onboard** page, the "This spool is…" dropdown defaults to
-   **"a new product"**:
-   - Already have this exact product on file? **Scroll down to select
-     "another spool of X"** — it inherits vendor/material/colour/tare with
-     nothing to retype. Different kind of spool this time? Set its tare
-     below; it applies to this spool only.
-   - New product (the default)? **Use the catalog search.** The catalog
-     fields show the last product picked. Same product? Leave them.
-     Different? Click a field to change it.
-   - Not in the catalog? Expand **Enter details manually**. Vendor, material,
-     and colour each default to whatever you picked last time, and each has
-     a **+ Add new** option if it's not in the list yet.
-   - **Spool profile** (next to the tare box) starts blank every time.
-     Picking one fills in the empty-spool tare. **Required for manual
-     entry** (it also sets the full weight); optional after a catalog pick.
-     You can still type the tare yourself, or use **Capture tare** with a
-     matching empty spool.
-   - **A tare is required.** If the form says it needs one, type it, pick a
-     profile that has one, or use **Capture tare**.
-7. **Cost for this spool** — optional, near the top. Enter what this reel
-   cost if you know it; leave it blank if you don't. It feeds the dollar
-   figures on the Usage page. The box starts empty every time, on purpose —
-   leaving it blank on a later edit keeps whatever was already recorded,
-   it does not erase it. (To clear a price, type `0`.)
-8. Click **Save & write tag.** The full data is written to the tag.
-
-Done — the tag now carries real identity, and the spool is in inventory.
-**Place the next spool** and the page carries you straight into *its*
-onboarding form — no need to click the Onboard nav link again. Handy for
-working through a stack of new reels back to back.
+**Next spool:** place it. The page moves to it.
 
 **Spool already has a vendor tag?** Just place it. No onboarding needed.
 
@@ -69,11 +37,6 @@ working through a stack of new reels back to back.
 
 **Don't rewrite station tags with the Prusa app.** It retires the spool.
 
-
-**Tag stuck on "Read Error"** after a registration that failed partway (tag
-is half-written — no longer blank, but not valid either): open the
-**Erase Tag** page, start erase mode, then place the stuck spool — it erases
-immediately, same recovery as before, no serial cable needed.
-
-**Stop erase mode** once it's done, then place the spool again — it
-registers from scratch.
+**"Read Error" after a failed registration:** open **Erase Tag**, press
+**Start erase mode**, place the spool, press **Stop erase mode**, then place
+it again.

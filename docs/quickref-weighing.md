@@ -2,37 +2,26 @@
 
 *Print this page and keep it at the station. Full detail: [user-manual.md](user-manual.md).*
 
-Weigh after every print if at all possible — plus before one, or any other
-time.
+**Weigh every spool when you return it.** Weighing at other times is fine too.
 
 ## Steps
 
-1. **Place the spool on the scale.** The scale starts reading the moment the
-   spool lands.
-2. **Wait a second or two.** The display settles on the spool number,
-   material, and remaining weight.
-3. **Remove the spool.** The reading is already saved. The display returns
-   to idle.
+1. **Place the spool on the scale.**
+2. **Wait** until the display shows the spool number and remaining weight.
+3. **Remove the spool.** The weight is saved.
 
-**Weigh it when you return it — every time, if at all possible.** That's
-what keeps remaining weight accurate for the next person. Weighing when you
-take it out is useful too, and you can weigh a spool any other time you want
-to check on it — none of that is required the way returning it is.
+## What the display means
 
-## What the display is telling you
-
-| Screen | Meaning |
+| Screen | What to do |
 |---|---|
-| Green, "Place spool to begin" | Idle — ready to go |
-| "Weighing…" | Reading the load cell — don't lift yet |
-| Spool #, material, grams, "Weight recorded" | Done — safe to remove |
-| "Registered! / NEEDS ONBOARDING" | This is a brand-new tag — see the Onboarding quick-ref |
-| Red "Read Error" | Reposition the spool so the tag centers over the reader |
-| Orange, "Scale not calibrated" | Weights aren't trustworthy yet — flag for an admin |
+| Green, "Place spool to begin" | Ready. Place a spool. |
+| "Weighing…" | Wait. Don't lift yet. |
+| Spool #, material, grams, "Weight recorded" | Done. Remove the spool. |
+| "Registered! / NEEDS ONBOARDING" | New tag. See the Onboarding quick-ref. |
+| Red "Read Error" | Move the spool so the tag sits over the reader. |
+| Orange, "Scale not calibrated" | Tell an admin. |
 
 ## If something looks wrong
 
-- **Read error every time in the same spot:** the tag antenna may be cracked —
-  flag the spool for a new tag.
-- **Weight looks way off:** don't fix it yourself — tell an admin, the scale
-  may need recalibrating.
+- **Read Error every time:** the tag may be damaged. Flag the spool for a new tag.
+- **Weight looks wrong:** tell an admin.
