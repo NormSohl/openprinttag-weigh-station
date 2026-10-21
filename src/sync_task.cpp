@@ -855,9 +855,12 @@ void syncTask(void* param) {
             // as filament consumed. An adopted tag's record was built from that
             // tag, so the two agree unless someone has deliberately changed it.
             float tare = main.empty_container_weight;
+            bool  tareFromStore = false;
             SpoolRecord rec;
-            if (sSpoolId > 0 && storeGetSpool((uint32_t)sSpoolId, rec) && rec.empty_g > 0.0f)
+            if (sSpoolId > 0 && storeGetSpool((uint32_t)sSpoolId, rec) && rec.empty_g > 0.0f) {
                 tare = rec.empty_g;
+                tareFromStore = true;
+            }
             float remaining = (tare > 0.0f) ? weight - tare : weight;
             if (remaining < 0.0f) remaining = 0.0f;
 
@@ -865,6 +868,17 @@ void syncTask(void* param) {
                        ? main.actual_netto_full_weight - remaining
                        : 0.0f;
             if (used < 0.0f) used = 0.0f;
+
+            // Every input to the weigh, on the wire. An adoption on 2026-10-20
+            // logged used 0 where tag actual 1000 - remaining 901.5 says 98.5,
+            // with nothing found in the code that could produce it; the next
+            // occurrence should show which input was off rather than leave it
+            // to be re-derived from the code.
+            Serial.printf("[sync] weigh #%d: gross %.1f  tare %.1f (%s)  remaining %.1f  "
+                          "actual %.1f  used %.1f\n",
+                          sSpoolId, weight, tare,
+                          tareFromStore ? "store" : "tag",
+                          remaining, main.actual_netto_full_weight, used);
 
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             gTagAux.consumed_weight = used;
