@@ -121,6 +121,28 @@ Build `5918800`. A tag **written by Prusa's iPhone app** onto an already-used sp
 - **Note on `/import`:** its own validation only requires one decodable line, so the host replay is the real check. Stop erase mode before importing.
 - **Fix: `3ab5966`.** Adoption retires the spool that held the chip, and `/spool` shows "Tag previously on" / "Tag later on". Both pages rendered correctly on #61/#64 before #61 was deleted. The retire on re-adoption itself is **untested**: it needs a tag re-encoded elsewhere and then placed.
 
+### Verified on hardware (2026-10-20/21): onboarding page, weigh log line, tare rebase on a real spool
+
+Builds `b9e4caa` → `d99c83b`, live store. Test spool: the erased tag from the third-party test (chip `df590766080104e0`, whose earlier records had all been deleted).
+
+- **Weigh log line (`b9e4caa`): ✅** On the first real weigh it printed `[sync] weigh #101: gross 1085.1  tare 0.0 (tag)  remaining 1085.1  actual 0.0  used 0.0`, which is correct for a placeholder record (no tare, no full weight).
+- **Placeholder identity sticks: ✅** #102 came back as #102 after a reboot and after a real lift-and-replace, with no new record. So the placeholder's UUID write reaches the tag.
+- **Tare rebase on a real spool: ✅** Onboarding #102 with a 200 g tare dropped its remaining from 1091.8 to **891.8 g at once**, with no weigh and no usage booked. That's the first hardware sighting of `storeAppendEvent()`'s tare→`Checkpoint` rebase (`6ab45d5`).
+- **Onboarding page (`d99c83b`): ✅, user-tested.**
+  - The catalog search's labels read "(click to change)".
+  - Clicking a filled field opens the whole list.
+  - A catalog-path onboard saved the pick (`esun` / `petg` / `…/esun-petg-translucent-blue-1kg.yaml`, NVS `last_ob`).
+  - `/stock`'s Add form then replayed it into all three fields and resolved it.
+  - The `/onboard` replay itself can only be seen on the next spool that needs onboarding. It runs the same `CATALOG_SCRIPT` code path that `/stock` exercised.
+- **⚠️ Open: #101 was retired at 00:26:15 with no matching new record.**
+  - Placeholder #101 was created at 00:15. At 00:26 a `retire` landed, and at 00:33 a new placeholder **#102** was created on the same chip. That pattern means the tag read as having no identity, and the chip-reuse rule retired the previous holder.
+  - The blank-tag path mints its placeholder right after the retire, so a retire with no placeholder alongside it is unexplained. Nobody clicked Close, the serial logger was stopped for a firmware build at that moment, and the board was reflashed shortly after.
+  - Most likely #101's UUID write never reached the tag (spool lifted early?), and a placement or reboot was then cut short.
+  - Repeat with the logger running throughout. Note that **opening the serial logger can reset the board**, and with a spool on the scale a reset counts as a placement.
+- **Cleanup:** #101, #102 and the product #69 created by the test (eSUN PETG Translucent Blue) were all deleted by log edit + `/import`. The result was byte-identical to the pre-test log (430 lines). Usage is back to 1398.0 g, so the 1085.1 g October row from #101's retire is gone.
+  - The tag still carries #102's onboarded identity. **Erase it before reusing it as a blank test tag.** That's safe now, since no record holds the chip.
+  - Next spool #103, next product #70.
+
 ### Due on the bench (2026-09-30): every tag written the same way, per-spool tare
 
 **Compiles clean** — `4443a99` built with `pio run` on 2026-09-30 with no changes, the first compile of `nfc_task.cpp`, `sync_task.cpp`, `web_app.cpp` and `config_store.cpp` for this set (the session that wrote it could not reach the registry). `opt_tag.cpp` and `store.cpp` are also covered natively (`tools/opt/optfuzz`, `tools/store/run.sh`). **Not yet flashed or run on the bench.**
