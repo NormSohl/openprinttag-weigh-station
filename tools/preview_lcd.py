@@ -119,7 +119,7 @@ states=[
   [T("Read Error",RED), R(2,"Reposition spool",W), R(3,"or remove tag",W)]),
  ("AwaitingFormatConfirm  (blank-tag countdown)", ("#ffaa22","amber, blinking")
   ,[T("New tag found",AMBER), R(2,"Remove to cancel",W), R(3,"Registering in:",W),
-    BIG(216,160,"3",AMBER)]),
+    BIG(216,160,"2",AMBER)]),  # BLANK_TAG_CONFIRM_SEC is 2
  ("FormattingAndRegistering", ("#3355ff","blue"),
   [T("Registering...",BLUE), R(2,"Please wait",W)]),
  ("ForeignTagFound / Registering", ("#33cccc","cyan"),
