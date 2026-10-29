@@ -5,10 +5,10 @@ discussion on the Mac; the reasoning is kept here so the branch carries it.
 
 | step | state |
 |---|---|
-| 1. Onboard page: "Which stock item is this?" picker over Stock List rows | not started |
-| 2. `GET /api/lookup?gtin=…` — barcode → products / Stock List rows | not started |
-| 3. Onboard page: catch scanner input, select the matching row | not started |
-| 4. Learn: a picked row's product takes the scanned barcode | not started |
+| 1. Stock List picker on `/onboard` (no scanner needed) | not started |
+| 2. `/api/lookup` + scan capture on `/onboard` | not started |
+| 3. Learn barcodes on save; flag a pick whose barcode disagrees | not started |
+| 4. Scans on `/stock`; GTIN shown and editable on `/product` | not started |
 | 5. Repair page: unlinked products vs. Stock List rows with nothing on hand | not started — this is step 7 (*Product merge*) of `onboarding-vocabulary.md` |
 
 ## The problem
@@ -87,34 +87,108 @@ no firmware radio work.
     host on the station, and Wi-Fi coexistence testing. Only worth it if
     members onboard from their own phones.
 
-## How it fits together
+## Integration plan
 
-1. **Picker.** `/onboard` leads with "Which stock item is this?": a
-   searchable list of Stock List rows by our own names, with colour swatch.
-   Picking one resolves to `CfgStock::product`. "A new product" / database
-   search follow for filament we do not stock.
-2. **Lookup.** `GET /api/lookup?gtin=N` returns the products with that GTIN
-   and the Stock List rows linked to them. Read-only, so open like every
-   other read.
-3. **Scan capture.** Page-level key listener: 8–14 digits arriving a few
-   milliseconds apart and ending in Enter is a scan, not typing. Handled
-   wherever focus is, and the Enter must not submit the form. Then:
-   - one row → select it, show "Scanned: eSUN PLA+ Black";
-   - several → ask which;
-   - none → open the picker.
-4. **Learn.** When staff pick a row after a scan that matched nothing, the
-   row's product takes that GTIN (through `/product`'s propagation path, so
-   it is an ordinary product edit in the log). The next box of the same
-   filament matches by itself. Never overwrite a product's existing,
-   different GTIN silently — ask.
-5. **Repair.** Existing mismatches on production predate all of this:
-   products with spools on hand but no Stock List row, beside Stock List
-   rows reading zero. Link them with the planned product merge
-   (`onboarding-vocabulary.md` step 7), which keeps the losing product's
-   identifiers as aliases so the matcher learns.
+The key fact: `/onboard` already has the "another spool of X" path, a
+`<select name='product' id='prod'>` whose value `handleApiOnboard` resolves
+directly (product id → identity, product tare as the default). **The Stock
+List picker and the scanner both just set that select.** The onboarding
+write path, the tag write and the reorder roll-up stay as they are.
 
-Everything except the scanner is firmware and web app, testable on the
-bench by typing a barcode into the page.
+### Phase 1 — Stock List picker (useful with no scanner)
+
+- `/onboard`, above "This spool is…": **"Which stock item is this?"**, a
+  search box over Stock List rows, using the row's own name and the linked
+  product's colour swatch. Rendered server-side from `cfgStockAt()` +
+  `storeGetProduct()`; filtered in the page as you type (~60 rows, no
+  server round trip).
+- Picking a row sets `#prod` to `CfgStock::product` and fires its
+  `onchange`, so `#newprod` hides exactly as a manual pick does. A small
+  "✓ eSUN PLA+ Black (Stock List)" line confirms it; "clear" puts `#prod`
+  back to "a new product".
+- Rows with **no product id**, or one that no longer resolves, are listed
+  greyed with "not linked — fix on Stock List", never selectable: picking
+  one would have to guess a product, which is the bug being fixed.
+- Tare is unchanged: the profile picker / tare box stay visible, product
+  tare is the default, a typed tare wins (per `onboarding-vocabulary.md`).
+- Also: the `#prod` product list gets the same search box. The bench
+  review already noted the "~62-item product list has no search".
+
+### Phase 2 — Barcode lookup and scan capture
+
+- **`GET /api/lookup?gtin=N`** (open read, like every other GET). Matches
+  `ProductRecord::gtin` and the Stock List row's own `CfgStock::gtin`, and
+  returns `{gtin, products:[{id, vendor, material, nom_g}], stock:[{id,
+  name, product}]}`. Comparison is numeric (`uint64`), so a 12-digit UPC-A
+  and its 13-digit EAN form (leading 0) match without special cases.
+- **Scan capture**, one shared script (`SCAN_SCRIPT`, same pattern as
+  `CATALOG_SCRIPT`) so `/onboard` and `/stock` behave identically:
+  - A document-level `keydown` listener buffers digits that arrive **< 50 ms
+    apart**; a burst of **8, 12, 13 or 14 digits ending in Enter**, with a
+    **valid GS1 check digit**, is a scan. Anything else is typing and is
+    left alone. The check digit is what stops a fast typist or a pasted
+    number from triggering it.
+  - Works wherever focus is. If the burst landed in a focused input, that
+    input's value is restored to what it was when the burst began, and the
+    Enter's default is prevented so the form never submits from a scan.
+  - Result on `/onboard`:
+    - **one Stock List row** → select it as in phase 1, show "Scanned
+      6922572219021 → eSUN PLA+ Black";
+    - **one product, not on the Stock List** → select it in `#prod`, with a
+      note that it is not a stock item;
+    - **several** (the two duplicate eSUN codes) → show just those rows to
+      choose from;
+    - **none** → open the Stock List picker with "Unknown barcode — pick the
+      stock item"; the barcode is kept for phase 3.
+- **Scan before the spool is placed.** The page shows "No spool is on the
+  scale" until one is, then `onboardWatchScript` reloads it. A scan on that
+  page is held in `sessionStorage` (≤ 2 min) and applied after the reload,
+  so either order works. Wrapped in try/catch like every storage access.
+- Scanner setup: none beyond the default (digits + Enter suffix). No prefix
+  character needed thanks to the timing + check-digit rule.
+
+### Phase 3 — Learn barcodes; catch wrong picks
+
+- The page sends the scanned code as a hidden `scan_gtin` field.
+- `handleApiOnboard`, **after** all validation (a 4xx must not have changed
+  anything — see the gotcha in CLAUDE.md):
+  - product resolved and its `gtin` is 0 → set it, via
+    `storeUpsertProduct()` + `storePropagateProduct()`, so it is an ordinary
+    product edit and the spools' tags pick it up through the reconcile loop;
+  - product already has the **same** GTIN → nothing;
+  - product has a **different** GTIN → do not overwrite. Record nothing,
+    and show "this product's barcode is X, you scanned Y" on the result
+    page. Either the pick or the database is wrong; a person decides on
+    `/product`.
+- **Catalog path cross-check.** When "a new product" is chosen by database
+  search after a scan, compare the pick's `cat_gtin` with the scan before
+  submit: different → "the database says this package's barcode is X, you
+  scanned Y — wrong package?" This catches exactly the near-neighbour picks
+  (refill vs spool, another size) that cause the problem today. A pick with
+  no GTIN takes the scanned one.
+
+### Phase 4 — Stock List and Products pages
+
+- `/stock` Add/Edit: a scan fills the row's **GTIN** field and, if
+  `/api/lookup` knows the product, preselects it. Building the Stock List
+  by scanning the boxes on hand is then possible.
+- `/product?id=N`: show and edit the GTIN, so a wrong one learned in phase
+  3 can be fixed in the one place products are edited.
+- Stock List page: a "not linked" marker on rows with no resolvable
+  product, as a pointer to step 5 (repair).
+
+### Testing
+
+- `/api/lookup`: `curl` on the bench with codes from a seeded store.
+- Scan capture without a scanner: keyboard typing is too slow to count as a
+  scan by design, so the script exposes `window.simulateScan("…")` for the
+  browser console and accepts `?scan=…` on the URL. Real scanner on the
+  staff PC last, on site.
+- `pio run` for every phase; the web app has no native harness, so this is
+  compile-verified until the bench.
+
+Each phase is useful on its own and can ship separately: phase 1 fixes the
+matching without any hardware.
 
 ## Open questions
 
