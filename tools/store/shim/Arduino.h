@@ -12,13 +12,17 @@
 #include <string>
 
 // strlcpy/strlcat are BSD; glibc only gained them in 2.38. Provide our own
-// everywhere they are missing (older glibc, mingw, macOS). The __GLIBC_PREREQ
+// everywhere they are missing (older glibc, mingw). The __GLIBC_PREREQ
 // test must be nested inside defined(__GLIBC__) — on mingw that macro does not
 // exist, and referencing it in the #if is a hard preprocessor error.
 #if defined(__GLIBC__) && defined(__GLIBC_PREREQ)
 #  if __GLIBC_PREREQ(2, 38)
 #    define OPT_SHIM_HAVE_STRLCPY 1
 #  endif
+#endif
+// macOS (and the BSDs) have always had them in <string.h>.
+#if defined(__APPLE__)
+#  define OPT_SHIM_HAVE_STRLCPY 1
 #endif
 #ifndef OPT_SHIM_HAVE_STRLCPY
 static inline size_t strlcpy(char* d, const char* s, size_t n) {
