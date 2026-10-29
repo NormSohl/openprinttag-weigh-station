@@ -92,6 +92,7 @@ public:
         s_ = s_.substr(b, e - b + 1);
     }
     void toUpperCase() { for (auto& c : s_) c = (char)toupper((unsigned char)c); }
+    void toLowerCase() { for (auto& c : s_) c = (char)tolower((unsigned char)c); }
     String substring(size_t from) const { return from >= s_.size() ? String() : String(s_.substr(from)); }
     String substring(size_t from, size_t to) const {
         if (from >= s_.size() || to <= from) return String();

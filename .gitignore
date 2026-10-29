@@ -14,3 +14,4 @@ tools/opt/tinycbor/
 
 # Native test dependencies, cloned on demand (see tools/store/README.md)
 .deps/
+tools/sim/data/

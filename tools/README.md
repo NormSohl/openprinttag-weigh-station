@@ -1,5 +1,10 @@
 # tools/ — bench aids that need no board
 
+**`sim/` runs the real web app on this computer** — the firmware's own
+`web_app.cpp` and store, served at http://localhost:8080 with simulated
+hardware, plus browser tests. Prefer it to `preview_webapp.py` below, which
+copies markup by hand and drifts. See `sim/README.md`.
+
 Two kinds of thing here: UI previews (Python, below) and `qr/` — C harnesses
 that build and run the real QR encoder natively under AddressSanitizer, to
 check the capacity table `drawQr()` depends on. Unlike the previews, those
