@@ -159,6 +159,12 @@ product shows that row and says to fix it, rather than "unknown".*
 
 ### Phase 3 — Learn barcodes; catch wrong picks
 
+*Built on `barcode-onboarding` (`gs1Parse()` and step 1b in
+`handleApiOnboard()`, the notice in `handleSpoolDetail()`, the submit check in
+`handleOnboardForm()`). Not yet on the station. One addition to the plan: a
+scan that disagrees with a picked product's barcode asks before submit too,
+not only on the result page, the same as the catalog cross-check.*
+
 - The page sends the scanned code as a hidden `scan_gtin` field.
 - `handleApiOnboard`, **after** all validation (a 4xx must not have changed
   anything — see the gotcha in CLAUDE.md):

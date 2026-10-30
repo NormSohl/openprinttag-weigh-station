@@ -1295,6 +1295,28 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
     }
 
     String p = head("Spool", "/");
+    // After an onboard with a scan (handleApiOnboard, step 1b): say whether
+    // the barcode was learned, or that it disagrees with the product's own.
+    // Nothing was overwritten in the second case; a person decides.
+    if (req->hasParam("scan")) {
+        const String sc = req->getParam("scan")->value();
+        const uint64_t g = strtoull(sc.c_str(), nullptr, 10);
+        ProductRecord sp;
+        const bool haveP = r.product && storeGetProduct(r.product, sp);
+        if (req->hasParam("learned")) {
+            p += "<p class='card'>Barcode " + esc(sc.c_str())
+               + " is now recorded for this product; the next scan of it finds it.</p>";
+        } else if (g && haveP && sp.gtin && sp.gtin != g) {
+            char b[24];
+            snprintf(b, sizeof(b), "%llu", (unsigned long long)sp.gtin);
+            p += "<p class='card' id='scan-conflict' style='border-color:#a83'>"
+                 "This product's barcode is <b>" + String(b) + "</b>, but you scanned <b>"
+               + esc(sc.c_str()) + "</b>. Either this spool was attached to the wrong "
+                 "product, or the product's barcode is wrong. Nothing was changed: check "
+                 "the box, then fix the spool (Onboard) or <a href='/product?id="
+               + String((unsigned)sp.id) + "' style='color:#9c9'>the product</a>.</p>";
+        }
+    }
     p += "<div class='card'>";
     p += "<div class='big'>" + swatch(r.rgba)
        + "#" + String((unsigned)r.spool) + " "
@@ -1686,7 +1708,8 @@ static const char ONBOARD_SCAN_SCRIPT[] =
   "var w=document.getElementById('obwrap');"
   "if(w&&w.style.display=='none'){msg('Scanned '+c+'. This spool is already onboarded; "
     "open <i>Change this spool&rsquo;s details</i> first to use a scan.');return}"
-  "window.scanGtin=c;msg('Scanned '+c+' &mdash; looking it up&hellip;');"
+  "var sf=document.getElementById('scan-gtin');if(sf)sf.value=c;"
+  "msg('Scanned '+c+' &mdash; looking it up&hellip;');"
   "fetch('/api/lookup?gtin='+c).then(function(r){return r.json()}).then(function(j){"
     "var L=j.stock.filter(function(s){return s.product}),"
         "U=j.stock.filter(function(s){return !s.product}),seen={};"
@@ -1804,8 +1827,21 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         p += String("if((!d||d.value=='0')&&!confirm('This replaces spool #")
            + String((unsigned)cur) + "\\'s identity and rewrites its tag. Continue?'))"
              "return false;";
+    // A scan that disagrees with the chosen identity's own barcode -- the
+    // product's, or the catalog package's -- asks before saving. This is the
+    // near-neighbour pick (refill vs spool, another size) the scan is for.
+    // Compared as numbers, so UPC-A and EAN-13 forms agree.
+    p +=   "var sg=document.getElementById('scan-gtin').value,pg='';"
+           "if(sg){if(d&&d.value!='0')pg=d.selectedOptions[0].dataset.gtin||'';"
+             "else if(s&&s.value=='catalog')pg=document.getElementById('cat-f-cat_gtin').value;"
+             "if(pg&&+pg!=+sg&&!confirm((d&&d.value!='0'?'This product\\'s barcode is ':"
+               "'The database says this package\\'s barcode is ')+pg+', but you scanned '+sg+"
+               "'. Wrong product? OK saves anyway; Cancel to check.'))return false}";
     p +=   "return true;\">";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
+    // The last scan, for handleApiOnboard to learn (phase 3). Set by
+    // ONBOARD_SCAN_SCRIPT.
+    p += "<input type='hidden' name='scan_gtin' id='scan-gtin'>";
 
     // Applies regardless of which of the three paths below resolves the rest
     // of the identity -- what THIS spool cost is a fact about the purchase,
@@ -1855,8 +1891,10 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
             const bool isCur = haveCur && q.id == curProd.id;
+            char gb[24] = "";
+            if (q.gtin) snprintf(gb, sizeof(gb), "%llu", (unsigned long long)q.gtin);
             p += "<option value='" + String((unsigned)q.id) + "' data-tare='"
-               + String(q.empty_g, 1) + "'"
+               + String(q.empty_g, 1) + "' data-gtin='" + gb + "'"
                + (isCur ? " selected" : "") + ">"
                + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
                + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
@@ -2055,6 +2093,22 @@ static void handleApiTare(AsyncWebServerRequest* req) {
 // (Onboard's catalog and manual paths, the Stock List's catalog path below)
 // so the same real filament converges on the same product id regardless of
 // which page or path it was entered through.
+// A scanned barcode as a number, or 0 unless it is 8/12/13/14 digits with a
+// valid GS1 check digit -- the same rule SCAN_SCRIPT applies in the browser,
+// checked again here because a form field is only a claim.
+static uint64_t gs1Parse(const String& c) {
+    const size_t n = c.length();
+    if (n != 8 && n != 12 && n != 13 && n != 14) return 0;
+    int sum = 0;
+    for (size_t i = 0; i < n; i++) if (c[i] < '0' || c[i] > '9') return 0;
+    for (size_t i = 0; i + 1 < n; i++) {
+        const int d = c[n - 2 - i] - '0';
+        sum += (i % 2) ? d : 3 * d;
+    }
+    if ((10 - sum % 10) % 10 != c[n - 1] - '0') return 0;
+    return strtoull(c.c_str(), nullptr, 10);
+}
+
 static uint32_t findOrCreateProduct(ProductRecord& probe) {
     ProductRecord found;
     if (storeFindProduct(probe, found)) return found.id;
@@ -2366,6 +2420,28 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     e.cost = costArg.length() ? costArg.toFloat() : rec.cost;
     storeAppendEvent(e);
 
+    // 1b) Learn the scanned barcode (docs/design/barcode-onboarding.md,
+    //     phase 3). Past every 4xx above, so a refused submit learns nothing.
+    //     Only fills a product that has NO barcode: one that has a different
+    //     one is either the wrong pick or a database mistake, and a person
+    //     decides which on /product -- the spool page says so (see
+    //     handleSpoolDetail). Learning is an ordinary product edit, so it is
+    //     propagated like one: every spool of the product gets a Reconcile and
+    //     its tag picks the barcode up on next placement.
+    const uint64_t scanned = gs1Parse(arg("scan_gtin"));
+    bool learned = false;
+    if (scanned && e.product) {
+        ProductRecord lp;
+        if (storeGetProduct(e.product, lp) && lp.gtin == 0) {
+            lp.gtin = scanned;
+            if (storeUpsertProduct(lp)) {
+                storePropagateProduct(lp.id);
+                learned = true;
+                gtin = scanned;   // and onto this spool's tag, written below
+            }
+        }
+    }
+
     // 2) If this spool is on the scale, write the full OPT Main to its tag now.
     //    (Identity + material temps/class/type + weights.) syncTask's reconcile
     //    loop is idempotent, so a redundant later write is harmless.
@@ -2427,7 +2503,13 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     // eight fields and being returned to an aggregate roll-up gives no
     // confirmation that any of them took; the detail page shows the colour,
     // vendor, tare, nominal and weigh history for this exact record.
-    req->redirect("/spool?id=" + String((unsigned)id));
+    String to = "/spool?id=" + String((unsigned)id);
+    if (scanned) {
+        char b[24];
+        snprintf(b, sizeof(b), "%llu", (unsigned long long)scanned);
+        to += String("&scan=") + b + (learned ? "&learned=1" : "");
+    }
+    req->redirect(to);
 }
 
 // ── GET /erase — bulk tag-erase mode ──────────────────────────────────────────

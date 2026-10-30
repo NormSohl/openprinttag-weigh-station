@@ -303,3 +303,87 @@ def test_scan_of_an_unlinked_stock_row_says_to_fix_it(sim, page):
     page.wait_for_selector("#scan-msg:has-text('not linked')")
     assert page.input_value("select#prod") == "0"
     assert page.locator("#stk-list .stk:visible").count() == 1
+
+
+# ── Learn barcodes; catch wrong picks (barcode-onboarding.md, phase 3) ────────
+
+def _product(sim, pid):
+    return next(p for p in sim.get_json("/api/products") if p["id"] == pid)
+
+
+def test_scan_then_pick_teaches_the_product_its_barcode(sim, page):
+    pid = _linked_stock_row(sim, page)               # a product with no barcode
+    code = gs1("400000000000")
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, code)
+    page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
+    page.click(f"#stk-list .stk[data-prod='{pid}']")
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*learned=1*")
+    assert "now recorded for this product" in page.content()
+    assert [p["id"] for p in sim.get_json("/api/lookup?gtin=" + code)["products"]] == [pid]
+
+    # The next box of it is recognised straight away.
+    sim.remove()
+    sim.blank(gross=1050)
+    page.goto(sim.url("/onboard"))
+    scan(page, code)
+    page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
+    assert page.locator("#stk-ok").is_visible()
+
+
+def test_a_scan_never_overwrites_a_different_barcode(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    other = gs1("400000000000")
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, other)
+    page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
+    page.select_option("select#prod", str(pid))
+
+    # Cancel keeps the page; OK saves, but the product keeps its barcode.
+    page.once("dialog", lambda d: d.dismiss())
+    page.click("button[type=submit]")
+    page.wait_for_timeout(300)
+    assert "/onboard" in page.url
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    assert "barcode is " + EAN.lstrip("0") in msgs[0] or "barcode is " + EAN in msgs[0]
+    assert page.locator("#scan-conflict").is_visible()
+    assert str(_product(sim, pid)["gtin"]).lstrip("0") == EAN.lstrip("0")
+
+
+def test_catalog_pick_with_a_different_barcode_asks(sim, page):
+    _onboard_manually(sim, page)                     # so the page has #prod
+    sim.remove()
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, UPC)
+    page.wait_for_selector("#scan-msg:not([hidden])")
+    # Stand in for a catalog pick (the catalog itself is fetched from GitHub,
+    # which the tests block): CATALOG_SCRIPT fills these same fields.
+    page.evaluate("""() => {
+        const f = (k, v) => document.getElementById('cat-f-' + k).value = v;
+        document.getElementById('cat-source').value = 'catalog';
+        f('cat_vendor', 'eSUN'); f('cat_material', 'PLA+ Red'); f('cat_abbr', 'PLA');
+        f('cat_nom_g', '1000'); f('cat_empty_g', '220'); f('cat_dia', '1.75');
+        f('cat_gtin', '%s');
+    }""" % gs1("690000000000"))
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.dismiss()))
+    page.click("button[type=submit]")
+    page.wait_for_timeout(300)
+    assert msgs and "database says" in msgs[0]
+    assert "/onboard" in page.url
+
+
+def test_server_ignores_a_scan_with_a_bad_check_digit(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    spool = sim.get_json("/_sim/state")["spool"]
+    bad = UPC[:-1] + str((int(UPC[-1]) + 1) % 10)
+    sim._post("/api/onboard", id=spool, product=pid, scan_gtin=bad)
+    assert "gtin" not in _product(sim, pid)
