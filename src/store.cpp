@@ -156,6 +156,11 @@ static String encodeBody(const StoreEvent& e) {
     if (e.ev == StoreEv::Usage) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
         b += "\"mat\":\"";    b += jsonEsc(e.material); b += "\",";
+        // Omitted when 0, so older lines and product-less rows read the same.
+        if (e.product) {
+            snprintf(n, sizeof(n), "%u", (unsigned)e.product);
+            b += "\"prod\":"; b += n; b += ",";
+        }
         snprintf(n, sizeof(n), "%.1f", e.usage_g);              b += "\"grams\":";  b += n; b += ",";
         snprintf(n, sizeof(n), "%u", (unsigned)e.usage_weighs); b += "\"weighs\":"; b += n; b += ",";
         snprintf(n, sizeof(n), "%.2f", e.usage_dollars);        b += "\"dollars\":"; b += n; b += ",";
@@ -248,6 +253,7 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.usage_g       = doc["grams"]   | 0.0f;
         e.usage_weighs  = doc["weighs"]  | 0u;
         e.usage_dollars = doc["dollars"] | 0.0f;
+        e.product       = doc["prod"]    | (uint32_t)0;
     }
     const bool ident = (e.ev == StoreEv::Onboard || e.ev == StoreEv::Reconcile ||
                         e.ev == StoreEv::Checkpoint);
@@ -358,19 +364,25 @@ static void periodOf_(const char* ts, char* out, size_t n) {
 // Merge grams/weighs into the (period, vendor, material) bucket. The table is
 // months x categories — order of 100 rows — so a linear scan is the right shape
 // here, same as rebuildInventory_.
+// Keyed by (period, product) when the consumption has a product, else by
+// (period, vendor, material) as before products existed. The names stored on a
+// product row are the first ones seen; display uses the product's current
+// ones (storeUsageAt()).
 static void usageAdd_(std::vector<UsageRow>& tbl, const char* period,
                       const char* vendor, const char* material,
-                      float grams, uint32_t weighs, float dollars = 0) {
+                      float grams, uint32_t weighs, float dollars = 0,
+                      uint32_t product = 0) {
     const char* mat = (material && material[0]) ? material : "(unspecified)";
     const char* ven = (vendor   && vendor[0])   ? vendor   : "(unspecified)";
     for (auto& u : tbl) {
-        if (!strcmp(u.period, period) && !strcmp(u.vendor, ven) &&
-            !strcmp(u.material, mat)) {
+        if (strcmp(u.period, period) || u.product != product) continue;
+        if (product || (!strcmp(u.vendor, ven) && !strcmp(u.material, mat))) {
             u.grams += grams; u.weighs += weighs; u.dollars += dollars;
             return;
         }
     }
     UsageRow r;
+    r.product = product;
     strlcpy(r.period,   period, sizeof(r.period));
     strlcpy(r.vendor,   ven,    sizeof(r.vendor));
     strlcpy(r.material, mat,    sizeof(r.material));
@@ -421,7 +433,8 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
     if (e.ev == StoreEv::Usage) {
         char p[8];
         strlcpy(p, e.ts, sizeof(p));        // ts holds "YYYY-MM" for these
-        usageAdd_(usage, p, e.vendor, e.material, e.usage_g, e.usage_weighs, e.usage_dollars);
+        usageAdd_(usage, p, e.vendor, e.material, e.usage_g, e.usage_weighs, e.usage_dollars,
+                  e.product);
         return;
     }
     if (e.uuid[0] == 0) return;
@@ -470,7 +483,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
             // back to r.material, which for those IS the bare type, so old and
             // new rows still merge on the same key.
             usageAdd_(usage, p, r.vendor, r.abbr[0] ? r.abbr : r.material,
-                      delta, 1, delta * rate);
+                      delta, 1, delta * rate, r.product);
         }
     }
 
@@ -895,11 +908,42 @@ bool storeSpoolAt(size_t idx, SpoolRecord& out) {
     out = sSpools[idx];
     return true;
 }
-size_t storeUsageCount() { Lock lk; return sUsage.size(); }
+// What callers see: the raw rows with each product row's names replaced by its
+// product's CURRENT vendor and type (abbreviation, else material), following
+// merges, then rows that now share period + vendor + material summed. So a
+// renamed or merged product's history stays in one row. Rebuilt on every
+// storeUsageCount() -- call it, then storeUsageAt() for that snapshot.
+static int productIndex_(uint32_t id);
+static int resolveProduct_(int i);
+static std::vector<UsageRow> sUsageView;
+static void rebuildUsageView_() {   // caller holds the lock
+    sUsageView.clear();
+    for (const UsageRow& raw : sUsage) {
+        UsageRow r = raw;
+        const int i = raw.product ? resolveProduct_(productIndex_(raw.product)) : -1;
+        if (i >= 0) {
+            const ProductRecord& q = sProducts[i];
+            if (q.vendor[0]) strlcpy(r.vendor, q.vendor, sizeof(r.vendor));
+            const char* m = q.abbr[0] ? q.abbr : q.material;
+            if (m[0]) strlcpy(r.material, m, sizeof(r.material));
+        }
+        bool merged = false;
+        for (UsageRow& v : sUsageView)
+            if (!strcmp(v.period, r.period) && !strcmp(v.vendor, r.vendor) &&
+                !strcmp(v.material, r.material)) {
+                v.grams += r.grams; v.weighs += r.weighs; v.dollars += r.dollars;
+                merged = true;
+                break;
+            }
+        if (!merged) { r.product = 0; sUsageView.push_back(r); }
+    }
+}
+size_t storeUsageCount() { Lock lk; rebuildUsageView_(); return sUsageView.size(); }
 bool storeUsageAt(size_t idx, UsageRow& out) {
     Lock lk;
-    if (idx >= sUsage.size()) return false;
-    out = sUsage[idx];
+    if (sUsageView.empty() && !sUsage.empty()) rebuildUsageView_();
+    if (idx >= sUsageView.size()) return false;
+    out = sUsageView[idx];
     return true;
 }
 
@@ -1766,6 +1810,7 @@ bool storeCompact() {
         x.usage_g       = u.grams;
         x.usage_weighs  = u.weighs;
         x.usage_dollars = u.dollars;
+        x.product       = u.product;   // a product-keyed row must stay one across the fold
         if (!emit(encodeLine(x))) { ok = false; break; }
     }
 

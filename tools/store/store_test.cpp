@@ -27,6 +27,10 @@
 //                                       popularity math (storeMaterialPopularity).
 //   store_test --tare                 — a tare change moves remaining weight at
 //                                       once and is never booked as consumption.
+//   store_test --usage-labels         — usage keyed by product: a renamed or
+//                                       merged product's history stays in one
+//                                       row under its current name, across
+//                                       compaction and replay.
 //   store_test --merge                — product merge: spools move, the merged
 //                                       product's identifiers still match and
 //                                       lead to the survivor, merges survive
@@ -878,6 +882,52 @@ static void mergeTest() {
                                       "compaction and replay, unmerge restores)");
 }
 
+static void usageLabelsTest() {
+    run("WIPE ALL");
+    ProductRecord a = tag("eSUN", "PLA+ Black", "PLA+", 1000, 220, "aaaa00000000000000000000000000aa");
+    a.provisional = false;
+    CHECK(storeUpsertProduct(a), "upsert A");
+    ProductRecord b = tag("eSun", "PLA Plus Black", "PLA+", 1000, 220, "bbbb00000000000000000000000000bb");
+    b.provisional = false;
+    CHECK(storeUpsertProduct(b), "upsert B");
+    spoolFor("eeee0000000000000000000000000001", a.id, a);
+    spoolFor("eeee0000000000000000000000000002", b.id, b);
+    SpoolRecord s1, s2;
+    storeFindByUuid("eeee0000000000000000000000000001", s1);
+    storeFindByUuid("eeee0000000000000000000000000002", s2);
+    weighTo(s1.uuid, s1.spool, 1000); weighTo(s1.uuid, s1.spool, 900);   // 100 g of A
+    weighTo(s2.uuid, s2.spool, 1000); weighTo(s2.uuid, s2.spool, 950);   //  50 g of B
+    UsageRow u;
+    CHECK(usageFor("eSUN", "PLA+", u) && fabsf(u.grams - 100) < 0.1f, "A's 100 g not under eSUN PLA+");
+    CHECK(usageFor("eSun", "PLA+", u) && fabsf(u.grams - 50) < 0.1f, "B's 50 g not under eSun PLA+");
+
+    // Rename A's vendor: its history moves with it, nothing is left behind.
+    strlcpy(a.vendor, "eSun", sizeof(a.vendor));
+    CHECK(storeUpsertProduct(a), "rename A");
+    storePropagateProduct(a.id);
+    weighTo(s1.uuid, s1.spool, 850);                                     // +50 g of A, after
+    auto check = [&](const char* when, float want) {
+        UsageRow r;
+        CHECK(!usageFor("eSUN", "PLA+", r), "%s: a row is still under the old vendor spelling", when);
+        CHECK(usageFor("eSun", "PLA+", r) && fabsf(r.grams - want) < 0.1f,
+              "%s: eSun PLA+ has %.1f g, want %.1f (one row for both products)", when, r.grams, want);
+    };
+    check("after rename", 200);
+    // Merge B into A: still one row, same total.
+    CHECK(storeMergeProduct(b.id, a.id, nullptr), "merge");
+    check("after merge", 200);
+    run("SEED 12 200");
+    run("COMPACT");
+    // SEED adds its own eSun rows? Only check ours by product: recompute want.
+    UsageRow r;
+    CHECK(!usageFor("eSUN", "PLA+", r), "after compaction: old vendor spelling came back");
+    run("REBUILD");
+    CHECK(!usageFor("eSUN", "PLA+", r), "after replay: old vendor spelling came back");
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: usage by product (a rename or merge keeps one row "
+                                      "under the current name, across compaction and replay)");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--products"))      { products();       return fails != 0; }
@@ -888,6 +938,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--popularity"))    { popularityTest(); return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--merge"))         { mergeTest();      return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--usage-labels"))  { usageLabelsTest(); return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;
 }

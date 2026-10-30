@@ -1,6 +1,12 @@
 # Design: product names are labels, not keys
 
-Status: **proposed** (2026-10-29) — nothing built. Follows
+Status: **built** on branch `names-are-labels` (2026-10-30), off
+`barcode-onboarding`; not on the station. Items 1–4 below are done:
+Reorder counts linked products only (`rollUp()`), popularity and Usage key
+on the product (following merges; Usage rows gain `"prod"`, a format
+change), and typed entries match by identifiers only, with "This is a new
+product" required. **Flash it only after the real Stock List is linked on
+`/repair`** (from the barcode branch), or its unlinked items drop off Reorder. Follows
 `barcode-onboarding.md` (to be on the station first) and settles step 8 of
 `onboarding-vocabulary.md` in favour of option C.
 

@@ -238,6 +238,13 @@ struct ProductRecord {
 // event count, which is why keeping them forever is affordable.
 struct UsageRow {
     char     period[8]    = {};  // "YYYY-MM"
+    // The product consumed (2026-10-30; docs/design/names-are-labels.md).
+    // When set, the row is keyed by it, and storeUsageAt() shows the
+    // product's CURRENT vendor and type, following merges, so renaming a
+    // product doesn't split its usage history. vendor/material below are the
+    // names at the time: kept for rows with no product (older lines, spools
+    // that never had one) and as a fallback. 0 on every line written before.
+    uint32_t product      = 0;
     char     vendor[64]   = {};
     char     material[64] = {};
     float    grams   = 0;         // consumed during this period
