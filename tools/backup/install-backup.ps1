@@ -42,6 +42,6 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $At
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries `
               -AllowStartIfOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 Register-ScheduledTask -TaskName 'Weigh station backup' -Action $action -Trigger $trigger `
-    -Settings $settings -Description 'Daily backup of the filament weigh station (event log + Settings).' `
+    -Settings $settings -Description 'Daily backup of the filament weigh station (event log + config catalog).' `
     -Force | Out-Null
 Write-Host "Scheduled 'Weigh station backup': daily at $At, or as soon as the PC is next on. (Task Scheduler shows it.)"
