@@ -1726,7 +1726,7 @@ static void stockPickerField(String& p) {
         // Searchable text: the row's own words plus the linked product's,
         // since the two were named separately and either may be what's
         // printed on the box.
-        String hay = name + " " + s.sku + " " + s.gtin;
+        String hay = name + " " + s.gtin;
         if (linked) hay += String(" ") + q.vendor + " " + q.material;
         if (linked) {
             p += "<div class='stk' tabindex='0' data-sid='" + String((unsigned)s.id)
@@ -2896,7 +2896,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
                req->getParam("format")->value() == "csv";
 
     if (csv) {
-        String out = "vendor,material,color,diameter,sku,gtin,"
+        String out = "vendor,material,color,diameter,gtin,"
                      "on_hand_spools,on_hand_g,target_spools,target_grams,to_order_spools\n";
         CfgStock s;
         for (size_t i = 0; i < cfgStockCount(); i++) {
@@ -2904,7 +2904,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
             OnHand oh = rollUp(s);
             if (!needsReorder(s, oh)) continue;
             out += String(s.vendor) + "," + s.material + "," + s.color + ","
-                 + String(s.dia, 2) + "," + s.sku + "," + s.gtin + ","
+                 + String(s.dia, 2) + "," + s.gtin + ","
                  + String(oh.count) + ","
                  + String(oh.grams, 0) + "," + String(s.min_spools) + ","
                  + String(s.min_grams, 0) + "," + String(spoolsToOrder(s, oh)) + "\n";
@@ -3111,7 +3111,6 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "<label>Target: spools to keep in stock &mdash; listed on Reorder below half</label>"
          "<input type='number' name='min_spools' min='0' value='" + String(s.min_spools) + "'>"
          "<input type='hidden' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
-    p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
     p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
          "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' "
          "pattern='\\s*([0-9]{8}|[0-9]{12,14})\\s*' title='8, 12, 13 or 14 digits' value='"
@@ -3733,7 +3732,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     // popularity order, lowest first. data-v holds the number to sort by.
     p += "<table id='stock-table'><tr><th>Vendor</th><th>Material</th>"
          "<th data-dir='1'>Popularity &#9650;</th>"
-         "<th>Target</th><th>SKU</th><th></th></tr>";
+         "<th>Target</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
         String thr = targetText(sr);
@@ -3753,8 +3752,8 @@ static void handleStockPage(AsyncWebServerRequest* req) {
                         : (sr.color[0] ? " " + esc(sr.color) : String())
                           + " <span class='ob unlinked'>not linked</span>")
            + "</td><td data-v='" + String(popV, 1) + "'>"
-           + popCell + "</td><td data-v='" + String(targetGrams(sr), 0) + "'>" + thr + "</td><td>"
-           + esc(sr.sku) + "</td><td style='white-space:nowrap'>"
+           + popCell + "</td><td data-v='" + String(targetGrams(sr), 0) + "'>" + thr + "</td>"
+           + "<td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
              "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
@@ -3764,7 +3763,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + "</form></td></tr>";
     }
     if (n == 0)
-        p += "<tr><td colspan='6' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
+        p += "<tr><td colspan='5' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
     p += "</table>";
     if (n && earliestTs[0]) {
         char local[32];
@@ -3981,7 +3980,6 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
     }
     s.min_spools = (uint16_t)arg("min_spools").toInt();
     s.min_grams  = arg("min_grams").toFloat();
-    strlcpy(s.sku,  arg("sku").c_str(),  sizeof(s.sku));
     String gt = arg("gtin");
     gt.trim();   // a scanner or a paste can bring spaces; stockGtinError() checked the rest
     strlcpy(s.gtin, gt.c_str(), sizeof(s.gtin));
@@ -4140,7 +4138,6 @@ static void handleApiStock(AsyncWebServerRequest* req) {
            + ",\"spool_g\":" + String(s.spool_g, 1)
            + ",\"min_spools\":" + String(s.min_spools)
            + ",\"min_grams\":" + String(s.min_grams, 1)
-           + ",\"sku\":\"" + esc(s.sku) + "\""
            + ",\"gtin\":\"" + esc(s.gtin) + "\""
            + ",\"pack_qty\":" + String(s.pack_qty)
            + ",\"has_data\":" + (pop[i].has_data ? "true" : "false")
@@ -4159,15 +4156,15 @@ static void handleApiStock(AsyncWebServerRequest* req) {
 // carries popularity) or /config/export (which bundles all five Config
 // tables together). Same pattern as /usage.csv.
 static void handleStockCsv(AsyncWebServerRequest* req) {
-    String c = "vendor,material,color,dia,sku,gtin,target_spools,target_grams\n";
+    String c = "vendor,material,color,dia,gtin,target_spools,target_grams\n";
     const size_t n = cfgStockCount();
     CfgStock s;
     for (size_t i = 0; i < n; i++) {
         if (!cfgStockAt(i, s)) continue;
-        // Quote the free-text columns; vendor/material/color/sku can contain commas.
+        // Quote the free-text columns; vendor/material/color can contain commas.
         c += "\"" + String(s.vendor) + "\",\"" + String(s.material) + "\",\""
-           + String(s.color) + "\"," + String(s.dia, 2) + ",\"" + String(s.sku)
-           + "\",\"" + String(s.gtin) + "\","
+           + String(s.color) + "\"," + String(s.dia, 2) + ",\""
+           + String(s.gtin) + "\","
            + String(s.min_spools) + "," + String(s.min_grams, 1) + "\n";
     }
     AsyncWebServerResponse* r = req->beginResponse(200, "text/csv", c);
