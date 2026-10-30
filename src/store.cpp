@@ -198,6 +198,12 @@ static String encodeBody(const StoreEvent& e) {
             b += "\"lab\":"; b += n; b += ",";
         }
         b += "\"prov\":"; b += (e.provisional ? "true" : "false"); b += ",";
+        // Omitted when 0, so every line written before merges existed reads
+        // back as a live product.
+        if (e.merged_into) {
+            snprintf(n, sizeof(n), "%u", (unsigned)e.merged_into);
+            b += "\"into\":"; b += n; b += ",";
+        }
     }
     return b;   // always ends with ','
 }
@@ -276,6 +282,7 @@ static bool decodeLine(const String& line, StoreEvent& e) {
         e.has_lab = !doc["lab"].isNull();
         if (e.has_lab) for (int i = 0; i < 3; i++) e.lab[i] = doc["lab"][i] | 0.0f;
         e.provisional = doc["prov"] | false;
+        e.merged_into = doc["into"] | (uint32_t)0;
     }
     return true;
 }
@@ -405,6 +412,7 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         p->has_lab = e.has_lab;
         p->dia = e.dia; p->empty_g = e.empty_g; p->nom_g = e.nom_g;
         p->provisional = e.provisional;
+        p->merged_into = e.merged_into;
         strlcpy(p->last_ts, e.ts, sizeof(p->last_ts));
         p->valid = true;
         return;
@@ -895,17 +903,38 @@ bool storeUsageAt(size_t idx, UsageRow& out) {
     return true;
 }
 
-size_t storeProductCount() { Lock lk; return sProducts.size(); }
+// Defined with the matcher below (they are part of what it tests).
+static int productIndex_(uint32_t id);
+static int resolveProduct_(int i);
+
+// Listing skips merged products; at lab scale (tens of products) the linear
+// skip in storeProductAt() costs nothing worth an index.
+size_t storeProductCount() {
+    Lock lk;
+    size_t n = 0;
+    for (const auto& p : sProducts) if (!p.merged_into) n++;
+    return n;
+}
 bool storeProductAt(size_t idx, ProductRecord& out) {
     Lock lk;
-    if (idx >= sProducts.size()) return false;
-    out = sProducts[idx];
-    return true;
+    for (const auto& p : sProducts) {
+        if (p.merged_into) continue;
+        if (idx-- == 0) { out = p; return true; }
+    }
+    return false;
 }
 bool storeGetProduct(uint32_t id, ProductRecord& out) {
     Lock lk;
-    for (auto& p : sProducts) if (p.id == id) { out = p; return true; }
-    return false;
+    const int i = resolveProduct_(productIndex_(id));
+    if (i < 0) return false;
+    out = sProducts[i];
+    return true;
+}
+std::vector<ProductRecord> storeMergedProducts() {
+    Lock lk;
+    std::vector<ProductRecord> v;
+    for (const auto& p : sProducts) if (p.merged_into) v.push_back(p);
+    return v;
 }
 
 // ── Product matching ──────────────────────────────────────────────────────────
@@ -933,8 +962,33 @@ static bool nomEq_(float a, float b) {
     return fabsf(a - b) < 1.0f;
 }
 
-// Caller holds the lock.
-static int findProduct_(const ProductRecord& q) {
+// Caller holds the lock. Index of product `id` as recorded, merged or not.
+static int productIndex_(uint32_t id) {
+    if (!id) return -1;
+    for (size_t i = 0; i < sProducts.size(); i++)
+        if (sProducts[i].id == id) return (int)i;
+    return -1;
+}
+
+// Caller holds the lock. Follow merges from index `i` to the live product
+// they end at. Bounded, so a cycle in a hand-edited log cannot hang the
+// station; storeMergeProduct() never creates one (it merges only live
+// products, into live products).
+static int resolveProduct_(int i) {
+    for (int hops = 0; i >= 0 && sProducts[i].merged_into; hops++) {
+        if (hops >= 8) return -1;
+        i = productIndex_(sProducts[i].merged_into);
+    }
+    return i;
+}
+
+// Caller holds the lock. The ladder runs over merged products too -- their
+// identifiers are the aliases that send a tag or pick carrying them to the
+// survivor -- and its answer is resolved to that survivor.
+static int findProductRaw_(const ProductRecord& q);
+static int findProduct_(const ProductRecord& q) { return resolveProduct_(findProductRaw_(q)); }
+
+static int findProductRaw_(const ProductRecord& q) {
     // 1) package_uuid — the SKU, and our product identity.
     if (q.pkg_uuid[0])
         for (size_t i = 0; i < sProducts.size(); i++)
@@ -985,12 +1039,56 @@ bool storeUpsertProduct(ProductRecord& p) {
     e.has_lab     = p.has_lab;
     e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
     e.provisional = p.provisional;
+    e.merged_into = p.merged_into;
     return storeAppendEvent(e);            // takes the lock itself
 }
 
+// One Reconcile per spool currently on product `src`, giving it product `p`'s
+// identity. src == p.id is an ordinary edit's propagation; src != p.id is a
+// merge moving src's spools onto p.
+static size_t repoint_(uint32_t src, const ProductRecord& p);
+
 size_t storePropagateProduct(uint32_t id) {
     ProductRecord p;
-    if (!storeGetProduct(id, p)) return 0;
+    if (!storeGetProduct(id, p) || p.id != id) return 0;
+    return repoint_(id, p);
+}
+
+bool storeMergeProduct(uint32_t from, uint32_t into, size_t* moved) {
+    if (moved) *moved = 0;
+    ProductRecord b, a;
+    {
+        Lock lk;
+        const int ib = productIndex_(from), ia = productIndex_(into);
+        if (ib < 0 || ia < 0 || ib == ia) return false;
+        if (sProducts[ib].merged_into || sProducts[ia].merged_into) return false;
+        b = sProducts[ib];
+        a = sProducts[ia];
+    }
+    // Spools first, then the mark. If power fails in between, `from` is still
+    // a live product with fewer (or no) spools, and the merge can simply be
+    // done again; the other order would leave spools on a product that no
+    // longer lists.
+    const size_t n = repoint_(from, a);
+    if (moved) *moved = n;
+    b.merged_into = into;
+    return storeUpsertProduct(b);
+}
+
+bool storeUnmergeProduct(uint32_t id) {
+    ProductRecord b;
+    {
+        Lock lk;
+        const int i = productIndex_(id);
+        if (i < 0 || !sProducts[i].merged_into) return false;
+        b = sProducts[i];
+    }
+    b.merged_into = 0;
+    return storeUpsertProduct(b);
+}
+
+static size_t repoint_(uint32_t src, const ProductRecord& p) {
+    const uint32_t id = p.id;
 
     // Snapshot the affected spools BEFORE appending anything. storeAppendEvent()
     // mutates sSpools through the index, so iterating it while appending would
@@ -1005,7 +1103,7 @@ size_t storePropagateProduct(uint32_t id) {
     {
         Lock lk;
         for (const auto& r : sSpools) {
-            if (!r.valid || r.product != id || r.uuid[0] == 0) continue;
+            if (!r.valid || r.product != src || r.uuid[0] == 0) continue;
             Target t;
             strlcpy(t.uuid, r.uuid, sizeof(t.uuid));
             t.spool = r.spool; t.needs_ob = r.needs_ob; t.cost = r.cost;
@@ -1605,6 +1703,7 @@ bool storeCompact() {
         x.has_lab     = p.has_lab;
         x.dia = p.dia; x.empty_g = p.empty_g; x.nom_g = p.nom_g;
         x.provisional = p.provisional;
+        x.merged_into = p.merged_into;   // a merge must survive the fold
         if (!emit(encodeLine(x))) { ok = false; break; }
     }
 

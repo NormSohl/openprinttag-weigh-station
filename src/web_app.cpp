@@ -1102,6 +1102,12 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     uint32_t id = (uint32_t)req->getParam("id")->value().toInt();
     ProductRecord q;
     if (!storeGetProduct(id, q)) { req->send(404, "text/plain", "unknown product"); return; }
+    // A merged product's page is its survivor's (storeGetProduct() followed
+    // the merge); say so rather than silently showing a different number.
+    if (q.id != id) {
+        req->redirect("/product?id=" + String((unsigned)q.id) + "&merged=" + String((unsigned)id));
+        return;
+    }
 
     // Which spools this edit would reach. Saying so up front is the point: an
     // edit here is not local, and the page should not pretend it is.
@@ -1113,6 +1119,10 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     }
 
     String p = head("Product", "/products");
+    if (req->hasParam("merged"))
+        p += "<p class='card'>Product #" + esc(req->getParam("merged")->value().c_str())
+           + " was merged into this one. <a href='/repair#merged' style='color:#9c9'>Undo "
+             "on the Repair page</a>.</p>";
     p += "<div class='card'><div class='big'>" + swatch(q.rgba) + "#"
        + String((unsigned)id) + " " + esc(q.material[0] ? q.material : "Unknown")
        + "</div><p class='muted'>" + esc(q.vendor)
@@ -2671,7 +2681,9 @@ static OnHand rollUp(const CfgStock& s) {
         // Picked directly at Stock List add/edit time (see stockFormFields()
         // / parseStockForm()) -- an exact FK, immune to both the name-probe
         // mismatch below and a later product rename via /product?id=N.
-        oh.product = s.product;
+        // linked.id, not s.product: a row still holding a merged product's
+        // id counts the survivor's spools (storeGetProduct() follows merges).
+        oh.product = linked.id;
     } else {
         // Either never linked, or linked to a product that no longer
         // resolves. The second case is real: CfgStock lives in the config
@@ -2943,6 +2955,496 @@ static void stockFormFields(String& p, const CfgStock& s) {
 // STOCK_POPULARITY_WINDOW_DAYS itself lives in config.h now, shared with
 // storeCompact()'s retention floor -- see the comment there.
 
+// ── /repair — link Stock List rows; merge duplicate products ──────────────────
+// docs/design/barcode-onboarding.md step 5, and the product merge of
+// docs/design/onboarding-vocabulary.md step 7. Two ways the Stock List and
+// the shelf stop agreeing, fixed in one place:
+//   - a Stock List row with no product: Reorder counts it by a name guess
+//     and Onboard cannot offer it;
+//   - one filament recorded as two products: each holds part of the shelf,
+//     so neither counts it all.
+// Everything here only suggests. Linking and merging each take a person's
+// choice and a click, and a merge can be undone (storeUnmergeProduct()).
+
+// Words of a name, for names that differ in shape rather than meaning:
+// lowercase, anything not a letter or digit a separator -- except '+', which
+// stays on its word, and a "Plus" after a word becomes that word's '+'. So
+// "PLA+" and "PLA Plus" agree, and neither is "PLA": they are different
+// filaments, the same rule the store's matcher keeps (normEq_()).
+static std::vector<std::string> nameWords_(const char* s) {
+    std::vector<std::string> w;
+    std::string cur;
+    auto flush = [&] {
+        if (cur.empty()) return;
+        if (cur == "plus" && !w.empty() && w.back().back() != '+') w.back() += '+';
+        else w.push_back(cur);
+        cur.clear();
+    };
+    for (; *s; s++) {
+        const unsigned char c = (unsigned char)*s;
+        if (isalnum(c))      cur += (char)tolower(c);
+        else if (c == '+')   { cur += '+'; flush(); }
+        else                 flush();
+    }
+    flush();
+    return w;
+}
+
+// Every word of `a` appears in `b`.
+static bool wordsWithin_(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    for (const auto& x : a)
+        if (std::find(b.begin(), b.end(), x) == b.end()) return false;
+    return true;
+}
+
+static bool sameVendor_(const char* a, const char* b) { return nameWords_(a) == nameWords_(b); }
+
+// Same rule as the store's matcher: 0 means "not known", which can't tell
+// two sizes apart.
+static bool sameSize_(float a, float b) { return a <= 0 || b <= 0 || fabsf(a - b) < 1.0f; }
+
+// Loose on purpose: catalog swatches and a person's colour pick for the same
+// "Black" differ a little. Unassigned colour (alpha 0) never rules a pair out.
+static bool colourClose_(const uint8_t a[4], const uint8_t b[4]) {
+    if (!a[3] || !b[3]) return true;
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2]) <= 90;
+}
+
+// Why two products look like one filament, or nullptr. Same vendor, size and
+// type, a close colour, and names whose words are the same or one adds words
+// to the other ("PLA Fire Engine Red" / "PLA Basic Fire Engine Red").
+static const char* dupReason_(const ProductRecord& a, const ProductRecord& b) {
+    if (a.gtin && a.gtin == b.gtin) return "same barcode";
+    if (a.pkg_uuid[0] && !strcasecmp(a.pkg_uuid, b.pkg_uuid)) return "same catalog package";
+    if (!sameVendor_(a.vendor, b.vendor) || !sameSize_(a.nom_g, b.nom_g)) return nullptr;
+    if (a.abbr[0] && b.abbr[0] && nameWords_(a.abbr) != nameWords_(b.abbr)) return nullptr;
+    if (!colourClose_(a.rgba, b.rgba)) return nullptr;
+    const auto wa = nameWords_(a.material), wb = nameWords_(b.material);
+    if (wa.empty() || wb.empty()) return nullptr;
+    if (wa == wb) return "same name, written differently";
+    if (wordsWithin_(wa, wb) || wordsWithin_(wb, wa)) return "one name adds words to the other";
+    return nullptr;
+}
+
+// Products a Stock List row probably means: its barcode, the exact name probe
+// Reorder already uses (rollUp()), or the same vendor and size with every
+// word of the row's material and colour in the product's name. A row typed
+// "PLA" + "Black" then finds "PLA Basic Black" but not "PETG Black".
+static std::vector<uint32_t> stockCandidates_(const CfgStock& s) {
+    std::vector<uint32_t> out;
+    auto add = [&](uint32_t id) {
+        if (id && std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+    };
+    ProductRecord q;
+    const uint64_t g = s.gtin[0] ? strtoull(s.gtin, nullptr, 10) : 0;
+    {
+        ProductRecord probe, found;
+        strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
+        String disp = s.material;
+        if (s.color[0]) disp += String(" ") + s.color;
+        strlcpy(probe.material, disp.c_str(), sizeof(probe.material));
+        probe.nom_g = s.spool_g;
+        probe.gtin = g;
+        if (storeFindProduct(probe, found)) add(found.id);
+    }
+    std::string want = std::string(s.material) + " " + s.color;
+    const auto ww = nameWords_(want.c_str());
+    for (size_t i = 0, n = storeProductCount(); i < n; i++) {
+        if (!storeProductAt(i, q)) continue;
+        if (g && q.gtin == g) { add(q.id); continue; }
+        if (ww.empty() || !sameVendor_(q.vendor, s.vendor) || !sameSize_(q.nom_g, s.spool_g)) continue;
+        if (wordsWithin_(ww, nameWords_(q.material))) add(q.id);
+    }
+    return out;
+}
+
+static String productLabel_(const ProductRecord& q) {
+    return "#" + String((unsigned)q.id) + " " + esc(q.vendor) + " "
+         + esc(q.material[0] ? q.material : "Unknown")
+         + (q.nom_g > 0 ? " " + String(q.nom_g, 0) + " g" : String())
+         + (q.provisional ? " (provisional)" : "");
+}
+
+static String stockLabel_(const CfgStock& s) {
+    String t = esc(s.vendor) + " " + esc(s.material);
+    if (s.color[0] && !strstr(s.material, s.color)) t += " " + esc(s.color);
+    if (s.spool_g > 0) t += " " + String(s.spool_g, 0) + " g";
+    return t;
+}
+
+// Spools on the shelf per product (not retired), for "how much is at stake".
+static std::vector<std::pair<uint32_t, int>> spoolCounts_() {
+    std::vector<std::pair<uint32_t, int>> v;
+    SpoolRecord r;
+    for (size_t i = 0, n = storeSpoolCount(); i < n; i++) {
+        if (!storeSpoolAt(i, r) || r.retired || !r.product) continue;
+        bool found = false;
+        for (auto& x : v) if (x.first == r.product) { x.second++; found = true; break; }
+        if (!found) v.push_back(std::make_pair(r.product, 1));
+    }
+    return v;
+}
+static int countFor_(const std::vector<std::pair<uint32_t, int>>& v, uint32_t id) {
+    for (const auto& x : v) if (x.first == id) return x.second;
+    return 0;
+}
+
+static void productOptions_(String& p, uint32_t selected, const std::vector<uint32_t>& first) {
+    ProductRecord q;
+    for (uint32_t id : first)
+        if (storeGetProduct(id, q))
+            p += "<option value='" + String((unsigned)q.id) + "'"
+               + (q.id == selected ? " selected" : "") + ">&#9733; " + productLabel_(q) + "</option>";
+    if (!first.empty()) p += "<option disabled>&mdash;&mdash;&mdash;</option>";
+    for (size_t i = 0, n = storeProductCount(); i < n; i++) {
+        if (!storeProductAt(i, q)) continue;
+        if (std::find(first.begin(), first.end(), q.id) != first.end()) continue;
+        p += "<option value='" + String((unsigned)q.id) + "'"
+           + (q.id == selected ? " selected" : "") + ">" + productLabel_(q) + "</option>";
+    }
+}
+
+static void handleRepairPage(AsyncWebServerRequest* req) {
+    String p = head("Repair", "/config");   // under Settings, not a tab of its own
+    p += "<h3>Repair</h3><p class='muted'>Fixes for the two ways the Stock List and the "
+         "shelf stop agreeing: Stock List items with no product, and one filament "
+         "recorded as two products. Nothing here changes anything until you choose and "
+         "press a button.</p>";
+
+    auto num = [&](const char* k) -> long {
+        return req->hasParam(k) ? req->getParam(k)->value().toInt() : -1;
+    };
+    if (num("linked") >= 0)
+        p += "<p class='card' id='repair-done'>Linked " + String(num("linked"))
+           + " Stock List item(s).</p>";
+    if (num("merged") > 0)
+        p += "<p class='card' id='repair-done'>Product #" + String(num("merged"))
+           + " merged into <a href='/product?id=" + String(num("into"))
+           + "' style='color:#9c9'>#" + String(num("into")) + "</a>: "
+           + String(num("moved")) + " spool(s) and " + String(num("rows"))
+           + " Stock List item(s) moved. Its barcode, catalog ids and name now lead "
+             "to #" + String(num("into")) + ".</p>";
+    if (num("unmerged") > 0)
+        p += "<p class='card' id='repair-done'>Product #" + String(num("unmerged"))
+           + " is a product again. Its spools stayed where the merge put them; move any "
+             "that belong back through Onboard.</p>";
+
+    const auto counts = spoolCounts_();
+    const size_t ns = cfgStockCount();
+    std::vector<CfgStock> rows(ns);
+    for (size_t i = 0; i < ns; i++) cfgStockAt(i, rows[i]);
+
+    // ── Unlinked Stock List rows ──────────────────────────────────────────────
+    p += "<h3 id='unlinked'>Stock List items with no product</h3>";
+    std::vector<size_t> unl;
+    for (size_t i = 0; i < ns; i++) {
+        ProductRecord q;
+        if (!(rows[i].product && storeGetProduct(rows[i].product, q))) unl.push_back(i);
+    }
+    if (unl.empty()) {
+        p += "<p class='muted'>None &mdash; every Stock List item is linked to a product.</p>";
+    } else {
+        p += "<p class='muted'>Pick the product each one means. &#9733; marks likely matches "
+             "(same barcode, or same vendor and size with every word of the item in the "
+             "product's name); one likely match is chosen for you. Items left on "
+             "&ldquo;leave&rdquo; are not changed.</p>";
+        p += "<form method='POST' action='/api/repair/link'><table>"
+             "<tr><th>Stock List item</th><th>Product</th></tr>";
+        // Rows with likely matches first: with a long unlinked list (the
+        // shipped defaults are ~48 rows) the few with an answer get buried.
+        std::vector<std::vector<uint32_t>> cands(ns);
+        for (size_t i : unl) cands[i] = stockCandidates_(rows[i]);
+        std::stable_sort(unl.begin(), unl.end(), [&](size_t x, size_t y) {
+            const int rx = cands[x].size() == 1 ? 0 : cands[x].empty() ? 2 : 1;
+            const int ry = cands[y].size() == 1 ? 0 : cands[y].empty() ? 2 : 1;
+            return rx < ry;
+        });
+        for (size_t i : unl) {
+            const CfgStock& s = rows[i];
+            const auto& cand = cands[i];
+            p += "<tr><td>" + stockLabel_(s) + "</td><td><select name='p"
+               + String((unsigned)s.id) + "' class='link-sel'>"
+                 "<option value='0'>&mdash; leave &mdash;</option>";
+            productOptions_(p, cand.size() == 1 ? cand[0] : 0, cand);
+            p += "</select></td></tr>";
+        }
+        p += "</table><div><button type='submit'>Link the items chosen</button></div></form>";
+    }
+
+    // ── Stock List rows sharing a product ─────────────────────────────────────
+    // Two thresholds for one product can't be combined automatically (which
+    // one is meant?), so this only points at them.
+    {
+        String shared;
+        std::vector<uint32_t> seen;
+        for (size_t i = 0; i < ns; i++) {
+            ProductRecord q;
+            if (!(rows[i].product && storeGetProduct(rows[i].product, q))) continue;
+            if (std::find(seen.begin(), seen.end(), q.id) != seen.end()) continue;
+            String line;
+            int k = 0;
+            for (size_t j = i; j < ns; j++) {
+                ProductRecord r;
+                if (!(rows[j].product && storeGetProduct(rows[j].product, r)) || r.id != q.id) continue;
+                line += String(k++ ? ", " : "") + "<a href='/stock?edit=" + String((unsigned)rows[j].id)
+                      + "#stockform' style='color:#9c9'>" + stockLabel_(rows[j]) + "</a>";
+            }
+            seen.push_back(q.id);
+            if (k > 1) shared += "<li>" + productLabel_(q) + ": " + line + "</li>";
+        }
+        if (shared.length())
+            p += "<h3>Stock List items for the same product</h3><p class='muted'>Each "
+                 "has its own reorder threshold, so they can't be combined automatically. "
+                 "Keep one (edit its threshold) and remove the others.</p><ul id='shared'>"
+               + shared + "</ul>";
+    }
+
+    // ── Likely duplicate products ─────────────────────────────────────────────
+    p += "<h3 id='dups'>Possible duplicate products</h3>";
+    const size_t np = storeProductCount();
+    std::vector<ProductRecord> prods(np);
+    for (size_t i = 0; i < np; i++) storeProductAt(i, prods[i]);
+    String dups;
+    for (size_t i = 0; i < np; i++)
+        for (size_t j = i + 1; j < np; j++) {
+            const char* why = dupReason_(prods[i], prods[j]);
+            if (!why) continue;
+            dups += "<tr class='dup'><td>" + swatch(prods[i].rgba) + productLabel_(prods[i])
+                  + " <span class='muted'>(" + String(countFor_(counts, prods[i].id))
+                  + " spools)</span></td><td>" + swatch(prods[j].rgba) + productLabel_(prods[j])
+                  + " <span class='muted'>(" + String(countFor_(counts, prods[j].id))
+                  + " spools)</span></td><td class='muted'>" + why + "</td>"
+                    "<td><a href='/repair/merge?a=" + String((unsigned)prods[i].id) + "&b="
+                  + String((unsigned)prods[j].id) + "' style='color:#9c9'>Compare</a></td></tr>";
+        }
+    if (dups.length())
+        p += "<p class='muted'>Pairs that look like one filament: same vendor, size and "
+             "type, a close colour, and names that match or where one adds words. "
+             "Compare shows them side by side before anything is merged.</p>"
+             "<table><tr><th>Product</th><th>Possible duplicate</th><th>Why</th><th></th></tr>"
+           + dups + "</table>";
+    else
+        p += "<p class='muted'>None found.</p>";
+
+    p += "<h3>Merge any two products</h3>"
+         "<form method='GET' action='/repair/merge'><label>Product</label><select name='a'>";
+    productOptions_(p, 0, {});
+    p += "</select><label>and</label><select name='b'>";
+    productOptions_(p, 0, {});
+    p += "</select><div><button type='submit' class='sec'>Compare&hellip;</button></div></form>";
+
+    // ── Undo ──────────────────────────────────────────────────────────────────
+    const auto merged = storeMergedProducts();
+    if (!merged.empty()) {
+        p += "<h3 id='merged'>Merged products</h3><table>";
+        for (const ProductRecord& m : merged) {
+            ProductRecord into;
+            const bool haveInto = storeGetProduct(m.id, into);
+            p += "<tr><td>" + productLabel_(m) + " &rarr; "
+               + (haveInto ? "<a href='/product?id=" + String((unsigned)into.id)
+                             + "' style='color:#9c9'>" + productLabel_(into) + "</a>"
+                           : String("?"))
+               + "</td><td><form method='POST' action='/api/repair/unmerge' style='display:inline' "
+                 "onsubmit=\"return confirm('Make #" + String((unsigned)m.id)
+               + " a product again? Its spools stay where they are.')\">"
+                 "<input type='hidden' name='id' value='" + String((unsigned)m.id) + "'>"
+                 "<button type='submit' class='sec' style='margin:0'>Undo</button></form></td></tr>";
+        }
+        p += "</table>";
+    }
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+// The side-by-side a merge is decided on: every field of both, the spools
+// and Stock List items that would move, and which one to keep.
+static void handleRepairMerge(AsyncWebServerRequest* req) {
+    const uint32_t ia = req->hasParam("a") ? (uint32_t)req->getParam("a")->value().toInt() : 0;
+    const uint32_t ib = req->hasParam("b") ? (uint32_t)req->getParam("b")->value().toInt() : 0;
+    ProductRecord a, b;
+    if (!storeGetProduct(ia, a) || !storeGetProduct(ib, b)) {
+        req->send(404, "text/plain", "unknown product");
+        return;
+    }
+    String p = head("Merge", "/config");
+    if (a.id == b.id) {
+        p += "<p class='card'>That is the same product twice.</p>"
+             "<p><a href='/repair' style='color:#9c9'>&larr; Repair</a></p>" + String(FOOT);
+        req->send(200, "text/html", p);
+        return;
+    }
+
+    std::vector<uint32_t> sa, sb;
+    {
+        SpoolRecord r;
+        for (size_t i = 0, n = storeSpoolCount(); i < n; i++) {
+            if (!storeSpoolAt(i, r) || r.retired) continue;
+            if (r.product == a.id) sa.push_back(r.spool);
+            if (r.product == b.id) sb.push_back(r.spool);
+        }
+    }
+    auto spools = [](const std::vector<uint32_t>& v) {
+        String t = String((unsigned)v.size());
+        for (size_t i = 0; i < v.size(); i++)
+            t += String(i ? ", " : ": ") + "<a href='/spool?id=" + String((unsigned)v[i])
+               + "' style='color:#9c9'>#" + String((unsigned)v[i]) + "</a>";
+        return t;
+    };
+    auto stockRows = [](uint32_t id) {
+        String t;
+        CfgStock s;
+        for (size_t i = 0, n = cfgStockCount(); i < n; i++)
+            if (cfgStockAt(i, s) && s.product == id)
+                t += String(t.length() ? ", " : "") + stockLabel_(s);
+        return t.length() ? t : String("&mdash;");
+    };
+    auto g = [](uint64_t v) {
+        char b[24] = "&mdash;";
+        if (v) snprintf(b, sizeof(b), "%llu", (unsigned long long)v);
+        return String(b);
+    };
+    auto row = [&](const char* k, const String& x, const String& y) {
+        const bool diff = k[0] && strcmp(x.c_str(), y.c_str()) != 0;
+        p += String("<tr") + (diff ? " class='diff'" : "") + "><th>" + k + "</th><td>" + x
+           + "</td><td>" + y + "</td></tr>";
+    };
+
+    p += "<h3>Merge two products?</h3><p class='muted'>Rows that differ are highlighted. "
+         "The one you keep keeps its own details; edit it afterwards if the other had "
+         "something better.</p>";
+    p += "<style>tr.diff td{background:#3a3220}</style><table>";
+    row("", "<b>#" + String((unsigned)a.id) + "</b>", "<b>#" + String((unsigned)b.id) + "</b>");
+    row("Vendor", esc(a.vendor), esc(b.vendor));
+    row("Filament", esc(a.material), esc(b.material));
+    row("Type", esc(a.abbr), esc(b.abbr));
+    row("Colour", swatch(a.rgba), swatch(b.rgba));
+    row("Diameter", String(a.dia, 2) + " mm", String(b.dia, 2) + " mm");
+    row("Nominal", String(a.nom_g, 0) + " g", String(b.nom_g, 0) + " g");
+    row("Default tare", String(a.empty_g, 1) + " g", String(b.empty_g, 1) + " g");
+    row("Barcode", g(a.gtin), g(b.gtin));
+    row("Catalog package", a.pkg_uuid[0] ? esc(a.pkg_uuid) : String("&mdash;"),
+                           b.pkg_uuid[0] ? esc(b.pkg_uuid) : String("&mdash;"));
+    row("Provisional", a.provisional ? "yes" : "no", b.provisional ? "yes" : "no");
+    row("Spools on hand", spools(sa), spools(sb));
+    row("Stock List", stockRows(a.id), stockRows(b.id));
+    p += "</table>";
+
+    // Default: keep the one more is already attached to, then the one a
+    // person confirmed, then the older.
+    bool keepA = sa.size() != sb.size() ? sa.size() > sb.size()
+               : a.provisional != b.provisional ? !a.provisional
+               : a.id < b.id;
+    p += "<form method='POST' action='/api/repair/merge' onsubmit=\"var k=this.querySelector("
+         "'input[name=into]:checked').value;return confirm('Merge into #'+k+'? The other "
+         "product\\'s spools and Stock List items move to it. You can undo this on the "
+         "Repair page.')\">";
+    p += "<input type='hidden' name='a' value='" + String((unsigned)a.id) + "'>"
+         "<input type='hidden' name='b' value='" + String((unsigned)b.id) + "'>";
+    p += "<label>Keep</label>"
+         "<label style='color:#eee'><input type='radio' name='into' style='width:auto' value='"
+       + String((unsigned)a.id) + "'" + (keepA ? " checked" : "") + "> "
+       + productLabel_(a) + "</label>"
+         "<label style='color:#eee'><input type='radio' name='into' style='width:auto' value='"
+       + String((unsigned)b.id) + "'" + (keepA ? "" : " checked") + "> "
+       + productLabel_(b) + "</label>";
+    p += "<p class='muted'>The other one's spools move to the one kept, each keeping its "
+         "own tare and cost; their tags are rewritten the next time each is placed. Its "
+         "barcode, catalog ids and name keep working and lead to the one kept, so it "
+         "is not created again.</p>";
+    p += "<div><button type='submit'>Merge</button> <a href='/repair' style='margin-left:14px;"
+         "color:#8f8'>Cancel</a></div></form>";
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+static void handleApiRepairMerge(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    auto arg = [&](const char* k) -> uint32_t {
+        const AsyncWebParameter* pp = req->getParam(k, true);
+        return pp ? (uint32_t)pp->value().toInt() : 0;
+    };
+    const uint32_t a = arg("a"), b = arg("b"), into = arg("into");
+    // Both live and different, and `into` one of them: checked before
+    // anything is written (a 4xx must not have changed anything).
+    ProductRecord pa, pb;
+    if (!storeGetProduct(a, pa) || pa.id != a || !storeGetProduct(b, pb) || pb.id != b || a == b
+        || (into != a && into != b)) {
+        req->send(400, "text/plain", "pick two different products, and which one to keep");
+        return;
+    }
+    const uint32_t from = (into == a) ? b : a;
+    size_t moved = 0;
+    if (!storeMergeProduct(from, into, &moved)) {
+        req->send(500, "text/plain", "merge failed");
+        return;
+    }
+    // Stock List rows on the merged product follow it, taking the kept
+    // product's names the way parseStockForm() does for a linked row.
+    // (Rows left holding the old id would still count right -- the id
+    // resolves -- but would show the old name.)
+    ProductRecord keep;
+    storeGetProduct(into, keep);
+    size_t rowsMoved = 0;
+    std::vector<CfgStock> rows(cfgStockCount());
+    for (size_t i = 0; i < rows.size(); i++) cfgStockAt(i, rows[i]);
+    for (CfgStock& s : rows) {
+        if (s.product != from) continue;
+        s.product = keep.id;
+        strlcpy(s.vendor,   keep.vendor,   sizeof(s.vendor));
+        strlcpy(s.material, keep.material, sizeof(s.material));
+        s.color[0] = 0;
+        if (cfgStockUpdate(s.id, s)) rowsMoved++;
+    }
+    req->redirect("/repair?merged=" + String((unsigned)from) + "&into=" + String((unsigned)into)
+                + "&moved=" + String((unsigned)moved) + "&rows=" + String((unsigned)rowsMoved));
+}
+
+static void handleApiRepairUnmerge(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    const AsyncWebParameter* pp = req->getParam("id", true);
+    const uint32_t id = pp ? (uint32_t)pp->value().toInt() : 0;
+    if (!id || !storeUnmergeProduct(id)) {
+        req->send(400, "text/plain", "not a merged product");
+        return;
+    }
+    req->redirect("/repair?unmerged=" + String((unsigned)id) + "#merged");
+}
+
+static void handleApiRepairLink(AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    // Every choice is checked before any row is written.
+    struct Pick { CfgStock row; ProductRecord prod; };
+    std::vector<Pick> picks;
+    CfgStock s;
+    for (size_t i = 0, n = cfgStockCount(); i < n; i++) {
+        if (!cfgStockAt(i, s)) continue;
+        const String k = "p" + String((unsigned)s.id);
+        const AsyncWebParameter* pp = req->getParam(k.c_str(), true);
+        const uint32_t pid = pp ? (uint32_t)pp->value().toInt() : 0;
+        if (!pid) continue;
+        Pick pk{s, {}};
+        if (!storeGetProduct(pid, pk.prod)) {
+            req->send(400, "text/plain", "unknown product #" + String((unsigned)pid));
+            return;
+        }
+        picks.push_back(pk);
+    }
+    size_t n = 0;
+    for (Pick& pk : picks) {
+        // As parseStockForm() links a row: the product's own identity, colour
+        // left blank (the product's name already carries it).
+        CfgStock& r = pk.row;
+        r.product = pk.prod.id;
+        strlcpy(r.vendor,   pk.prod.vendor,   sizeof(r.vendor));
+        strlcpy(r.material, pk.prod.material, sizeof(r.material));
+        r.color[0] = 0;
+        if (pk.prod.dia > 0)   r.dia = pk.prod.dia;
+        if (pk.prod.nom_g > 0) r.spool_g = pk.prod.nom_g;
+        if (cfgStockUpdate(r.id, r)) n++;
+    }
+    req->redirect("/repair?linked=" + String((unsigned)n));
+}
+
 // What a scan does on /stock (barcode-onboarding.md, phase 4): fill the
 // form's barcode field, and if a product already has that barcode, pick it
 // under "Item is..." -- so the Stock List can be built by scanning the boxes
@@ -3044,7 +3546,8 @@ static void handleStockPage(AsyncWebServerRequest* req) {
         p += "<p class='ob' id='unlinked-note'>" + String((unsigned)nUnlinked)
            + " item(s) marked <i>not linked</i> have no product: Reorder counts them "
              "by name, which can miss, and Onboard can't offer them. Edit each one "
-             "and pick its product under <i>Item is&hellip;</i>.</p>";
+             "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
+             "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
          "<th>Threshold</th><th>SKU</th><th>Pack</th><th></th></tr>";
     for (size_t i : order) {
@@ -3180,7 +3683,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         // the full display string ("PLA Basic Fire Engine Red"), and
         // rollUp() above matches by product id directly, so there is
         // nothing left to recompose a name probe from.
-        s.product = pid;
+        s.product = q.id;   // not pid: a merged product's id resolves to its survivor
         strlcpy(s.vendor,   q.vendor,   sizeof(s.vendor));
         strlcpy(s.material, q.material, sizeof(s.material));
         s.dia     = q.dia > 0 ? q.dia : 1.75f;
@@ -3264,7 +3767,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
 
         ProductRecord np;
         if (pid && storeGetProduct(pid, np)) {
-            s.product = pid;
+            s.product = np.id;
             strlcpy(s.vendor,   np.vendor,   sizeof(s.vendor));
             strlcpy(s.material, np.material, sizeof(s.material));
             s.dia     = np.dia > 0 ? np.dia : 1.75f;
@@ -3364,6 +3867,20 @@ static void handleApiLookup(AsyncWebServerRequest* req) {
     bool first = true;
     for (size_t i = 0, n = storeProductCount(); i < n; i++) {
         if (!storeProductAt(i, q) || q.gtin != g) continue;
+        if (!first) j += ",";
+        first = false;
+        j += "{\"id\":" + String((unsigned)q.id)
+           + ",\"vendor\":\"" + esc(q.vendor) + "\""
+           + ",\"material\":\"" + esc(q.material) + "\""
+           + ",\"nom_g\":" + String(q.nom_g, 0) + "}";
+    }
+    // A merged product's barcode is an alias of its survivor's: list the
+    // survivor, once, unless it already matched on its own.
+    std::vector<uint32_t> listed;
+    for (const ProductRecord& m : storeMergedProducts()) {
+        if (m.gtin != g || !storeGetProduct(m.id, q) || q.gtin == g) continue;
+        if (std::find(listed.begin(), listed.end(), q.id) != listed.end()) continue;
+        listed.push_back(q.id);
         if (!first) j += ",";
         first = false;
         j += "{\"id\":" + String((unsigned)q.id)
@@ -3545,6 +4062,13 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "undercounts it on Reorder and in popularity. Editing a product propagates "
          "to every spool of it.</p>";
     p += "<a href='/products'><button type='button' class='sec'>View products&hellip;</button></a></div>";
+    // The Repair page lives here rather than in the nav (on direct user
+    // request: there are enough tabs). Linked from the Stock List's
+    // "not linked" note too.
+    p += "<h3>Repair</h3><div class='card'><p class='muted'>Link Stock List items "
+         "that have no product, and find and merge products that are the same "
+         "filament recorded twice.</p>"
+         "<a href='/repair'><button type='button' class='sec' id='repair-link'>Repair&hellip;</button></a></div>";
 
     // Display-only: the log itself always stores UTC (storeNowIso(), gmtime_r)
     // so it stays unambiguous and string-sortable across a DST transition —
@@ -4283,6 +4807,14 @@ void webAppBegin() {
     sServer.on("/api/stock/delete", HTTP_POST, handleApiStockDelete);
     sServer.on("/api/stock",        HTTP_GET,  handleApiStock);
     sServer.on("/api/lookup",       HTTP_GET,  handleApiLookup);
+    // /repair/merge BEFORE /repair: plain-string routes match by prefix, so
+    // /repair registered first would answer /repair/merge too (the same
+    // gotcha as /config vs /config/export).
+    sServer.on("/repair/merge",     HTTP_GET,  handleRepairMerge);
+    sServer.on("/repair",           HTTP_GET,  handleRepairPage);
+    sServer.on("/api/repair/merge",   HTTP_POST, handleApiRepairMerge);
+    sServer.on("/api/repair/unmerge", HTTP_POST, handleApiRepairUnmerge);
+    sServer.on("/api/repair/link",    HTTP_POST, handleApiRepairLink);
     sServer.on("/stock.csv",        HTTP_GET,  handleStockCsv);
     // These two MUST be registered before "/config": ESPAsyncWebServer's
     // default URI matching is "backward compatible" (WebServer.cpp,

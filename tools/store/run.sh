@@ -83,6 +83,11 @@ echo "    a later price never backdates earlier grams, dollars survive the fold 
 STORE_TEST_ROOT="$OUT/fs7" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --cost | tail -9
 
 echo
+echo "--- product merge: spools move, merged identifiers lead to the survivor, ---"
+echo "    survives compaction and replay, unmerge restores ---"
+STORE_TEST_ROOT="$OUT/fs8" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --merge | tail -1
+
+echo
 echo "--- consumption rollup survives the fold ---"
 # The check that cannot be recovered afterwards: once raw events are folded
 # away, the Usage rows are the only evidence left. Both dumps must be identical.

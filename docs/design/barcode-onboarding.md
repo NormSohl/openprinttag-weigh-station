@@ -200,6 +200,47 @@ barcode field is still free text, as before.*
 - Stock List page: a "not linked" marker on rows with no resolvable
   product, as a pointer to step 5 (repair).
 
+### Step 5 — Repair page
+
+*Built on `barcode-onboarding` (`handleRepairPage()` and friends in
+`web_app.cpp`; `storeMergeProduct()` in `store.cpp`). Not yet on the station.*
+
+`/repair`, reached from Settings and from the Stock List's "not linked" note
+(not a nav tab, on direct user request: there are enough tabs). It only
+suggests; every change is a person's choice and a click.
+
+- **Stock List items with no product.** Each gets a product picker with
+  likely matches starred and listed first: the row's barcode, the exact name
+  probe Reorder already uses, or the same vendor and size with every word of
+  the row's material and colour in the product's name. A single likely match
+  is preselected; rows with one sort to the top. One button links all the
+  rows chosen, the way the Stock List's own Edit links one.
+- **Stock List items for the same product**, listed with Edit links. Two
+  reorder thresholds can't be combined automatically.
+- **Possible duplicate products**: same barcode or catalog package, or same
+  vendor, size and type with a close colour and names that match once
+  normalised ("PLA+" = "PLA Plus", but never "PLA") or where one adds words.
+  "Compare" opens `/repair/merge`, a side-by-side of both with the
+  differences highlighted, the spools and Stock List items that would move,
+  and which to keep (default: more spools, then confirmed, then older).
+  Any two products can also be compared from a picker.
+- **Merge** is `onboarding-vocabulary.md` step 7, done with one new product
+  field, `merged_into`: the merged product's spools are re-pointed (one
+  Reconcile each, keeping their own tare and cost), its Stock List items
+  follow, and it stays in the log as a redirect. Its id resolves to the
+  survivor, and its barcode, catalog UUIDs and name stay in the matching
+  ladder, so a tag or pick carrying them lands on the survivor instead of
+  re-creating it. That is the alias table, without a table. It survives
+  compaction (Products are re-emitted from live state) and is tested natively
+  (`tools/store`, `--merge`).
+- **Undo**: merged products are listed with an Undo button. The product
+  comes back; its spools stay where the merge put them, for a person to move
+  back one at a time.
+
+Not done: dismissing a suggested pair as "not duplicates" (it would need
+somewhere to keep that), and the vendor alias table of
+`onboarding-vocabulary.md` step 8.
+
 ### Testing
 
 - `/api/lookup`: `curl` on the bench with codes from a seeded store.

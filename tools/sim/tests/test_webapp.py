@@ -192,13 +192,13 @@ UPC = gs1("01234567890")     # 12-digit UPC-A
 EAN = "0" + UPC              # the same code as EAN-13
 
 
-def _catalog_onboard(sim, gtin, gross=1220):
+def _catalog_onboard(sim, gtin, gross=1220, vendor="eSUN", material="PLA+ Black"):
     """Onboard the spool on the scale as a catalog pick carrying `gtin`;
     returns the product id."""
     sim.blank(gross=gross)
     spool = sim.get_json("/_sim/state")["spool"]
     sim._post("/api/onboard", id=spool, source="catalog",
-              cat_vendor="eSUN", cat_material="PLA+ Black", cat_abbr="PLA",
+              cat_vendor=vendor, cat_material=material, cat_abbr="PLA",
               cat_nom_g=1000, cat_empty_g=220, cat_dia=1.75, cat_gtin=gtin)
     sim.remove()
     return sim.get_json("/api/spools")[-1]["product"]
@@ -440,3 +440,81 @@ def test_stock_list_marks_unlinked_rows(sim, page):
     seeded = len(sim.get_json("/api/stock")["items"]) - 1
     assert page.locator(".unlinked").count() == seeded
     assert page.locator("#unlinked-note").is_visible()
+
+
+# ── Repair page (barcode-onboarding.md step 5; product merge) ─────────────────
+
+def test_repair_is_under_settings_not_a_tab(sim, page):
+    page.goto(sim.url("/config"))
+    page.click("#repair-link")
+    page.wait_for_url("**/repair")
+    assert page.locator("nav a[href='/repair']").count() == 0
+    assert page.js_errors == []
+
+
+def test_repair_links_an_unlinked_row_to_its_likely_product(sim, page):
+    # The default Stock List has an unlinked "eSun" "PLA+" "Black" row; the
+    # catalog's name for it carries an extra word. ("eSun PLA Matte Black"
+    # must not be offered: PLA is not PLA+.)
+    pid = _catalog_onboard(sim, EAN, vendor="eSUN", material="PLA+ Basic Black")
+    page.goto(sim.url("/repair"))
+    sels = page.locator("select.link-sel")
+    before = sels.count()
+    chosen = [s for s in sels.evaluate_all("ss => ss.map(s => s.value)") if s != "0"]
+    assert chosen == [str(pid)]          # the one likely match, chosen for us
+    page.click("#unlinked ~ form button[type=submit]")
+    page.wait_for_url("**/repair?linked=1")
+    assert page.locator("select.link-sel").count() == before - 1
+    # Onboard can offer it now.
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    assert page.locator(f"#stk-list .stk[data-prod='{pid}']").count() == 1
+
+
+def test_duplicates_are_suggested_merged_and_undone(sim, page):
+    a = _catalog_onboard(sim, EAN, vendor="eSUN", material="PLA+ Black")
+    other = gs1("400000000000")
+    b = _catalog_onboard(sim, other, gross=1100, vendor="eSun", material="PLA Plus Black")
+    assert a != b
+    sim._post("/api/stock/add", product=b, min_spools=1, pack_qty=1)
+
+    page.goto(sim.url("/repair"))
+    dup = page.locator("tr.dup")
+    assert dup.count() == 1 and "written differently" in dup.inner_text()
+    dup.locator("a").click()
+    page.wait_for_url("**/repair/merge?*")          # not swallowed by /repair
+    assert page.locator("tr.diff").count() >= 1
+    page.check(f"input[name=into][value='{a}']")
+    page.once("dialog", lambda d: d.accept())
+    page.click("form[action='/api/repair/merge'] button[type=submit]")
+    page.wait_for_url("**/repair?merged=*")
+    assert "moved" in page.inner_text("#repair-done")
+
+    assert [p["id"] for p in sim.get_json("/api/products")] == [a]
+    assert {s["product"] for s in sim.get_json("/api/spools")} == {a}
+    # B's barcode now leads to A, and the Stock List row followed the merge.
+    assert [p["id"] for p in sim.get_json("/api/lookup?gtin=" + other)["products"]] == [a]
+    assert [s["product"] for s in sim.get_json("/api/lookup?gtin=" + EAN)["stock"]] == [a]
+    # B's old page shows A.
+    page.goto(sim.url(f"/product?id={b}"))
+    page.wait_for_url(f"**/product?id={a}&merged={b}")
+
+    page.goto(sim.url("/repair#merged"))
+    page.once("dialog", lambda d: d.accept())
+    page.click("form[action='/api/repair/unmerge'] button")
+    page.wait_for_url("**/repair?unmerged=*")
+    assert sorted(p["id"] for p in sim.get_json("/api/products")) == sorted([a, b])
+    assert {s["product"] for s in sim.get_json("/api/spools")} == {a}   # spools stay
+    assert page.js_errors == []
+
+
+def test_merge_refuses_bad_requests_without_changing_anything(sim):
+    a = _catalog_onboard(sim, EAN)
+    import urllib.error
+    for params in ({"a": a, "b": a, "into": a}, {"a": a, "b": 999, "into": a}):
+        try:
+            sim._post("/api/repair/merge", **params)
+            assert False, "accepted"
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+    assert len(sim.get_json("/api/products")) == 1

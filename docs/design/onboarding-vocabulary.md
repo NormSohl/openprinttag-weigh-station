@@ -14,7 +14,7 @@ resumes*, not in the plan.
 | 4. Tare required wherever a person or the database supplies it | **built** 2026-09-30, source-only — needs `pio run` and the bench |
 | 5. Every source feeds the picklists; spool types replace spool profiles | not started |
 | 6. Abbreviation required or inferred | not started |
-| 7. Product merge | not started |
+| 7. Product merge | **built** 2026-10-29 on branch `barcode-onboarding`, as a `merged_into` field rather than separate alias/redirect events (see `barcode-onboarding.md`, step 5); native `--merge` test and simulator tests pass; not on the station |
 | 8. Name normalization (vendor aliases, then option A or C) | not started — wait for data |
 
 ## Decisions

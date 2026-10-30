@@ -27,6 +27,10 @@
 //                                       popularity math (storeMaterialPopularity).
 //   store_test --tare                 — a tare change moves remaining weight at
 //                                       once and is never booked as consumption.
+//   store_test --merge                — product merge: spools move, the merged
+//                                       product's identifiers still match and
+//                                       lead to the survivor, merges survive
+//                                       compaction, unmerge restores.
 #include "store.h"
 #include "config.h"
 #include <cstdio>
@@ -808,6 +812,72 @@ static void tareTest() {
                                       "untouched; it replays and survives the fold");
 }
 
+static void mergeTest() {
+    run("WIPE ALL");
+    ProductRecord a = tag("eSUN", "PLA+ Black", "PLA+", 1000, 220, "aaaa00000000000000000000000000aa");
+    a.provisional = false;
+    CHECK(storeUpsertProduct(a), "upsert A");
+    ProductRecord b = tag("eSun", "PLA Plus Black", "PLA+", 1000, 170, "bbbb00000000000000000000000000bb");
+    b.gtin = 6922572219021ULL;
+    b.provisional = false;
+    CHECK(storeUpsertProduct(b), "upsert B");
+    spoolFor("dddd0000000000000000000000000001", a.id, a);
+    spoolFor("dddd0000000000000000000000000002", b.id, b);
+    spoolFor("dddd0000000000000000000000000003", b.id, b);
+    CHECK(storeProductCount() == 2, "expected 2 products, got %u", (unsigned)storeProductCount());
+
+    CHECK(!storeMergeProduct(a.id, a.id, nullptr), "merging a product into itself was allowed");
+    size_t moved = 0;
+    CHECK(storeMergeProduct(b.id, a.id, &moved), "merge refused");
+    CHECK(moved == 2, "moved %u spools, expected 2", (unsigned)moved);
+    CHECK(!storeMergeProduct(b.id, a.id, nullptr), "merging an already-merged product was allowed");
+
+    auto check = [&](const char* when) {
+        SpoolRecord s;
+        CHECK(storeFindByUuid("dddd0000000000000000000000000002", s) && s.product == a.id,
+              "%s: B's spool is on product #%u, not A #%u", when, (unsigned)s.product, (unsigned)a.id);
+        CHECK(strcmp(s.material, "PLA+ Black") == 0, "%s: moved spool kept B's name (%s)", when, s.material);
+        CHECK(s.empty_g == 170.0f, "%s: moved spool lost its own tare (%.0f)", when, s.empty_g);
+        CHECK(storeProductCount() == 1, "%s: merged product still listed (%u)", when,
+              (unsigned)storeProductCount());
+        ProductRecord got;
+        CHECK(storeGetProduct(b.id, got) && got.id == a.id,
+              "%s: B's id does not resolve to A (got #%u)", when, (unsigned)got.id);
+        // B's identifiers are aliases now: each rung that matches B lands on A.
+        ProductRecord probe;
+        strlcpy(probe.pkg_uuid, b.pkg_uuid, sizeof(probe.pkg_uuid));
+        CHECK(storeFindProduct(probe, got) && got.id == a.id, "%s: B's package UUID did not lead to A", when);
+        probe = ProductRecord{}; probe.gtin = b.gtin;
+        CHECK(storeFindProduct(probe, got) && got.id == a.id, "%s: B's GTIN did not lead to A", when);
+        probe = tag("eSun", "PLA Plus Black", "PLA+", 1000, 0);
+        CHECK(storeFindProduct(probe, got) && got.id == a.id, "%s: B's name did not lead to A", when);
+        bool differs;
+        CHECK(storeAdoptProduct(tag("eSun", "PLA Plus Black", "PLA+", 1000, 170,
+                                    "bbbb00000000000000000000000000bb"), &differs) == a.id,
+              "%s: adopting a tag of B re-created a product", when);
+        CHECK(storeMergedProducts().size() == 1, "%s: merged list has %u entries", when,
+              (unsigned)storeMergedProducts().size());
+    };
+    check("after merge");
+    run("SEED 12 200");
+    run("COMPACT");
+    check("after compaction");
+    run("REBUILD");
+    check("after replay");
+
+    CHECK(storeUnmergeProduct(b.id), "unmerge refused");
+    CHECK(storeProductCount() == 2, "unmerge did not list B again");
+    ProductRecord got;
+    CHECK(storeGetProduct(b.id, got) && got.id == b.id, "B does not resolve to itself after unmerge");
+    SpoolRecord s;
+    CHECK(storeFindByUuid("dddd0000000000000000000000000002", s) && s.product == a.id,
+          "unmerge moved spools back on its own; that is a person's call");
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: product merge (spools move with their own tare, "
+                                      "merged identifiers lead to the survivor, survives "
+                                      "compaction and replay, unmerge restores)");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--products"))      { products();       return fails != 0; }
@@ -817,6 +887,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--cost"))          { costTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--popularity"))    { popularityTest(); return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--merge"))         { mergeTest();      return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;
 }

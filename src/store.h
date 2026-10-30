@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Norm Sohl
 
 #pragma once
+#include <vector>
 #include <Arduino.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -128,6 +129,9 @@ struct StoreEvent {
     float    lab[3]         = {};  // OPT key 59 — measured colour, D65/2 degree
     bool     has_lab        = false;
     bool     provisional    = false;  // created by adopting a tag; unconfirmed
+    // Product merge (Product only): this product was merged into that one.
+    // 0 = a live product. See storeMergeProduct().
+    uint32_t merged_into    = 0;
 };
 
 // ── Current-state record (derived) ────────────────────────────────────────────
@@ -209,6 +213,13 @@ struct ProductRecord {
     // it. Provisional products are excluded from tag write-back, so adopting a
     // spool can never make the station rewrite a vendor's tag from guessed data.
     bool     provisional = false;
+    // Set when this product was merged into another (storeMergeProduct()).
+    // A merged product is kept, not deleted: its identifiers -- package UUID,
+    // GTIN, material UUID, name -- go on matching, and lead to the survivor,
+    // so the next tag or catalog pick carrying them doesn't re-create it.
+    // That is the "alias" of docs/design/onboarding-vocabulary.md, without a
+    // separate table. Chains resolve (C -> B -> A).
+    uint32_t merged_into = 0;
     char     last_ts[25] = {};
     bool     valid = false;
 };
@@ -344,9 +355,32 @@ uint32_t storeAdoptProduct(const ProductRecord& fromTag, bool* outDiffers);
 // request; nothing here does that today.
 size_t storePropagateProduct(uint32_t id);
 
+// Merge product `from` into product `into` (docs/design/onboarding-vocabulary.md,
+// "Duplicate products"). Every spool of `from` is re-pointed to `into` -- one
+// Reconcile each, exactly like propagation, each keeping its own tare, cost and
+// needs_ob -- and then `from` is marked merged. Nothing is deleted or
+// rewritten, so it can be undone (storeUnmergeProduct()).
+//
+// Afterwards `from` is no longer listed (storeProductCount/At), but its id
+// still resolves to `into` through storeGetProduct(), and the matching ladder
+// follows it too. Refuses (false) unless both are live and different.
+// `moved` gets the number of spools re-pointed.
+bool storeMergeProduct(uint32_t from, uint32_t into, size_t* moved);
+
+// Make a merged product live again. Its spools stay where the merge put them:
+// which of them really belong back is for a person to say, one at a time.
+bool storeUnmergeProduct(uint32_t id);
+
+// Every merged product, as recorded (not resolved), for the undo list.
+std::vector<ProductRecord> storeMergedProducts();
+
 uint32_t storeNextProductId();
 uint32_t storePeekProductId();
+// Follows merges: asking for a merged product's id answers with the product it
+// was merged into, so a Stock List row or an old form still holding that id
+// keeps working. Compare out.id, not the id asked for.
 bool     storeGetProduct(uint32_t id, ProductRecord& out);
+// Live products only -- merged ones are left out of every list.
 size_t   storeProductCount();
 bool     storeProductAt(size_t idx, ProductRecord& out);
 
