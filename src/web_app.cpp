@@ -3032,7 +3032,8 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='number' step='0.1' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
     p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
     p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
-         "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' value='"
+         "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' "
+         "pattern='\\s*([0-9]{8}|[0-9]{12,14})\\s*' title='8, 12, 13 or 14 digits' value='"
        + esc(s.gtin) + "'>";
     p += "<label>Pack quantity</label>"
          "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
@@ -3748,6 +3749,19 @@ static String stockTareError(AsyncWebServerRequest* req) {
                    : "enter a default spool tare (empty spool weight) for this product";
 }
 
+// The row's barcode, when one is given, must be a real one (8/12/13/14
+// digits, valid GS1 check digit): /api/lookup matches scans against it, so a
+// typo here is a box that never scans. Same rule as a product's barcode
+// (handleApiProduct). Pure, like stockTareError(). Empty String when fine.
+static String stockGtinError(AsyncWebServerRequest* req) {
+    const AsyncWebParameter* pp = req->getParam("gtin", true);
+    if (!pp) return String();
+    String g = pp->value();
+    g.trim();
+    if (g.length() == 0 || gs1Parse(g)) return String();
+    return "not a valid barcode: it should be 8, 12, 13 or 14 digits with a correct check digit";
+}
+
 static CfgStock parseStockForm(AsyncWebServerRequest* req) {
     auto arg = [&](const char* k) -> String {
         const AsyncWebParameter* pp = req->getParam(k, true);
@@ -3892,7 +3906,9 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
     s.min_spools = (uint16_t)arg("min_spools").toInt();
     s.min_grams  = arg("min_grams").toFloat();
     strlcpy(s.sku,  arg("sku").c_str(),  sizeof(s.sku));
-    strlcpy(s.gtin, arg("gtin").c_str(), sizeof(s.gtin));
+    String gt = arg("gtin");
+    gt.trim();   // a scanner or a paste can bring spaces; stockGtinError() checked the rest
+    strlcpy(s.gtin, gt.c_str(), sizeof(s.gtin));
     s.pack_qty = (uint8_t)arg("pack_qty").toInt();
     if (s.pack_qty == 0) s.pack_qty = 1;
     return s;
@@ -3902,6 +3918,8 @@ static void handleApiStockAdd(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     const String tareErr = stockTareError(req);
     if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
+    const String gtinErr = stockGtinError(req);
+    if (gtinErr.length()) { req->send(400, "text/plain", gtinErr); return; }
     cfgStockAdd(parseStockForm(req));
     req->redirect("/stock");
 }
@@ -3932,6 +3950,8 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
     }
     const String tareErr = stockTareError(req);
     if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
+    const String gtinErr = stockGtinError(req);
+    if (gtinErr.length()) { req->send(400, "text/plain", gtinErr); return; }
     if (!cfgStockUpdate(id, parseStockForm(req))) {
         req->send(500, "text/plain", "stock item vanished mid-update");
         return;

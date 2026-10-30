@@ -721,3 +721,17 @@ def test_cost_comes_after_what_the_spool_is_and_its_tare(sim, page):
         .map(s => document.querySelector(s))
         .map(e => [...document.querySelectorAll('*')].indexOf(e))""")
     assert order == sorted(order)
+
+
+def test_stock_list_refuses_a_barcode_with_a_bad_check_digit(sim):
+    import urllib.error
+    pid = _catalog_onboard(sim, EAN)
+    bad = UPC[:-1] + str((int(UPC[-1]) + 1) % 10)
+    try:
+        sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1, gtin=bad)
+        assert False, "accepted"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+    assert not [r for r in sim.get_json("/api/stock")["items"] if r["gtin"] == bad]
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1, gtin=f" {UPC} ")
+    assert [r["gtin"] for r in sim.get_json("/api/stock")["items"] if r["gtin"]] == [UPC]
