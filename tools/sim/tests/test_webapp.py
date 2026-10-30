@@ -862,14 +862,14 @@ def test_reorder_lists_an_item_below_half_its_target_by_weight(sim, page):
     assert page.js_errors == []
 
 
-def test_reorder_rounds_to_order_up_to_whole_packs(sim, page):
+def test_reorder_orders_target_minus_on_hand_in_whole_spools(sim, page):
     first = _onboard_manually(sim, page)
     pid = first["product"]
-    sim._post("/api/stock/add", product=pid, min_spools=4, pack_qty=3)
+    sim._post("/api/stock/add", product=pid, min_spools=4)
     sim.remove()
-    # One full spool against a target of 4: below 2 spools' worth, so listed;
-    # 3 more needed, which is one pack of 3.
+    # One full spool against a target of 4: below 2 spools' worth, so listed,
+    # with 3 to order.
     page.goto(sim.url("/reorder"))
     row = page.locator(f"tr:has(a[href='/product?id={pid}'])")
     assert row.count() == 1
-    assert row.locator("td").nth(4).inner_text() == "3 spools (1 pack)"
+    assert row.locator("td").nth(4).inner_text() == "3 spools"
