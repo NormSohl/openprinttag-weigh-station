@@ -2838,7 +2838,7 @@ static bool needsReorder(const CfgStock& s, const OnHand& oh) {
     return oh.grams < REORDER_FRACTION * targetGrams(s);
 }
 
-// Target minus on hand, rounded up to whole spools, then to whole packs.
+// Target minus on hand, rounded up to whole spools.
 // Rounding up can leave a little over target (the part-used spool); short
 // is the worse way to be wrong.
 static uint32_t spoolsToOrder(const CfgStock& s, const OnHand& oh) {
@@ -2846,17 +2846,11 @@ static uint32_t spoolsToOrder(const CfgStock& s, const OnHand& oh) {
     if (need <= 0.001f) return 0;
     uint32_t n = (uint32_t)ceilf(need - 0.001f);
     if (n == 0) n = 1;
-    if (s.pack_qty > 1) n = (n + s.pack_qty - 1) / s.pack_qty * s.pack_qty;
     return n;
 }
 
-static String toOrderText(const CfgStock& s, uint32_t n) {
-    String t = String(n) + (n == 1 ? " spool" : " spools");
-    if (s.pack_qty > 1) {
-        uint32_t packs = n / s.pack_qty;
-        t += " (" + String(packs) + (packs == 1 ? " pack)" : " packs)");
-    }
-    return t;
+static String toOrderText(uint32_t n) {
+    return String(n) + (n == 1 ? " spool" : " spools");
 }
 
 static String onHandText(const CfgStock& s, const OnHand& oh) {
@@ -2868,7 +2862,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
                req->getParam("format")->value() == "csv";
 
     if (csv) {
-        String out = "vendor,material,color,diameter,sku,gtin,pack_qty,"
+        String out = "vendor,material,color,diameter,sku,gtin,"
                      "on_hand_spools,on_hand_g,target_spools,target_grams,to_order_spools\n";
         CfgStock s;
         for (size_t i = 0; i < cfgStockCount(); i++) {
@@ -2877,7 +2871,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
             if (!needsReorder(s, oh)) continue;
             out += String(s.vendor) + "," + s.material + "," + s.color + ","
                  + String(s.dia, 2) + "," + s.sku + "," + s.gtin + ","
-                 + String(s.pack_qty) + "," + String(oh.count) + ","
+                 + String(oh.count) + ","
                  + String(oh.grams, 0) + "," + String(s.min_spools) + ","
                  + String(s.min_grams, 0) + "," + String(spoolsToOrder(s, oh)) + "\n";
         }
@@ -2912,7 +2906,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         if (!oh.product) unmatched++;
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
            + onHandText(s, oh) + "</td><td>" + targetText(s) + "</td><td><b>"
-           + toOrderText(s, spoolsToOrder(s, oh)) + "</b></td><td>"
+           + toOrderText(spoolsToOrder(s, oh)) + "</b></td><td>"
            // Which rule produced this row. A stock item falling back to the name
            // match is not wrong, but it is coarser — it will count every colour
            // of that vendor's PLA — and there is no other way to see that.
@@ -3084,8 +3078,6 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' "
          "pattern='\\s*([0-9]{8}|[0-9]{12,14})\\s*' title='8, 12, 13 or 14 digits' value='"
        + esc(s.gtin) + "'>";
-    p += "<label>Pack quantity</label>"
-         "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
 }
 
 // STOCK_POPULARITY_WINDOW_DAYS itself lives in config.h now, shared with
@@ -3707,7 +3699,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
              "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
              "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
-         "<th>Target</th><th>SKU</th><th>Pack</th><th></th></tr>";
+         "<th>Target</th><th>SKU</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
         String thr = targetText(sr);
@@ -3726,7 +3718,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
                           + " <span class='ob unlinked'>not linked</span>")
            + "</td><td>"
            + popCell + "</td><td>" + thr + "</td><td>"
-           + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
+           + esc(sr.sku) + "</td><td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
              "onsubmit=\"return confirm('Remove this stock item? This cannot be undone.')\">"
@@ -3736,7 +3728,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + "</form></td></tr>";
     }
     if (n == 0)
-        p += "<tr><td colspan='7' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
+        p += "<tr><td colspan='6' class='muted'>Nothing tracked yet &mdash; add one below.</td></tr>";
     p += "</table>";
     if (n && earliestTs[0]) {
         char local[32];
@@ -4130,7 +4122,7 @@ static void handleApiStock(AsyncWebServerRequest* req) {
 // carries popularity) or /config/export (which bundles all five Config
 // tables together). Same pattern as /usage.csv.
 static void handleStockCsv(AsyncWebServerRequest* req) {
-    String c = "vendor,material,color,dia,sku,gtin,pack_qty,target_spools,target_grams\n";
+    String c = "vendor,material,color,dia,sku,gtin,target_spools,target_grams\n";
     const size_t n = cfgStockCount();
     CfgStock s;
     for (size_t i = 0; i < n; i++) {
@@ -4138,7 +4130,7 @@ static void handleStockCsv(AsyncWebServerRequest* req) {
         // Quote the free-text columns; vendor/material/color/sku can contain commas.
         c += "\"" + String(s.vendor) + "\",\"" + String(s.material) + "\",\""
            + String(s.color) + "\"," + String(s.dia, 2) + ",\"" + String(s.sku)
-           + "\",\"" + String(s.gtin) + "\"," + String(s.pack_qty) + ","
+           + "\",\"" + String(s.gtin) + "\","
            + String(s.min_spools) + "," + String(s.min_grams, 1) + "\n";
     }
     AsyncWebServerResponse* r = req->beginResponse(200, "text/csv", c);
