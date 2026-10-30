@@ -59,13 +59,14 @@ try {
 
     # Prune old copies -- only files this script made.
     $cutoff = (Get-Date).AddDays(-$KeepDays)
-    $old = Get-ChildItem -Path $Dest -File |
-           Where-Object { $_.Name -match '^(events-\d{4}-\d{2}-\d{2}\.ndjson|config-\d{4}-\d{2}-\d{2}\.json)$' -and
-                          $_.LastWriteTime -lt $cutoff }
+    # @(): an explicit list, so .Count is 0 (not 1) when nothing matches.
+    $old = @(Get-ChildItem -Path $Dest -File |
+             Where-Object { $_.Name -match '^(events-\d{4}-\d{2}-\d{2}\.ndjson|config-\d{4}-\d{2}-\d{2}\.json)$' -and
+                            $_.LastWriteTime -lt $cutoff })
     $old | Remove-Item -Force
 
     if (Test-Path $failed) { Remove-Item $failed -Force }
-    Write-Log ("ok  events {0:N0} bytes, config {1:N0} bytes, removed {2} old file(s)" -f $ev, $cf, @($old).Count)
+    Write-Log ("ok  events {0:N0} bytes, config {1:N0} bytes, removed {2} old file(s)" -f $ev, $cf, $old.Count)
 }
 catch {
     Get-ChildItem -Path $Dest -Filter '*.part' -ErrorAction SilentlyContinue | Remove-Item -Force
