@@ -7,6 +7,7 @@
 #   tools/sim/run.sh              build, then serve http://localhost:8080/
 #   tools/sim/run.sh --build      build only
 #   SIM_PORT=9000 tools/sim/run.sh
+#   SIM_HOST=0.0.0.0 tools/sim/run.sh     (reachable from other devices on the network)
 #   SIM_DATA=/some/dir tools/sim/run.sh   (default: tools/sim/data)
 set -euo pipefail
 cd "$(dirname "$0")"
