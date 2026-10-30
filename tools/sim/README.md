@@ -13,6 +13,11 @@ Open **http://localhost:8080/_sim** for the control panel: the web app on the
 right, simulated hardware on the left (place a spool, place a blank tag,
 remove it, run serial commands like `SEED 12 20`).
 
+**On an iPad or phone:** `SIM_HOST=0.0.0.0 tools/sim/run.sh`, then open
+`http://<the Mac's address>:8080/` on the same WiFi (`ipconfig getifaddr en0`
+prints the address; allow the connection if macOS asks). It listens on this
+computer only unless told to.
+
 ## What it is
 
 Not a copy of the pages. `run.sh` compiles the firmware's own sources —
