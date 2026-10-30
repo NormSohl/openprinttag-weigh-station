@@ -19,8 +19,8 @@ that's on the same network as the station.
 
 It creates `C:\Inventory Backups`, copies `weighstation-backup.ps1` there,
 saves the address in `station.txt`, runs one backup, and adds a Task
-Scheduler task, **Weigh station backup**: daily at noon. If the PC was off at
-noon, it runs as soon as it's next on. It runs while that user is logged on,
+Scheduler task, **Weigh station backup**: daily at midnight. If the PC was off
+at midnight, it runs as soon as it's next on. It runs while that user is logged on,
 so no password is stored and no administrator rights are needed.
 
 ## What you'll find in `C:\Inventory Backups`
@@ -42,7 +42,7 @@ with it. Copy one to a USB stick or cloud storage now and then, or point
 ## Options
 
 ```powershell
-install-backup.ps1 -Station 192.168.1.42 -Dest 'C:\Inventory Backups' -At 12:00
+install-backup.ps1 -Station 192.168.1.42 -Dest 'C:\Inventory Backups' -At 00:00
 weighstation-backup.ps1 -KeepDays 180        # run by hand, keep half a year
 ```
 
