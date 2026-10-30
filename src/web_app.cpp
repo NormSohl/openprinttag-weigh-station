@@ -1562,11 +1562,13 @@ static void stockPickerField(String& p) {
         String hay = name + " " + s.sku + " " + s.gtin;
         if (linked) hay += String(" ") + q.vendor + " " + q.material;
         if (linked) {
-            p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id)
+            p += "<div class='stk' tabindex='0' data-sid='" + String((unsigned)s.id)
+               + "' data-prod='" + String((unsigned)q.id)
                + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(hay.c_str()) + "\">"
                + swatch(q.rgba) + esc(name.c_str()) + "</div>";
         } else {
-            p += "<div class='stk off' data-q=\"" + esc(hay.c_str()) + "\">"
+            p += "<div class='stk off' data-sid='" + String((unsigned)s.id)
+               + "' data-q=\"" + esc(hay.c_str()) + "\">"
                + "<span class='sw sw0'></span>" + esc(name.c_str())
                + " <span class='muted'>&mdash; not linked, "
                  "<a href='/stock?edit=" + String((unsigned)s.id)
@@ -1586,6 +1588,11 @@ static const char STOCK_PICK_SCRIPT[] =
 ".stk.off{cursor:default;color:#777}.stk.off:hover{background:none}</style>"
 "<script>(function(){"
 "var d=document.getElementById('prod');if(!d)return;"
+// Select a product directly (a scan that matched a product with no Stock
+// List row); false when it is not in the list.
+"window.prodPick=function(id){filt('');if(q)q.value='';d.value=String(id);"
+  "if(d.value!=String(id)){d.value='0';return false}"
+  "d.dispatchEvent(new Event('change'));return true};"
 "var q=document.getElementById('prod-q'),all=[].slice.call(d.options),"
 "sq=document.getElementById('stk-q'),list=document.getElementById('stk-list'),"
 "ok=document.getElementById('stk-ok'),picked='';"
@@ -1614,10 +1621,100 @@ static const char STOCK_PICK_SCRIPT[] =
   "pick(ev.target.closest('.stk'))}});"
 "document.getElementById('stk-clear').addEventListener('click',function(ev){ev.preventDefault();"
   "d.value='0';d.dispatchEvent(new Event('change'))});"
+// For ONBOARD_SCAN_SCRIPT: pick a row by stock id, or list only these rows.
+"function row(id){return list.querySelector(\".stk[data-sid='\"+id+\"']\")}"
+"window.stkPick=function(id){pick(row(id))};"
+"window.stkOnly=function(ids){sq.value='';[].forEach.call(list.children,function(e){"
+  "e.hidden=ids.indexOf(+e.dataset.sid)<0})};"
+"})()</script>";
+
+// ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
+// A keyboard-wedge scanner is a keyboard: it types the code's digits and
+// Enter, a few ms apart. A document-level capture listener tells that apart
+// from a person by speed and by the code itself: digits under 50 ms apart,
+// 8/12/13/14 of them, then Enter, with a valid GS1 check digit. The check
+// digit is what stops a fast typist or a pasted number from counting.
+//
+// A scan works wherever focus is. If the digits landed in a text box, its
+// value is put back as it was before the burst, and the Enter never reaches
+// the form, so a scan never submits anything. The page decides what a scan
+// means by setting window.onScanCode; window.simulateScan(code) calls it
+// directly, for the browser console and tests.
+static const char SCAN_SCRIPT[] =
+"<script>(function(){"
+"function valid(c){var n=c.length;if([8,12,13,14].indexOf(n)<0)return false;"
+  "var s=0;for(var i=0;i<n-1;i++){var x=+c[n-2-i];s+=i%2?x:3*x}"
+  "return(10-s%10)%10==+c[n-1]}"
+"var buf='',last=0,el=null,val=null;"
+"document.addEventListener('keydown',function(ev){"
+  "var fast=ev.timeStamp-last<50;"
+  "if(/^[0-9]$/.test(ev.key)&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){"
+    "if(!buf||!fast){buf='';el=document.activeElement;"
+      "val=el&&(el.tagName=='INPUT'||el.tagName=='TEXTAREA')?el.value:null}"
+    "buf+=ev.key;last=ev.timeStamp;return}"
+  "if(ev.key=='Enter'&&buf&&fast&&valid(buf)){"
+    "ev.preventDefault();ev.stopPropagation();var c=buf;buf='';"
+    "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}"
+    "if(window.onScanCode)window.onScanCode(c);return}"
+  "buf=''},true);"
+"window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};"
+"})()</script>";
+
+// What a scan does on /onboard. With no spool on the scale there is no form
+// yet: the code is held in sessionStorage for up to 2 minutes and applied
+// when the page reloads with the spool (onboardWatchScript), so scanning the
+// box first and placing the spool second works as well as the other order.
+// ?scan=CODE on the URL applies a code on load, for testing.
+//
+// With the form: look the code up (/api/lookup) and
+//   one linked Stock List product -> pick that row, as a click would;
+//   several                       -> list only those rows;
+//   a product not on the list     -> select it in #prod, and say so;
+//   an unlinked row               -> show it, and say it needs linking;
+//   nothing                       -> say so; pick from the Stock List.
+// Names in the reply are already HTML-escaped (esc()), so they go in as HTML.
+static const char ONBOARD_SCAN_SCRIPT[] =
+"<script>(function(){"
+"var box=document.getElementById('scan-msg');"
+"function msg(h){box.innerHTML=h;box.hidden=!h}"
+"if(!document.querySelector(\"form[action='/api/onboard']\")){"
+  "window.onScanCode=function(c){"
+    "try{sessionStorage.setItem('scan',JSON.stringify({c:c,t:Date.now()}))}catch(e){}"
+    "msg('Scanned '+c+' &mdash; place the spool and it will be applied.')};"
+  "return}"
+"window.onScanCode=function(c){"
+  "var w=document.getElementById('obwrap');"
+  "if(w&&w.style.display=='none'){msg('Scanned '+c+'. This spool is already onboarded; "
+    "open <i>Change this spool&rsquo;s details</i> first to use a scan.');return}"
+  "window.scanGtin=c;msg('Scanned '+c+' &mdash; looking it up&hellip;');"
+  "fetch('/api/lookup?gtin='+c).then(function(r){return r.json()}).then(function(j){"
+    "var L=j.stock.filter(function(s){return s.product}),"
+        "U=j.stock.filter(function(s){return !s.product}),seen={};"
+    "L.forEach(function(s){seen[s.product]=1});"
+    "var nl=Object.keys(seen).length,P=j.products;"
+    "if(nl==1&&window.stkPick){stkPick(L[0].id);msg('Scanned '+c+' &rarr; <b>'+L[0].name+'</b>');return}"
+    "if(nl>1&&window.stkOnly){stkOnly(L.map(function(s){return s.id}));"
+      "msg('Scanned '+c+': several Stock List items have this barcode &mdash; pick one.');return}"
+    "if(P.length==1&&window.prodPick&&prodPick(P[0].id)){"
+      "msg('Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b> "
+      "&mdash; not on the Stock List.');return}"
+    "if(P.length>1){msg('Scanned '+c+': matches several products ('+P.map(function(p){"
+      "return p.vendor+' '+p.material}).join(', ')+') &mdash; pick one below.');return}"
+    "if(U.length){if(window.stkOnly)stkOnly(U.map(function(s){return s.id}));"
+      "msg('Scanned '+c+' &rarr; <b>'+U[0].name+'</b> on the Stock List, but that row "
+      "is not linked to a product &mdash; fix it on the Stock List.');return}"
+    "msg('Unknown barcode '+c+' &mdash; pick the stock item below.');"
+    "var q=document.getElementById('stk-q');if(q)q.focus()"
+  "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed.')})};"
+"var c=new URLSearchParams(location.search).get('scan');"
+"try{var h=JSON.parse(sessionStorage.getItem('scan')||'null');sessionStorage.removeItem('scan');"
+  "if(!c&&h&&Date.now()-h.t<120000)c=h.c}catch(e){}"
+"if(c&&/^[0-9]+$/.test(c))window.onScanCode(c);"
 "})()</script>";
 
 static void handleOnboardForm(AsyncWebServerRequest* req) {
     String p = head("Onboard", "/onboard");
+    p += "<p class='card' id='scan-msg' hidden></p>";
     int cur = currentSpool();
 
     if (cur < 0) {
@@ -1625,6 +1722,8 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
              "<p class='muted'>Place a spool and this page will update on its "
              "own once it's registered.</p></div>";
         p += onboardWatchScript(-1);
+        p += SCAN_SCRIPT;
+        p += ONBOARD_SCAN_SCRIPT;
         p += FOOT;
         req->send(200, "text/html", p);
         return;
@@ -1935,6 +2034,8 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     if (already) p += "</div>";   // #obwrap
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
+    p += SCAN_SCRIPT;
+    p += ONBOARD_SCAN_SCRIPT;
     p += onboardWatchScript(cur);
     p += FOOT;
     req->send(200, "text/html", p);
@@ -3074,6 +3175,53 @@ static void handleApiStockDelete(AsyncWebServerRequest* req) {
 // Read-only: every Stock List row plus its popularity over the same trailing
 // STOCK_POPULARITY_WINDOW_DAYS window /stock itself shows. Open, like the
 // other /api/* reads — no key needed.
+// ── GET /api/lookup?gtin=N — what a scanned barcode is ───────────────────────
+// docs/design/barcode-onboarding.md, phase 2. Open read, like every GET.
+// Compared as numbers, so a 12-digit UPC-A and its 13-digit EAN form (the
+// same code with a leading 0) match without special cases.
+//
+// `stock` holds every Stock List row the code points at: by the row's own
+// gtin, or by the gtin of the product it is linked to. Each row carries its
+// product id, 0 when it is not linked (or the link no longer resolves) --
+// the page shows those but cannot pick them, same as the phase 1 picker.
+static void handleApiLookup(AsyncWebServerRequest* req) {
+    const AsyncWebParameter* gp = req->getParam("gtin");
+    const uint64_t g = gp ? strtoull(gp->value().c_str(), nullptr, 10) : 0;
+    if (!g) { req->send(400, "application/json", "{\"error\":\"gtin required\"}"); return; }
+    char gs[24];
+    snprintf(gs, sizeof(gs), "%llu", (unsigned long long)g);
+
+    String j = String("{\"gtin\":\"") + gs + "\",\"products\":[";
+    ProductRecord q;
+    bool first = true;
+    for (size_t i = 0, n = storeProductCount(); i < n; i++) {
+        if (!storeProductAt(i, q) || q.gtin != g) continue;
+        if (!first) j += ",";
+        first = false;
+        j += "{\"id\":" + String((unsigned)q.id)
+           + ",\"vendor\":\"" + esc(q.vendor) + "\""
+           + ",\"material\":\"" + esc(q.material) + "\""
+           + ",\"nom_g\":" + String(q.nom_g, 0) + "}";
+    }
+    j += "],\"stock\":[";
+    CfgStock s;
+    first = true;
+    for (size_t i = 0, n = cfgStockCount(); i < n; i++) {
+        if (!cfgStockAt(i, s)) continue;
+        const bool linked = s.product && storeGetProduct(s.product, q);
+        const bool hit = (s.gtin[0] && strtoull(s.gtin, nullptr, 10) == g)
+                      || (linked && q.gtin == g);
+        if (!hit) continue;
+        if (!first) j += ",";
+        first = false;
+        j += "{\"id\":" + String((unsigned)s.id)
+           + ",\"name\":\"" + esc((String(s.vendor) + " " + s.material).c_str()) + "\""
+           + ",\"product\":" + String(linked ? (unsigned)q.id : 0u) + "}";
+    }
+    j += "]}";
+    req->send(200, "application/json", j);
+}
+
 static void handleApiStock(AsyncWebServerRequest* req) {
     const size_t n = cfgStockCount();
     std::vector<CfgStock> rows(n);
@@ -3966,6 +4114,7 @@ void webAppBegin() {
     sServer.on("/api/stock/update", HTTP_POST, handleApiStockUpdate);
     sServer.on("/api/stock/delete", HTTP_POST, handleApiStockDelete);
     sServer.on("/api/stock",        HTTP_GET,  handleApiStock);
+    sServer.on("/api/lookup",       HTTP_GET,  handleApiLookup);
     sServer.on("/stock.csv",        HTTP_GET,  handleStockCsv);
     // These two MUST be registered before "/config": ESPAsyncWebServer's
     // default URI matching is "backward compatible" (WebServer.cpp,

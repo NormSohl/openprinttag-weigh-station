@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Norm Sohl
 """End-to-end tests of the real web app (src/web_app.cpp) in the simulator."""
+import json
 import time
 
 import pytest
@@ -174,3 +175,131 @@ def test_product_filter_narrows_the_list_and_keeps_the_selection(sim, page):
     assert "/onboard" in page.url
     page.fill("#prod-q", "")
     assert page.locator("select#prod option").count() >= 2
+
+
+# ── Barcode lookup and scan capture (barcode-onboarding.md, phase 2) ──────────
+
+from conftest import scan
+
+
+def gs1(body):
+    """`body` plus its GS1 check digit."""
+    s = sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(body)))
+    return body + str((10 - s % 10) % 10)
+
+
+UPC = gs1("01234567890")     # 12-digit UPC-A
+EAN = "0" + UPC              # the same code as EAN-13
+
+
+def _catalog_onboard(sim, gtin, gross=1220):
+    """Onboard the spool on the scale as a catalog pick carrying `gtin`;
+    returns the product id."""
+    sim.blank(gross=gross)
+    spool = sim.get_json("/_sim/state")["spool"]
+    sim._post("/api/onboard", id=spool, source="catalog",
+              cat_vendor="eSUN", cat_material="PLA+ Black", cat_abbr="PLA",
+              cat_nom_g=1000, cat_empty_g=220, cat_dia=1.75, cat_gtin=gtin)
+    sim.remove()
+    return sim.get_json("/api/spools")[-1]["product"]
+
+
+def test_lookup_matches_upc_and_ean_forms(sim):
+    pid = _catalog_onboard(sim, EAN)
+    for code in (UPC, EAN):
+        j = sim.get_json("/api/lookup?gtin=" + code)
+        assert [p["id"] for p in j["products"]] == [pid]
+    assert sim.get_json("/api/lookup?gtin=" + gs1("400000000000"))["products"] == []
+
+
+def test_lookup_reports_stock_rows_linked_or_not(sim):
+    pid = _catalog_onboard(sim, EAN)
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
+    # Adding a row on the Stock List always links it now, so an unlinked row
+    # only comes from older config: give a seeded (unlinked) row a barcode
+    # through a config backup round trip.
+    other = gs1("400638133393")
+    cfg = sim.get_json("/config/export")
+    cfg["stock-items"][0]["gtin"] = other
+    sim.upload("/config/import", json.dumps(cfg).encode())
+    linked = sim.get_json("/api/lookup?gtin=" + UPC)["stock"]
+    assert [s["product"] for s in linked] == [pid]
+    unlinked = sim.get_json("/api/lookup?gtin=" + other)["stock"]
+    assert len(unlinked) == 1 and unlinked[0]["product"] == 0
+
+
+def test_scan_picks_the_stock_row_and_restores_the_focused_box(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.fill("#stk-q", "abc")
+    page.focus("#stk-q")
+    scan(page, EAN)
+    page.wait_for_selector("#scan-msg:not([hidden])")
+    page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
+    assert "/onboard" in page.url                   # Enter did not submit
+    assert page.input_value("#stk-q") == "abc"      # the digits were taken back
+    assert page.locator("#stk-ok").is_visible()
+    assert EAN in page.inner_text("#scan-msg")
+    assert page.js_errors == []
+
+
+def test_scan_of_a_product_not_on_the_stock_list(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, UPC)
+    page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
+    page.wait_for_selector("#scan-msg:has-text('not on the Stock List')")
+
+
+def test_unknown_barcode_says_so(sim, page):
+    _catalog_onboard(sim, EAN)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, gs1("400000000000"))
+    page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
+    assert page.input_value("select#prod") == "0"
+
+
+def test_slow_typing_and_bad_check_digits_are_not_scans(sim, page):
+    _catalog_onboard(sim, EAN)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.focus("#prod-q")
+    scan(page, EAN, gap_ms=120)                     # a person typing
+    bad = EAN[:-1] + str((int(EAN[-1]) + 1) % 10)
+    page.fill("#prod-q", "")
+    scan(page, bad)                                 # fast, wrong check digit
+    page.wait_for_timeout(300)
+    assert page.locator("#scan-msg").is_hidden()
+    assert page.input_value("#prod-q") == bad
+    assert "/onboard" in page.url
+
+
+def test_scan_before_the_spool_is_placed_is_applied_after(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
+    page.goto(sim.url("/onboard"))
+    assert "No spool is on the scale" in page.content()
+    scan(page, EAN)
+    page.wait_for_selector("#scan-msg:has-text('place the spool')")
+    sim.blank(gross=1100)                           # the page reloads over SSE
+    page.wait_for_selector("select#prod")
+    page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
+    assert page.locator("#stk-ok").is_visible()
+
+
+def test_scan_of_an_unlinked_stock_row_says_to_fix_it(sim, page):
+    _catalog_onboard(sim, EAN)
+    other = gs1("400638133393")
+    cfg = sim.get_json("/config/export")
+    cfg["stock-items"][0]["gtin"] = other
+    sim.upload("/config/import", json.dumps(cfg).encode())
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, other)
+    page.wait_for_selector("#scan-msg:has-text('not linked')")
+    assert page.input_value("select#prod") == "0"
+    assert page.locator("#stk-list .stk:visible").count() == 1

@@ -120,6 +120,12 @@ station. Linked rows are listed first.*
 
 ### Phase 2 — Barcode lookup and scan capture
 
+*Built on `barcode-onboarding` (`handleApiLookup()`, `SCAN_SCRIPT`,
+`ONBOARD_SCAN_SCRIPT` in `web_app.cpp`), for `/onboard` only so far; `/stock`
+is phase 4. Tested in the simulator with `scan()`; not yet on the station or
+with a real scanner. A code that matches a Stock List row with no linked
+product shows that row and says to fix it, rather than "unknown".*
+
 - **`GET /api/lookup?gtin=N`** (open read, like every other GET). Matches
   `ProductRecord::gtin` and the Stock List row's own `CfgStock::gtin`, and
   returns `{gtin, products:[{id, vendor, material, nom_g}], stock:[{id,

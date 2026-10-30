@@ -46,6 +46,17 @@ class Sim:
         with urllib.request.urlopen(self.base + path, data=data) as r:
             return r.read().decode()
 
+    def upload(self, path, data, name="file", filename="upload"):
+        """POST `data` as a multipart file, the way the Backup page does."""
+        b = "----simboundary"
+        body = (f"--{b}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                f"filename=\"{filename}\"\r\nContent-Type: application/octet-stream"
+                f"\r\n\r\n").encode() + data + f"\r\n--{b}--\r\n".encode()
+        req = urllib.request.Request(self.base + path, data=body, headers={
+            "Content-Type": "multipart/form-data; boundary=" + b})
+        with urllib.request.urlopen(req) as r:
+            return r.read().decode()
+
     def get(self, path):
         with urllib.request.urlopen(self.base + path) as r:
             return r.read().decode()
