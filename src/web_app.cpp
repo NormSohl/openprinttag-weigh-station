@@ -2846,7 +2846,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>This page compares our "
          "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
          "available) with the <a href='/' style='color:#8f8'>Inventory</a> (what is "
-         "actually on the shelf). If our current inventory is below the amount of "
+         "actually on the shelf). If our current inventory is at or below the amount of "
          "stock we want to have on hand, it is listed here. You can download this "
          "list to help with making an order.</p>";
     // No Color column: a linked row's Material already carries the colour
