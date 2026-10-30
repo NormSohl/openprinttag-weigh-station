@@ -297,6 +297,9 @@ int main(int, char**) {
     // its own default so it never touches a test run's files.
     if (!getenv("STORE_TEST_ROOT")) setenv("STORE_TEST_ROOT", "sim-data", 1);
     const int port = getenv("SIM_PORT") ? atoi(getenv("SIM_PORT")) : 8080;
+    // This computer only, unless SIM_HOST=0.0.0.0 opens it to the local
+    // network (e.g. to try the pages on an iPad). No real data lives here.
+    const char* host = getenv("SIM_HOST") ? getenv("SIM_HOST") : "127.0.0.1";
 
     gClockSet = true;   // the Mac's clock is real; NTP would have set the device's
 
@@ -329,8 +332,10 @@ int main(int, char**) {
     Serial.printf("[sim] data in %s\n", getenv("STORE_TEST_ROOT"));
     Serial.printf("[sim] web app:       http://localhost:%d/\n", port);
     Serial.printf("[sim] control panel: http://localhost:%d/_sim\n", port);
+    if (strcmp(host, "127.0.0.1") != 0)
+        Serial.printf("[sim] also on this network: http://<this computer's address>:%d/\n", port);
     fflush(stdout);
-    bool ok = svr.listen("127.0.0.1", port);
+    bool ok = svr.listen(host, port);
     running = false;
     ticker.join();
     if (!ok) { fprintf(stderr, "[sim] could not listen on port %d\n", port); return 1; }
