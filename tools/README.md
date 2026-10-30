@@ -5,6 +5,9 @@
 hardware, plus browser tests. Prefer it to `preview_webapp.py` below, which
 copies markup by hand and drifts. See `sim/README.md`.
 
+**`backup/` backs the station up daily from the staff PC** (Windows Task
+Scheduler, to `C:\Inventory Backups`). See `backup/README.md`.
+
 Two kinds of thing here: UI previews (Python, below) and `qr/` — C harnesses
 that build and run the real QR encoder natively under AddressSanitizer, to
 check the capacity table `drawQr()` depends on. Unlike the previews, those

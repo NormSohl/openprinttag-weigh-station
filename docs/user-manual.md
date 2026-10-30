@@ -247,7 +247,10 @@ catalog pick already lists one.
 - **Settings tables:** downloaded and restored separately on the same page.
   Use this file to copy the picklists to another station.
 
-Download a backup before a firmware update and at least monthly.
+Download a backup before a firmware update. For **daily backups without
+thinking about it**, set up `tools/backup/` on the staff PC once: it saves
+both files to `C:\Inventory Backups` every day and keeps 90 days. A
+`BACKUP FAILED.txt` appears there if a backup didn't work.
 
 The station compacts its log on its own as it fills. Monthly usage totals
 are never lost; individual weigh readings older than a few thousand events
