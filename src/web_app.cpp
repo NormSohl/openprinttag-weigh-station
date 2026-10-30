@@ -2728,83 +2728,35 @@ static void handleApiEraseStop(AsyncWebServerRequest* req) {
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
-struct OnHand { uint16_t count; float grams; uint32_t product; };
+struct OnHand { uint16_t count; float grams; uint32_t product; bool linked; };
 
-// Sum the active spools a stock item stands for.
+// Sum the active spools a stock item stands for: the spools of the product it
+// is linked to (CfgStock::product), and nothing else.
 //
-// BEST: the stock item was picked from an existing product at add/edit time
-// (CfgStock::product, set by stockFormFields()/parseStockForm()) — an exact
-// FK, so this needs no name recomposition at all and survives a later
-// product rename via /product?id=N.
+// Names are labels, not keys (docs/design/names-are-labels.md, 2026-10-30).
+// This used to fall back, for an unlinked row, to probing products by the
+// row's vendor + material + colour, and then to matching spools by vendor +
+// abbreviation -- so renaming a product (or a row typed slightly differently)
+// silently changed what Reorder counted. Now an unlinked row is reported as
+// unlinked (`linked` false) and counts nothing; /repair links it. Reorder
+// leaves unlinked rows out of the reorder list rather than calling them
+// empty, which would read as "reorder everything".
 //
-// PREFERRED, for older stock rows with no product id yet: resolve by probing
-// vendor+material+nom_g against the product table, same as the FK case would
-// have matched. Colour- and size-specific — "we keep four Prusament PETG
-// Orange 1 kg" stops being answered by a shelf of Prusament PETG in four
-// other colours. The probe composes `material` the same way the onboard form
-// does ("PETG" + " " + "Orange"), because that is what the OPT display
-// string holds and what products are keyed on. This is exactly the path that
-// silently misses when a stock row's typed material+colour don't happen to
-// reconstruct a real product's actual name (e.g. a vendor's own catalog name
-// carries more words, like "PLA Basic Fire Engine Red") — picking the
-// product directly avoids that, which is why it comes first.
-//
-// FALLBACK, when no product matches either way: the original vendor +
-// abbreviation match, so stock items that predate products keep working
-// exactly as before rather than silently reading zero on hand and demanding
-// a reorder of everything.
-//
-// The fallback matches on the record's ABBREVIATION, not r.material:
-// CfgStock.material is a bare type ("PLA") while r.material carries the display
-// string ("PLA Summer Grass"), so comparing those directly never matches.
-// Records with no abbreviation (seeded rows, foreign tags) fall back to
-// r.material, which for those IS the bare type.
+// storeGetProduct() follows merges, so a row still holding a merged
+// product's id counts the survivor's spools (linked.id, not s.product).
 static OnHand rollUp(const CfgStock& s) {
-    OnHand oh{0, 0.0f, 0};
-
+    OnHand oh{0, 0.0f, 0, false};
     ProductRecord linked;
-    if (s.product && storeGetProduct(s.product, linked)) {
-        // Picked directly at Stock List add/edit time (see stockFormFields()
-        // / parseStockForm()) -- an exact FK, immune to both the name-probe
-        // mismatch below and a later product rename via /product?id=N.
-        // linked.id, not s.product: a row still holding a merged product's
-        // id counts the survivor's spools (storeGetProduct() follows merges).
-        oh.product = linked.id;
-    } else {
-        // Either never linked, or linked to a product that no longer
-        // resolves. The second case is real: CfgStock lives in the config
-        // catalog, which backs up and restores SEPARATELY from the event log
-        // that defines products (see *Config catalog & storage*), and WIPE
-        // ALL resets the product counter -- so a restored stock row can
-        // reference an id that is gone, or worse, one since reissued to a
-        // different product. Falling back to the name probe degrades to the
-        // older, coarser behaviour instead of silently reporting zero on
-        // hand (which reads as "reorder everything") or matching a product
-        // that was never this row's.
-        ProductRecord probe, found;
-        strlcpy(probe.vendor, s.vendor, sizeof(probe.vendor));
-        String disp = s.material;
-        if (s.color[0]) disp += String(" ") + s.color;
-        strlcpy(probe.material, disp.c_str(), sizeof(probe.material));
-        strlcpy(probe.abbr, s.material, sizeof(probe.abbr));
-        probe.nom_g = s.spool_g;
-        if (s.gtin[0]) probe.gtin = strtoull(s.gtin, nullptr, 10);
-        if (storeFindProduct(probe, found)) oh.product = found.id;
-    }
-
+    if (!(s.product && storeGetProduct(s.product, linked))) return oh;
+    oh.linked  = true;
+    oh.product = linked.id;
     size_t n = storeSpoolCount();
     SpoolRecord r;
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
-        if (r.remaining_g <= 1.0f) continue;
-        bool hit;
-        if (oh.product) {
-            hit = (r.product == oh.product);
-        } else {
-            const char* mat = r.abbr[0] ? r.abbr : r.material;
-            hit = (strcmp(r.vendor, s.vendor) == 0 && strcmp(mat, s.material) == 0);
-        }
-        if (hit) { oh.count++; oh.grams += r.remaining_g; }
+        if (r.remaining_g <= 1.0f || r.product != oh.product) continue;
+        oh.count++;
+        oh.grams += r.remaining_g;
     }
     return oh;
 }
@@ -2827,7 +2779,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         for (size_t i = 0; i < cfgStockCount(); i++) {
             if (!cfgStockAt(i, s)) continue;
             OnHand oh = rollUp(s);
-            if (!belowThreshold(s, oh)) continue;
+            if (!oh.linked || !belowThreshold(s, oh)) continue;   // unlinked: can't count it
             out += String(s.vendor) + "," + s.material + "," + s.color + ","
                  + String(s.dia, 2) + "," + s.sku + "," + s.gtin + ","
                  + String(s.pack_qty) + "," + String(oh.count) + ","
@@ -2850,41 +2802,35 @@ static void handleReorder(AsyncWebServerRequest* req) {
     // virtually every row now that Stock List's manual entry links to a
     // product too -- see stockFormFields()/parseStockForm().
     p += "<table><tr><th>Vendor</th><th>Material</th>"
-         "<th>On hand</th><th>Threshold</th><th>Matched by</th></tr>";
+         "<th>On hand</th><th>Threshold</th><th>Product</th></tr>";
     CfgStock s;
     int flagged = 0;
-    int unmatched = 0;
+    int unlinked = 0;
     for (size_t i = 0; i < cfgStockCount(); i++) {
         if (!cfgStockAt(i, s)) continue;
         OnHand oh = rollUp(s);
+        if (!oh.linked) { unlinked++; continue; }   // reported below, never guessed
         if (!belowThreshold(s, oh)) continue;
         flagged++;
-        if (!oh.product) unmatched++;
         String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
                    : s.min_grams  > 0 ? (String(s.min_grams, 0) + " grams")
                    : String("empty");
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
            + String(oh.count) + " spool(s), "
            + String(oh.grams, 0) + " grams</td><td>" + thr + "</td><td>"
-           // Which rule produced this row. A stock item falling back to the name
-           // match is not wrong, but it is coarser — it will count every colour
-           // of that vendor's PLA — and there is no other way to see that.
-           + (oh.product
-                ? "<a href='/product?id=" + String((unsigned)oh.product)
-                  + "' style='color:#8f8'>product #" + String((unsigned)oh.product) + "</a>"
-                : String("<span class='muted'>name (no product)</span>"))
-           + "</td></tr>";
+           + "<a href='/product?id=" + String((unsigned)oh.product)
+           + "' style='color:#8f8'>product #" + String((unsigned)oh.product) + "</a></td></tr>";
     }
     if (flagged == 0)
         p += "<tr><td colspan='5' class='muted'>Everything is above threshold "
              "(or no stock items configured)</td></tr>";
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
-    if (unmatched)
-        p += "<p class='muted'>" + String(unmatched) + " item(s) matched by name, not "
-             "an exact product, so their on-hand count lumps every colour of that "
-             "vendor's material together. See <a href='/config' style='color:#8f8'>"
-             "Administration</a> for what that means.</p>";
+    if (unlinked)
+        p += "<p class='ob' id='reorder-unlinked'>" + String(unlinked) + " Stock List item(s) "
+             "aren't linked to a product, so they can't be counted and aren't listed here. "
+             "Link them on <a href='/repair' style='color:#9c9'>Administration &rarr; "
+             "Repair</a>.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -3046,7 +2992,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
 // docs/design/barcode-onboarding.md step 5, and the product merge of
 // docs/design/onboarding-vocabulary.md step 7. Two ways the Stock List and
 // the shelf stop agreeing, fixed in one place:
-//   - a Stock List row with no product: Reorder counts it by a name guess
+//   - a Stock List row with no product: Reorder can't count it
 //     and Onboard cannot offer it;
 //   - one filament recorded as two products: each holds part of the shelf,
 //     so neither counts it all.
@@ -3613,6 +3559,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     std::vector<PopularityQuery> q(n);
     for (size_t i = 0; i < n; i++) {
         cfgStockAt(i, rows[i]);
+        q[i].product = rows[i].product;   // by product when linked: a rename changes nothing
         strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
         // Same composition Reorder's rollUp() uses: CfgStock.material is the bare
         // type, colour rides separately, but consumption is keyed on the full
@@ -3641,7 +3588,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     // entry links to a product too. sr.color stays populated internally for
     // the rare unlinked/fallback case, just not surfaced as its own column.
     // Rows with no product, or one that no longer resolves: Reorder counts
-    // them by a name guess (rollUp()'s fallback) and Onboard's Stock List
+    // them at all (rollUp() counts by product only) and Onboard's Stock List
     // picker cannot offer them. Editing the row and picking its product fixes
     // both; a bulk repair is barcode-onboarding.md's step 5.
     std::vector<bool> linked(n);
@@ -3653,8 +3600,8 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     }
     if (nUnlinked)
         p += "<p class='ob' id='unlinked-note'>" + String((unsigned)nUnlinked)
-           + " item(s) marked <i>not linked</i> have no product: Reorder counts them "
-             "by name, which can miss, and Restock can't offer them. Edit each one "
+           + " item(s) marked <i>not linked</i> have no product: Reorder can't count "
+             "them and Restock can't offer them. Edit each one "
              "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
              "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
@@ -4040,6 +3987,7 @@ static void handleApiStock(AsyncWebServerRequest* req) {
     std::vector<PopularityQuery> q(n);
     for (size_t i = 0; i < n; i++) {
         cfgStockAt(i, rows[i]);
+        q[i].product = rows[i].product;   // by product when linked: a rename changes nothing
         strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
         String disp = rows[i].material;
         if (rows[i].color[0]) disp += String(" ") + rows[i].color;

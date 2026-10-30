@@ -481,6 +481,11 @@ size_t storeForEachWeigh(uint32_t spool,
 // Costs one full log read (LittleFS, bounded by log size, not spool count) —
 // call it once per page load, not per row.
 struct PopularityQuery {
+    // The Stock List row's product (CfgStock::product). When set, popularity
+    // counts that product's spools, found by product id (following merges),
+    // so renaming the product changes nothing (docs/design/names-are-labels.md).
+    // 0: matched by vendor + material text, as before products existed.
+    uint32_t product  = 0;
     char vendor[64]   = {};
     char material[64] = {};
 };

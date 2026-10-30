@@ -251,8 +251,9 @@ is fine.
 in, and if a product has that barcode it's picked under **"Item is…"**. The
 page says if the barcode is already on another item.
 
-Items marked **not linked** have no product, so Reorder only guesses their
-count. Link them on **Administration → Repair**.
+Items marked **not linked** have no product, so Reorder can't count them and
+leaves them off the reorder list (it says how many). Link them on
+**Administration → Repair**.
 
 **Adding an item.** Use the form below the list. Under **"Item is…"**:
 
@@ -268,8 +269,8 @@ catalog pick already lists one.
 
 **Administration → Repair.** Nothing changes until you choose and press a button.
 
-- **Stock List items with no product.** Reorder can only guess their count,
-  and Restock can't offer them. Each has a product picker; ★ marks likely
+- **Stock List items with no product.** Reorder can't count them, and
+  Restock can't offer them. Each has a product picker; ★ marks likely
   matches, and a single likely match is chosen for you. Check the choices,
   then press **Link the items chosen**.
 - **Stock List items for the same product.** Keep one (set its threshold)

@@ -1351,6 +1351,16 @@ static std::string popKey_(const char* vendor, const char* material) {
     std::string k(vendor); k += '\x01'; k += material; return k;
 }
 
+// Caller holds the lock. A spool's or Stock List row's popularity key: its
+// product, resolved through merges, when it has one; else the old text key.
+// Names are labels (docs/design/names-are-labels.md): a renamed product keeps
+// its key, so its history keeps counting.
+static std::string popKeyFor_(uint32_t product, const char* vendor, const char* material) {
+    const int i = product ? resolveProduct_(productIndex_(product)) : -1;
+    if (i >= 0) return "p" + std::to_string(sProducts[i].id);
+    return popKey_(vendor, material);
+}
+
 // Display-only: never touches the log, never used by anything that compares
 // or sorts timestamps. localtime_r() reads whatever TZ tzApply() last set
 // (see display_tz.h) -- independent of this file, deliberately, so store.cpp
@@ -1387,7 +1397,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
     // sizes -- both get the same computed values).
     std::unordered_map<std::string, std::vector<size_t>> qIndex;
     for (size_t i = 0; i < n; i++)
-        qIndex[popKey_(queries[i].vendor, queries[i].material)].push_back(i);
+        qIndex[popKeyFor_(queries[i].product, queries[i].vendor, queries[i].material)].push_back(i);
 
     struct SpoolState { std::string key; float remaining = 0; bool has = false; };
     std::unordered_map<uint32_t, SpoolState> spools;
@@ -1444,7 +1454,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
                                e.ev == StoreEv::Checkpoint);
         if (identEv && e.material[0]) {
             SpoolState& sp = spools[e.spool];
-            std::string newKey = popKey_(e.vendor, e.material);
+            std::string newKey = popKeyFor_(e.product, e.vendor, e.material);
             if (sp.has && sp.key != newKey) {
                 const std::string oldKey = sp.key;
                 if (qIndex.count(oldKey)) {
@@ -1468,7 +1478,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
         // "is this still in stock" and "how popular is it".
         if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
             SpoolState& sp = spools[e.spool];
-            if (!sp.has) { sp.has = true; sp.key = popKey_(e.vendor, e.material); }
+            if (!sp.has) { sp.has = true; sp.key = popKeyFor_(e.product, e.vendor, e.material); }
             const float oldRem = sp.remaining;
             const float newRem = e.remaining_g;
             if (qIndex.count(sp.key)) groupTotal[sp.key] += (newRem - oldRem);
@@ -1490,7 +1500,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
     if (!windowEntered) return;   // whole log predates the window: nothing attributable
 
     for (size_t i = 0; i < n; i++) {
-        const std::string key = popKey_(queries[i].vendor, queries[i].material);
+        const std::string key = popKeyFor_(queries[i].product, queries[i].vendor, queries[i].material);
         time_t unavail = unavailSec.count(key) ? unavailSec[key] : 0;
         if (zeroSince.count(key)) {   // still unavailable as of now
             time_t start = zeroSince[key];

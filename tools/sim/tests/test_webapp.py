@@ -735,3 +735,44 @@ def test_stock_list_refuses_a_barcode_with_a_bad_check_digit(sim):
     assert not [r for r in sim.get_json("/api/stock")["items"] if r["gtin"] == bad]
     sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1, gtin=f" {UPC} ")
     assert [r["gtin"] for r in sim.get_json("/api/stock")["items"] if r["gtin"]] == [UPC]
+
+
+# ── Names are labels (docs/design/names-are-labels.md) ────────────────────────
+
+def _stock_item(sim, pid):
+    return next(r for r in sim.get_json("/api/stock")["items"]
+                if r["id"] in [s["id"] for s in sim.get_json("/api/lookup?gtin=" + EAN)["stock"]])
+
+
+def test_renaming_a_product_changes_nothing_reorder_or_popularity_count(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    sim._post("/api/stock/add", product=pid, min_spools=3, pack_qty=1)
+    spool = sim.get_json("/api/spools")[0]["spool"]
+    sim.place(spool, gross=1220)
+    sim.place(spool, gross=1120)                       # 100 g used
+    before = _stock_item(sim, pid)["grams_in_window"]
+    assert before > 0
+    page.goto(sim.url("/reorder"))
+    assert f"product #{pid}" in page.content()       # 1 spool < 3: on the list
+
+    p = next(x for x in sim.get_json("/api/products") if x["id"] == pid)
+    sim._post("/api/product", id=pid, vendor="Totally Different", material="Renamed Filament",
+              abbr="PLA", color="#000000", dia=1.75, empty_g=220, nom_g=1000, gtin=EAN)
+    assert _stock_item(sim, pid)["grams_in_window"] == before
+    # Used after the rename: still this item's. (Keyed by name, it went to
+    # the new name, which no Stock List row carries.)
+    sim.place(spool, gross=1020)
+    assert _stock_item(sim, pid)["grams_in_window"] == before + 100
+    page.goto(sim.url("/reorder"))
+    row = page.locator("tr", has_text=f"product #{pid}")
+    assert "1 spool(s)" in row.inner_text()
+
+
+def test_reorder_never_guesses_an_unlinked_item(sim, page):
+    # The default Stock List is all unlinked: none of it is listed as low,
+    # and the page says how many it couldn't count.
+    _catalog_onboard(sim, EAN, vendor="eSun", material="PLA+ Black")
+    page.goto(sim.url("/reorder"))
+    assert page.locator("#reorder-unlinked").is_visible()
+    assert "Everything is above threshold" in page.content()
+    assert sim.get("/reorder?format=csv").strip().count("\n") == 0   # header only
