@@ -4316,8 +4316,8 @@ static void handleConfig(AsyncWebServerRequest* req) {
     tool("erase-link", "/erase", "Erase Tag",
          "Erase the tags of finished spools so the stickers can be reused. Erasing retires the spool.");
     tool("products-link", "/products", "Products",
-         String((unsigned)storeProductCount()) + " products on file. Edit a product's name, colour, tare "
-         "or barcode; saving updates every spool of it.");
+         "Every product the station knows about. Rename or correct one here; the change "
+         "applies to all its spools and their tags.");
     tool("repair-link", "/repair", "Repair",
          "Link Stock List items that have no product, and merge products that are the same "
          "filament recorded twice.");
