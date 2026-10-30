@@ -2810,11 +2810,51 @@ static OnHand rollUp(const CfgStock& s) {
     return oh;
 }
 
-// Below threshold? min_spools takes precedence; else min_grams; else "empty".
-static bool belowThreshold(const CfgStock& s, const OnHand& oh) {
-    if (s.min_spools > 0) return oh.count < s.min_spools;
-    if (s.min_grams  > 0) return oh.grams < s.min_grams;
-    return oh.count < 1;
+// One full spool of a stock item, in grams: its own nominal weight, else 1 kg.
+static float fullSpoolG(const CfgStock& s) { return s.spool_g > 0 ? s.spool_g : 1000.0f; }
+
+// The target in grams. min_spools takes precedence; a row from before the
+// grams field was hidden may carry min_grams instead; neither means one spool.
+static float targetGrams(const CfgStock& s) {
+    if (s.min_spools > 0) return s.min_spools * fullSpoolG(s);
+    if (s.min_grams  > 0) return s.min_grams;
+    return fullSpoolG(s);
+}
+
+static String targetText(const CfgStock& s) {
+    if (s.min_spools > 0) return String(s.min_spools) + (s.min_spools == 1 ? " spool" : " spools");
+    if (s.min_grams  > 0) return String(s.min_grams, 0) + " g";
+    return "1 spool";
+}
+
+// Listed once the grams on hand drop below REORDER_FRACTION of the target.
+static bool needsReorder(const CfgStock& s, const OnHand& oh) {
+    return oh.grams < REORDER_FRACTION * targetGrams(s);
+}
+
+// Target minus on hand, rounded up to whole spools, then to whole packs.
+// Rounding up can leave a little over target (the part-used spool); short
+// is the worse way to be wrong.
+static uint32_t spoolsToOrder(const CfgStock& s, const OnHand& oh) {
+    float need = (targetGrams(s) - oh.grams) / fullSpoolG(s);
+    if (need <= 0.001f) return 0;
+    uint32_t n = (uint32_t)ceilf(need - 0.001f);
+    if (n == 0) n = 1;
+    if (s.pack_qty > 1) n = (n + s.pack_qty - 1) / s.pack_qty * s.pack_qty;
+    return n;
+}
+
+static String toOrderText(const CfgStock& s, uint32_t n) {
+    String t = String(n) + (n == 1 ? " spool" : " spools");
+    if (s.pack_qty > 1) {
+        uint32_t packs = n / s.pack_qty;
+        t += " (" + String(packs) + (packs == 1 ? " pack)" : " packs)");
+    }
+    return t;
+}
+
+static String onHandText(const CfgStock& s, const OnHand& oh) {
+    return String(oh.grams / fullSpoolG(s), 1) + " spools (" + String(oh.grams, 0) + " g)";
 }
 
 static void handleReorder(AsyncWebServerRequest* req) {
@@ -2823,17 +2863,17 @@ static void handleReorder(AsyncWebServerRequest* req) {
 
     if (csv) {
         String out = "vendor,material,color,diameter,sku,gtin,pack_qty,"
-                     "on_hand_spools,on_hand_g,target_spools,target_grams\n";
+                     "on_hand_spools,on_hand_g,target_spools,target_grams,to_order_spools\n";
         CfgStock s;
         for (size_t i = 0; i < cfgStockCount(); i++) {
             if (!cfgStockAt(i, s)) continue;
             OnHand oh = rollUp(s);
-            if (!oh.linked || !belowThreshold(s, oh)) continue;   // unlinked: can't count it
+            if (!oh.linked || !needsReorder(s, oh)) continue;   // unlinked: can't count it
             out += String(s.vendor) + "," + s.material + "," + s.color + ","
                  + String(s.dia, 2) + "," + s.sku + "," + s.gtin + ","
                  + String(s.pack_qty) + "," + String(oh.count) + ","
                  + String(oh.grams, 0) + "," + String(s.min_spools) + ","
-                 + String(s.min_grams, 0) + "\n";
+                 + String(s.min_grams, 0) + "," + String(spoolsToOrder(s, oh)) + "\n";
         }
         AsyncWebServerResponse* resp = req->beginResponse(200, "text/csv", out);
         resp->addHeader("Content-Disposition", "attachment; filename=reorder.csv");
@@ -2846,15 +2886,15 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>This page compares our "
          "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
          "available) with the <a href='/' style='color:#8f8'>Inventory</a> (what is "
-         "actually on the shelf). If our current inventory is below the amount of "
-         "stock we want to have on hand, it is listed here. You can download this "
-         "list to help with making an order.</p>";
+         "actually on the shelf). When what's on the shelf drops below half of an "
+         "item's target, it is listed here with how many to order. Part-used spools "
+         "count by weight. You can download this list to help with making an order.</p>";
     // No Color column: a linked row's Material already carries the colour
     // (the product's full display string, e.g. "PETG Magenta"), and that's
     // virtually every row now that Stock List's manual entry links to a
     // product too -- see stockFormFields()/parseStockForm().
     p += "<table><tr><th>Vendor</th><th>Material</th>"
-         "<th>On hand</th><th>Target</th><th>Product</th></tr>";
+         "<th>On hand</th><th>Target</th><th>To order</th><th>Product</th></tr>";
     CfgStock s;
     int flagged = 0;
     int unlinked = 0;
@@ -2862,19 +2902,16 @@ static void handleReorder(AsyncWebServerRequest* req) {
         if (!cfgStockAt(i, s)) continue;
         OnHand oh = rollUp(s);
         if (!oh.linked) { unlinked++; continue; }   // reported below, never guessed
-        if (!belowThreshold(s, oh)) continue;
+        if (!needsReorder(s, oh)) continue;
         flagged++;
-        String thr = s.min_spools > 0 ? (String(s.min_spools) + " spools")
-                   : s.min_grams  > 0 ? (String(s.min_grams, 0) + " grams")
-                   : String("empty");
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
-           + String(oh.count) + " spool(s), "
-           + String(oh.grams, 0) + " grams</td><td>" + thr + "</td><td>"
+           + onHandText(s, oh) + "</td><td>" + targetText(s) + "</td><td><b>"
+           + toOrderText(s, spoolsToOrder(s, oh)) + "</b></td><td>"
            + "<a href='/product?id=" + String((unsigned)oh.product)
            + "' style='color:#8f8'>product #" + String((unsigned)oh.product) + "</a></td></tr>";
     }
     if (flagged == 0)
-        p += "<tr><td colspan='5' class='muted'>Everything is at or above its target "
+        p += "<tr><td colspan='6' class='muted'>Nothing is below half its target "
              "(or no stock items configured)</td></tr>";
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
@@ -3025,10 +3062,12 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "</div>";   // #stocknew
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
-    p += "<label>Target: spools to keep in stock &mdash; 0 = use grams instead</label>"
-         "<input type='number' name='min_spools' value='" + String(s.min_spools) + "'>";
-    p += "<label>Target in grams &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
-         "<input type='number' step='0.1' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
+    // Grams on hand are always counted now, so the grams target is no longer
+    // asked for; a row that already has one keeps it (hidden) until its spool
+    // target is set.
+    p += "<label>Target: spools to keep in stock &mdash; listed on Reorder below half</label>"
+         "<input type='number' name='min_spools' min='0' value='" + String(s.min_spools) + "'>"
+         "<input type='hidden' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
     p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
     p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
          "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' "
@@ -3661,9 +3700,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
          "<th>Target</th><th>SKU</th><th>Pack</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
-        String thr = sr.min_spools > 0 ? (String(sr.min_spools) + " spools")
-                   : sr.min_grams  > 0 ? (String(sr.min_grams, 0) + " grams")
-                   : String("&ge; 1 spool");
+        String thr = targetText(sr);
         String popCell;
         if (!pop[i].has_data) {
             popCell = "<span class='ob'>no data</span>";

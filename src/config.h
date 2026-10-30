@@ -117,6 +117,12 @@
 // or that guarantee silently stops holding for whichever one moved.
 #define STOCK_POPULARITY_WINDOW_DAYS 90
 
+// Reorder lists a Stock List item once the filament on hand, in grams, drops
+// below this fraction of its target (target spools x one spool's nominal
+// weight). Grams, not a spool count, so a part-used spool counts as part of
+// one: an item kept one at a time is listed at half a spool, not when empty.
+#define REORDER_FRACTION 0.5f
+
 // Tare given to a spool adopted from a tag that carries no
 // empty_container_weight, when it matches no product that has one. Tare is
 // never unknown (docs/design/onboarding-vocabulary.md): without a default the
