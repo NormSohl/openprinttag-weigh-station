@@ -723,6 +723,8 @@ static String specStrip(const SpoolRecord& r) {
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
     String p = head("Inventory", "/");
+    p += "<p class='muted'>This page lists what we currently have in stock. Spools "
+         "are weighed after printing to keep this list up to date.</p>";
 
     if (!gScaleCalibrated)
         p += "<div class='card' style='border-color:#a70'>"
@@ -751,8 +753,10 @@ static void handleRoot(AsyncWebServerRequest* req) {
 
     if (auditPhase == AuditPhase::Idle) {
         p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
-             "<p class='muted'>Weigh and scan every reel in the library. Anything not "
-             "seen by the end gets reviewed before it's marked disposed.</p>"
+             "<p class='muted'><b>Auditing:</b> Before you make a new order, run an audit "
+             "of the current inventory. This requires entering Audit mode and then "
+             "scanning all inventory in one pass. Close Audit mode and you will be "
+             "prompted to mark any spools which were not found as finished.</p>"
              "<form method='POST' action='/api/audit/start'>"
              "<button type='submit'>Start audit</button></form></div>";
     } else if (auditPhase == AuditPhase::Scanning) {
