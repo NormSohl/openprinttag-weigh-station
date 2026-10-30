@@ -10,6 +10,9 @@ one page each, and the user manual) from their Markdown: `build-pdf.sh` on a
 Mac or Linux PC, `build-pdf.ps1` on Windows. Rebuild after editing any of
 them; the script warns when a quickref no longer fits on one page.
 
+**`backup/` backs the station up daily from the staff PC** (Windows Task
+Scheduler, to `C:\Inventory Backups`). See `backup/README.md`.
+
 Two kinds of thing here: UI previews (Python, below) and `qr/` — C harnesses
 that build and run the real QR encoder natively under AddressSanitizer, to
 check the capacity table `drawQr()` depends on. Unlike the previews, those
