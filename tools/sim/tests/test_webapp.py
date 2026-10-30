@@ -773,7 +773,7 @@ def test_renaming_a_product_changes_nothing_reorder_or_popularity_count(sim, pag
     assert _stock_item(sim, pid)["grams_in_window"] == before + 100
     page.goto(sim.url("/reorder"))
     row = page.locator("tr", has_text=f"product #{pid}")
-    assert "1 spool(s)" in row.inner_text()
+    assert "0.8 spools (800 g)" in row.inner_text()
 
 
 def test_reorder_never_guesses_an_unlinked_item(sim, page):
@@ -782,7 +782,7 @@ def test_reorder_never_guesses_an_unlinked_item(sim, page):
     _catalog_onboard(sim, EAN, vendor="eSun", material="PLA+ Black")
     page.goto(sim.url("/reorder"))
     assert page.locator("#reorder-unlinked").is_visible()
-    assert "Everything is above threshold" in page.content()
+    assert "Nothing is below half its target" in page.content()
     assert sim.get("/reorder?format=csv").strip().count("\n") == 0   # header only
 
 
