@@ -802,6 +802,8 @@ def test_a_typed_entry_never_matches_a_product_by_name(sim, page):
     for gross in (1220, 1100):
         sim.blank(gross=gross)
         page.goto(sim.url("/onboard"))
+        if page.locator("#stk-list .stk.new").count():   # products exist: choose New
+            page.click("#stk-list .stk.new")
         page.select_option("select#profile", index=1)
         page.check("#confirm-new")
         page.once("dialog", lambda d: d.dismiss())        # "already a product. Use it?" -> no
@@ -818,6 +820,7 @@ def test_a_typed_entry_matching_a_listed_product_is_offered_it(sim, page):
     sim.remove()
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
+    page.click("#stk-list .stk.new")
     page.select_option("select#profile", index=1)
     page.check("#confirm-new")
     msgs = []
