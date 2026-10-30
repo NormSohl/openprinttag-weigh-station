@@ -600,7 +600,12 @@ def test_menu_has_administration_and_erase_lives_under_it(sim, page):
                                  "CHANGES MADE HERE CAN BREAK THINGS!")
     assert warn.evaluate("e => getComputedStyle(e).fontWeight") in ("700", "bold")
     assert warn.evaluate("e => getComputedStyle(e).color") == "rgb(255, 68, 68)"
-    assert page.locator("main h3", has_text="Products").count() == 1
+    # Reorganized: tools are one list, setup and advanced follow, and the
+    # raw-JSON editors are off this page.
+    assert page.locator("main h3").all_inner_texts() == ["Staff tools", "Station setup", "Advanced"]
+    assert page.locator(".tools a").count() == 7
+    assert page.locator("textarea").count() == 0
+    assert page.locator(".admin-alert").count() == 0      # calibrated, on a network
     page.click("#erase-link")
     page.wait_for_url("**/erase")
     # Erase Tag keeps Administration highlighted in the menu.
@@ -609,10 +614,23 @@ def test_menu_has_administration_and_erase_lives_under_it(sim, page):
 
 
 @pytest.mark.parametrize("link,path", [("#stock-link", "/stock"), ("#backup-link", "/backup"),
-                                       ("#erase-link", "/erase"), ("#repair-link", "/repair")])
+                                       ("#erase-link", "/erase"), ("#repair-link", "/repair"),
+                                       ("#products-link", "/products"),
+                                       ("#calibrate-link", "/calibrate"),
+                                       ("#tables-link", "/config/tables")])
 def test_staff_pages_open_from_administration_and_keep_it_highlighted(sim, page, link, path):
     page.goto(sim.url("/config"))
     page.click(link)
     page.wait_for_url("**" + path)
     assert page.locator("nav a.active").inner_text() == "Administration"
+    assert page.js_errors == []
+
+
+def test_raw_tables_have_their_own_page_and_saving_returns_there(sim, page):
+    # /config/tables must reach its own handler, not /config's (prefix routes).
+    page.goto(sim.url("/config/tables"))
+    assert page.locator("textarea").count() == 5
+    page.locator("form[action='/api/config'] button[type=submit]").first.click()
+    page.wait_for_url("**/config/tables")
+    assert page.locator("textarea").count() == 5
     assert page.js_errors == []

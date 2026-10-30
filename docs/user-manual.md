@@ -181,7 +181,7 @@ The idle screen shows **"Scale not calibrated"** until this is done.
 
 <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code">
 
-1. Open **Administration → Calibrate**.
+1. Open **Administration → Calibrate scale**.
 2. **Clear the scale**, then press **Zero (tare)**.
 3. **Place a known weight**, type its mass in grams, then press **Set calibration**.
 
@@ -200,7 +200,7 @@ do the same.)
 | **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
 | **Restock** | Enter details for a new spool on the scale (onboarding). |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Administration** | For trained staff. Leads to: **Stock List** (what the lab keeps in stock, with a 90-day popularity score), **Backup** (download or restore the event log and the config catalog), **Calibrate**, products, **Repair** (link Stock List items, merge duplicate products) and **Erase Tag** (see the Tag Erase quick reference). Also station name, WiFi, timezone and clock format, API key, and the picklists (vendors, materials, colours, spool profiles, stock items). |
+| **Administration** | For trained staff. **Staff tools:** Stock List (what the lab keeps in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
 
 **Editing a product** (name, colour, default tare, barcode…): on a spool's
 page, click its **Product #N** link, then click the product. Saving updates
@@ -352,8 +352,8 @@ curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
 Without an API key, **anything on the network can change the station**:
 onboard spools, edit tables, recalibrate, replace the log, reset WiFi.
 
-To require a key for changes, set an **API key** on **Administration** (*API
-access*, at the bottom). Reading stays open. The web app asks for the key the
+To require a key for changes, set an **API key** on **Administration**
+(*Advanced → API key*). Reading stays open. The web app asks for the key the
 first time you save something.
 
 Scripts pass it as a header or as the password:
@@ -398,7 +398,7 @@ The tag was left half-written.
 
 ### Weights are zero or wildly wrong
 
-- Recalibrate: **Administration → Calibrate**.
+- Recalibrate: **Administration → Calibrate scale**.
 - Check the load cell wiring (especially E+ / E−).
 
 ### Display is blank

@@ -1026,7 +1026,7 @@ static void handleApiAuditFound(AsyncWebServerRequest* req) {
 // show that, because two products with the same name roll up into one
 // inventory row and look correct.
 static void handleProducts(AsyncWebServerRequest* req) {
-    String p = head("Products", "/products");
+    String p = head("Products", "/config");   // under Administration
     p += "<h3>Products</h3>"
          "<p class='muted'>What we stock, as opposed to the individual spools on "
          "the shelf. A spool inherits its vendor, filament, colour, tare and "
@@ -1135,7 +1135,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
             if (storeSpoolAt(i, r) && r.product == id) mine.push_back(r.spool);
     }
 
-    String p = head("Product", "/products");
+    String p = head("Product", "/config");    // under Administration
     if (req->hasParam("merged"))
         p += "<p class='card'>Product #" + esc(req->getParam("merged")->value().c_str())
            + " was merged into this one. <a href='/repair#merged' style='color:#9c9'>Undo "
@@ -4026,29 +4026,82 @@ static void configTableForm(String& p, const char* label, const char* which) {
     p += "</form></div>";
 }
 
+// ── /config — Administration ──────────────────────────────────────────────────
+// Reorganized 2026-10-30 (on direct user request: the page had grown long and
+// confusing as it absorbed Stock List, Backup and Erase Tag). Four parts, in
+// order of how often staff need them:
+//   1. the staff-only warning, then anything that needs attention now
+//      (scale not calibrated, station not on a network);
+//   2. Staff tools: one compact list of links, one line each, most used first;
+//   3. Station setup: name, clock, network -- set once, rarely touched;
+//   4. Advanced: the API key, and the raw-JSON table editors, which have their
+//      own page (/config/tables) so their five big text boxes no longer fill
+//      this one.
+static const char ADMIN_STYLE[] =
+    "<style>"
+    ".tools a{display:block;padding:10px 12px;border-bottom:1px solid #333;text-decoration:none}"
+    ".tools a:last-child{border-bottom:0}.tools a:hover{background:#222}"
+    ".tools b{color:#8f8}.tools span{display:block;color:#999;font-size:14px;margin-top:2px}"
+    ".tools{padding:0}.danger{border-color:#844}"
+    "h3.adv{color:#f88}"
+    "</style>";
+
 static void handleConfig(AsyncWebServerRequest* req) {
     String p = head("Administration", "/config");
+    p += ADMIN_STYLE;
     // On direct user request: this page and the tools it leads to are for
     // trained staff, and the station is deliberately open (no API key).
     p += "<p id='admin-warning' style='color:#f44;font-weight:bold'>These settings and tools "
          "are for use by trained staff only. CHANGES MADE HERE CAN BREAK THINGS!</p>";
 
+    // ── Needs attention ───────────────────────────────────────────────────────
+    // Only when something is wrong, so the page doesn't carry a status line
+    // per subsystem in the normal case.
+    if (!gScaleCalibrated)
+        p += "<p class='card admin-alert'><b class='ob'>The scale is not calibrated.</b> "
+             "Weights are wrong until it is: <a href='/calibrate' style='color:#9c9'>Calibrate</a>.</p>";
+    if (gApSsid[0])
+        p += "<p class='card admin-alert'><b class='ob'>Not on a network.</b> This page is "
+             "coming from the station's own access point <b>" + esc(gApSsid) + "</b>, so nobody "
+             "else can reach it. See <a href='#network' style='color:#9c9'>Network</a>.</p>";
+
+    // ── Staff tools ───────────────────────────────────────────────────────────
+    // Links, not cards with one button each: six cards made the page long
+    // before anything on it could be changed. Ids are what the tests click.
+    auto tool = [&](const char* id, const char* href, const String& name, const String& what) {
+        p += String("<a id='") + id + "' href='" + href + "'><b>" + name + "</b><span>" + what
+           + "</span></a>";
+    };
+    p += "<h3>Staff tools</h3><div class='card tools'>";
+    tool("stock-link", "/stock", "Stock List",
+         "What the lab keeps in stock and when to reorder it. Add items by scanning their boxes.");
+    tool("erase-link", "/erase", "Erase Tag",
+         "Erase the tags of finished spools so the stickers can be reused. Erasing retires the spool.");
+    tool("products-link", "/products", "Products",
+         String((unsigned)storeProductCount()) + " products on file. Edit a product's name, colour, tare "
+         "or barcode; saving updates every spool of it.");
+    tool("repair-link", "/repair", "Repair",
+         "Link Stock List items that have no product, and merge products that are the same "
+         "filament recorded twice.");
+    tool("calibrate-link", "/calibrate", "Calibrate scale",
+         gScaleCalibrated ? String("Calibrated. Recalibrate after moving the station, or if "
+                                   "weights drift.")
+                          : String("<b class='ob'>Not calibrated.</b>"));
+    tool("backup-link", "/backup", "Backup",
+         "Download or restore the event log and the config catalog. The staff PC also saves "
+         "both every night.");
+    p += "</div>";
+
+    // ── Station setup ─────────────────────────────────────────────────────────
+    p += "<h3>Station setup</h3>";
+
     // Station name: the Idle screen's green heading, and the only place on
-    // the whole device that greets by the owning org's name -- everything
-    // else (every other TFT title, the web app's own header) is deliberately
-    // generic. Configurable because this firmware is meant to run at more
-    // than one lab eventually.
-    // The two staff pages that used to be tabs, first: they are what most
-    // visits here are for.
-    p += "<h3>Stock List</h3><div class='card'><p class='muted'>What the lab keeps in "
-         "stock and when to reorder it. Add items by scanning their boxes.</p>"
-         "<a href='/stock'><button type='button' class='sec' id='stock-link'>Stock List&hellip;</button></a></div>";
-    p += "<h3>Backup</h3><div class='card'><p class='muted'>Download or restore the event "
-         "log and the config catalog. The staff PC also saves both every night.</p>"
-         "<a href='/backup'><button type='button' class='sec' id='backup-link'>Backup&hellip;</button></a></div>";
-    p += "<h3>Station name</h3><div class='card'>";
-    p += "<p class='muted'>Shown on the idle screen. Up to " + String(STATION_NAME_MAX_LEN)
-       + " characters; the title doesn't wrap.</p>";
+    // the device that greets by the owning org's name -- everything else is
+    // deliberately generic. Configurable because this firmware is meant to run
+    // at more than one lab eventually.
+    p += "<div class='card'><label style='margin-top:0'>Station name "
+         "<span class='muted'>(on the idle screen, up to " + String(STATION_NAME_MAX_LEN)
+       + " characters)</span></label>";
     p += "<input id='snin' type='text' maxlength='" + String(STATION_NAME_MAX_LEN)
        + "' value='" + esc(stationNameGet()) + "'>"
          "<div style='margin-top:8px'><button type='button' onclick='ssn()'>Save name</button></div>"
@@ -4062,80 +4115,13 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "check it is not empty or over " + String(STATION_NAME_MAX_LEN) + " characters.';});}"
          "</script>";
 
-    // Network. Nothing in the app offered this before — /reset existed but was
-    // reachable only by typing the URL, so a station that had fallen back to
-    // its own AP (the setup window closes after WIFI_PORTAL_TIMEOUT_SEC with
-    // nobody connected) looked from the outside like it had no way to be put on
-    // a network at all. Which is what happened the first time it was carried to
-    // the lab.
-    p += "<h3>Network</h3><div class='card'>";
-    if (gApSsid[0])
-        p += "<p><b class='ob'>Not on a network.</b> This page is being served "
-             "from the station's own access point <b>" + esc(gApSsid) + "</b>, so "
-             "nobody else can reach it and <code>weighstation.local</code> will "
-             "not resolve.</p>";
-    else
-        p += "<p>Connected to <b>" + esc(WiFi.SSID().c_str()) + "</b> as <b>"
-           + WiFi.localIP().toString() + "</b>.</p>";
-    p += "<p class='muted'>Choosing a network clears the stored credentials and "
-         "reboots into the setup portal. Join <b>WeighStation-Setup</b> from a "
-         "phone within " + String(WIFI_PORTAL_TIMEOUT_SEC) + " seconds of the "
-         "reboot &mdash; once you are connected the timer stops, so there is no "
-         "rush after that. The station is 2.4 GHz only and cannot join "
-         "WPA2-Enterprise networks.</p>";
-    p += "<form method='POST' action='/reset'>"
-         "<button type='submit' class='sec'>Choose a WiFi network&hellip;</button>"
-         "</form></div>";
-
-    // A setup/maintenance task like Network above, not a shelf-facing page —
-    // dropped off the top nav for the same reason Products did. Unlike
-    // Products, there's already a built-in "come here now" surface for this
-    // one: Inventory shows a "Scale not calibrated" banner linking straight
-    // to /calibrate whenever gScaleCalibrated is false, so this link is for
-    // the proactive/maintenance case (drift, after moving the station).
-    p += "<h3>Scale calibration</h3><div class='card'>";
-    if (gScaleCalibrated)
-        p += "<p>Scale is calibrated.</p>";
-    else
-        p += "<p><b class='ob'>Not calibrated.</b> Weights will be wrong until "
-             "this is done.</p>";
-    p += "<a href='/calibrate'><button type='button' class='sec'>Calibrate&hellip;</button></a></div>";
-
-    // Unlike Calibrate above, nothing else in the app proactively points here
-    // (see the "Matched by" caveat on /reorder, which just links to Settings)
-    // -- this card IS the explanation, not a shortcut to one already given
-    // elsewhere. A filament that resolves to two separate products (a
-    // placement's fields didn't quite match an existing one) silently
-    // undercounts on Reorder and in popularity, and this is the only page
-    // that would show the duplication.
-    p += "<h3>Products</h3><div class='card'>";
-    p += "<p class='muted'>Every filament SKU derived from your spools and tags &mdash; "
-       + String((unsigned)storeProductCount()) + " on file. The same filament showing "
-         "up as two products means a placement didn't match an existing one, which "
-         "undercounts it on Reorder and in popularity. Editing a product propagates "
-         "to every spool of it.</p>";
-    p += "<a href='/products'><button type='button' class='sec'>View products&hellip;</button></a></div>";
-    // The Repair page lives here rather than in the nav (on direct user
-    // request: there are enough tabs). Linked from the Stock List's
-    // "not linked" note too.
-    p += "<h3>Repair</h3><div class='card'><p class='muted'>Link Stock List items "
-         "that have no product, and find and merge products that are the same "
-         "filament recorded twice.</p>"
-         "<a href='/repair'><button type='button' class='sec' id='repair-link'>Repair&hellip;</button></a></div>";
-    p += "<h3>Erase tags</h3><div class='card'><p class='muted'>Erase the tags of "
-         "finished spools so the stickers can be reused. Erasing retires the spool.</p>"
-         "<a href='/erase'><button type='button' class='sec' id='erase-link'>Erase Tag&hellip;</button></a></div>";
-
     // Display-only: the log itself always stores UTC (storeNowIso(), gmtime_r)
-    // so it stays unambiguous and string-sortable across a DST transition —
+    // so it stays unambiguous and string-sortable across a DST transition --
     // the popularity window math, the audit "found" comparison, and
     // storeCompact()'s retention floor all depend on that. Changing this only
     // changes what the TFT corner clock and the timestamps on this site show.
-    p += "<h3>Display timezone</h3><div class='card'>";
-    p += "<p class='muted'>Affects the station's on-screen clock and every "
-         "timestamp shown in the web app (weigh history, popularity dates). "
-         "The event log itself always records UTC, so backups and the API "
-         "are unaffected and never need converting.</p>";
+    p += "<div class='card'><label style='margin-top:0'>Clock "
+         "<span class='muted'>(the station's screen and this web app; the log stays in UTC)</span></label>";
     p += "<select id='tzsel'>";
     for (size_t i = 0; i < tzZoneCount(); i++) {
         const TzZone& z = tzZoneAt(i);
@@ -4144,12 +4130,12 @@ static void handleConfig(AsyncWebServerRequest* req) {
            + esc(z.label) + "</option>";
     }
     p += "</select>";
-    p += "<label>Clock format</label><select id='tzh24'>"
+    p += "<select id='tzh24' style='margin-top:8px'>"
          "<option value='0'" + String(tzGet24Hour() ? "" : " selected")
        + ">12-hour (2:30 PM)</option>"
          "<option value='1'" + String(tzGet24Hour() ? " selected" : "")
        + ">24-hour (14:30)</option></select>";
-    p += "<div style='margin-top:8px'><button type='button' onclick='stz()'>Save timezone</button></div>"
+    p += "<div style='margin-top:8px'><button type='button' onclick='stz()'>Save clock</button></div>"
          "<p class='muted' id='tzmsg'></p></div>";
     p += "<script>"
          "function stz(){var z=document.getElementById('tzsel').value;"
@@ -4160,47 +4146,75 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "r.ok?'Saved. Takes effect immediately.':'Refused (HTTP '+r.status+').';});}"
          "</script>";
 
-    p += "<h3>API access</h3>";
-    if (apiKeyIsSet())
-        p += "<div class='card'><p>An API key <b>is set</b>. Endpoints that change "
-             "state require it; read-only endpoints stay open.</p>";
+    // Network. /reset used to be reachable only by typing the URL, so a
+    // station that had fallen back to its own AP looked like it had no way
+    // onto a network at all -- which is what happened the first time it was
+    // carried to the lab.
+    p += "<div class='card' id='network'><label style='margin-top:0'>Network</label>";
+    if (gApSsid[0])
+        p += "<p><b class='ob'>Not on a network</b> (running its own access point <b>"
+           + esc(gApSsid) + "</b>).</p>";
     else
-        p += "<div class='card' style='border-color:#a70'><p><b class='ob'>No API key "
-             "set.</b> Anything on this network can onboard spools, edit these tables, "
-             "recalibrate the scale, replace the event log, or reset WiFi.</p>";
-    p += "<label>API key <span class='muted'>(blank clears it and reopens the API)</span></label>"
-         "<input id='ak' type='text' placeholder='a long random string' autocomplete='off'>"
-         "<div style='margin-top:8px'><button type='button' onclick='sk()'>Save key</button></div>"
+        p += "<p>Connected to <b>" + esc(WiFi.SSID().c_str()) + "</b> as <b>"
+           + WiFi.localIP().toString() + "</b>.</p>";
+    p += "<p class='muted'>Choosing a network restarts the station as <b>WeighStation-Setup</b>: "
+         "join it from a phone within " + String(WIFI_PORTAL_TIMEOUT_SEC) + " seconds. "
+         "2.4 GHz networks with a password only (not WPA2-Enterprise).</p>";
+    p += "<form method='POST' action='/reset'>"
+         "<button type='submit' class='sec'>Choose a WiFi network&hellip;</button>"
+         "</form></div>";
+
+    // ── Advanced ──────────────────────────────────────────────────────────────
+    p += "<h3 class='adv'>Advanced</h3>";
+    p += "<div class='card danger'><label style='margin-top:0'>API key</label>";
+    if (apiKeyIsSet())
+        p += "<p>A key <b>is set</b>: changes need it; reading stays open.</p>";
+    else
+        p += "<p class='muted'>None set, so anything on this network can make changes "
+             "(the station is kept open on purpose). Setting a key makes the web app ask "
+             "for it on the first change.</p>";
+    p += "<input id='ak' type='text' placeholder='blank clears the key' autocomplete='off'>"
+         "<div style='margin-top:8px'><button type='button' class='sec' onclick='sk()'>Save key</button></div>"
          "<p class='muted' id='akmsg'></p>"
-         "<p class='muted'>Send it as <code>X-API-Key: &lt;key&gt;</code>, as "
-         "<code>?key=&lt;key&gt;</code>, or as HTTP Basic auth "
-         "(<code>curl -u :&lt;key&gt;</code>). Lost it? Clear it over serial with "
-         "<code>APIKEY none</code>.</p></div>";
+         "<p class='muted'>Scripts send it as <code>X-API-Key</code>, <code>?key=</code>, or "
+         "HTTP Basic. Lost it? <code>APIKEY none</code> over USB serial clears it.</p></div>";
     p += "<script>"
          "function sk(){var k=document.getElementById('ak').value;"
          "fetch('/api/apikey',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
          "body:'key='+encodeURIComponent(k)})"
          ".then(r=>{document.getElementById('akmsg').textContent="
-         "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') \u2014 "
+         "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') — "
          "the current key is required to change it.';});}"
          "</script>";
+    p += "<div class='card danger tools'>";
+    tool("tables-link", "/config/tables", "Raw tables",
+         "Edit the picklists (vendors, materials, spool profiles, colours) and the Stock List "
+         "as JSON, for bulk changes. A mistake here can break onboarding.");
+    p += "</div>";
 
-    // Raw-JSON catalog tables — the bulk-edit / power-user path. Everyday
-    // add/edit/remove for Stock items lives on the friendlier /stock page;
-    // these stay here for the tables that don't have one yet, and for
-    // pasting in a bulk edit. Kept last since Network and API access are
-    // what most visits to this page are actually for.
-    p += "<h3>Config catalog</h3>";
-    p += "<p class='muted'>Edit the reference tables that drive onboarding and "
-         "reordering. Each is a JSON array; Save checks it before storing it. "
+    p += FOOT;
+    req->send(200, "text/html", p);
+}
+
+// ── /config/tables — the raw-JSON catalog editors ─────────────────────────────
+// The bulk-edit / power-user path, moved off /config (see above). Everyday
+// Stock List changes belong on /stock; the picklists have no friendlier
+// editor yet. Registered BEFORE /config: plain-string routes match by prefix.
+static void handleConfigTables(AsyncWebServerRequest* req) {
+    String p = head("Raw tables", "/config");
+    p += "<p><a href='/config' style='color:#8f8'>&larr; Administration</a></p>";
+    p += "<h3>Raw tables</h3>";
+    p += "<p id='admin-warning' style='color:#f44;font-weight:bold'>For trained staff only. "
+         "A mistake here can break onboarding and reordering.</p>";
+    p += "<p class='muted'>Each table is a JSON array; Save checks it before storing it. "
          "Stock items are easier to edit on the "
-         "<a href='/stock' style='color:#8f8'>Stock List</a> page.</p>";
+         "<a href='/stock' style='color:#8f8'>Stock List</a> page. Download a backup first "
+         "(<a href='/backup' style='color:#8f8'>Backup</a>).</p>";
     configTableForm(p, "Vendors",        "vendors");
     configTableForm(p, "Materials",      "materials");
     configTableForm(p, "Spool profiles", "spool-profiles");
     configTableForm(p, "Colours",        "colors");
     configTableForm(p, "Stock items",    "stock-items");
-
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -4261,7 +4275,7 @@ static void handleApiConfigSave(AsyncWebServerRequest* req) {
         return;
     }
     cfgSave(which.c_str());
-    req->redirect("/config");
+    req->redirect("/config/tables");   // back to the table editors
 }
 
 // ── Config catalog backup/restore — a SEPARATE artifact from the event log.
@@ -4871,6 +4885,7 @@ void webAppBegin() {
     // HTML back instead of JSON).
     sServer.on("/config/export", HTTP_GET,  handleConfigExport);
     sServer.on("/config/import", HTTP_POST, handleConfigImportDone, handleConfigImportUpload);
+    sServer.on("/config/tables", HTTP_GET, handleConfigTables);   // before /config: prefix match
     sServer.on("/config",      HTTP_GET,  handleConfig);
     sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);
     sServer.on("/calibrate",   HTTP_GET,  handleCalibratePage);
