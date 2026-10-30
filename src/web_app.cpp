@@ -749,19 +749,21 @@ static void handleRoot(AsyncWebServerRequest* req) {
             if (storeSpoolAt(i, rr) && rr.retired) retiredCount++;
     }
 
-    if (auditPhase == AuditPhase::Idle) {
-        p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
+    // The introduction and audit steps stay up during an audit, so whoever
+    // is doing it can see what comes next.
+    p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
              "<p class='muted'>This page lists what we currently have in stock. Spools "
              "are weighed after printing to keep this list up to date.</p>"
              "<p class='muted'><b>Auditing:</b> Before you make a new order, run an audit "
              "of the current inventory. Press <b>Start audit</b>, then "
              "weigh and scan all inventory in one pass. Press <b>Finish audit</b>, then "
              "press <b>Close</b> (used up) or <b>Found</b> for each spool that "
-             "wasn't found.</p>"
-             "<form method='POST' action='/api/audit/start'>"
+             "wasn't found.</p>";
+    if (auditPhase == AuditPhase::Idle) {
+        p += "<form method='POST' action='/api/audit/start'>"
              "<button type='submit'>Start audit</button></form></div>";
     } else if (auditPhase == AuditPhase::Scanning) {
-        p += "<div class='card' style='border-color:#2a5'><label style='margin-top:0'>"
+        p += "</div><div class='card' style='border-color:#2a5'><label style='margin-top:0'>"
              "Audit in progress</label><p><b>" + String(auditFound) + " of " + String(auditTotal)
            + "</b> found so far. Weigh spools as normal &mdash; each expanded row below "
              "shows found status.</p>"
@@ -773,10 +775,10 @@ static void handleRoot(AsyncWebServerRequest* req) {
              "<button type='submit' class='sec'>Abandon audit</button></form></div>";
     } else {  // Resolving
         uint32_t notFound = auditTotal - auditFound;
-        p += "<div class='card' style='border-color:#a70'><label style='margin-top:0'>"
+        p += "</div><div class='card' style='border-color:#a70'><label style='margin-top:0'>"
              "Audit &mdash; resolving</label><p><b class='ob'>" + String(notFound)
-           + " spool(s) not found.</b> Mark each Closed (confirmed disposed) or Found "
-             "below before this audit can complete. Still weighable normally &mdash; "
+           + " spool(s) not found.</b> Press <b>Close</b> (used up) or <b>Found</b> "
+             "for each one below before this audit can complete. Still weighable normally &mdash; "
              "weighing one resolves it too.</p>"
              "<form method='POST' action='/api/audit/abandon' "
              "onsubmit=\"return confirm('Abandon this audit? Nothing already closed or "
