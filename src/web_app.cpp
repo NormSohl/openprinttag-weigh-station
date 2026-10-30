@@ -4312,7 +4312,7 @@ static void handleConfig(AsyncWebServerRequest* req) {
     };
     p += "<h3>Staff tools</h3><div class='card tools'>";
     tool("stock-link", "/stock", "Stock List",
-         "What the lab keeps in stock and when to reorder it. Add items by scanning their boxes.");
+         "What we want to keep in stock.");
     tool("erase-link", "/erase", "Erase Tag",
          "Erase the tags of finished spools so the stickers can be reused. Erasing retires the spool.");
     tool("products-link", "/products", "Products",
