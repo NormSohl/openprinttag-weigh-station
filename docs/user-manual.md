@@ -209,7 +209,9 @@ do the same.)
 page, click its **Product #N** link, then click the product. Saving updates
 every spool of that product; their tags update the next time each is placed.
 To fix a barcode, scan the box on that page or type it; blank removes it.
-Every product edit is kept in the event log, so an unwanted one can be traced.
+Product edits are kept in the event log, so an unwanted one can be traced,
+until the log is compacted (see *Backups*); downloaded backups keep them for
+good.
 
 ### The barcode scanner
 
