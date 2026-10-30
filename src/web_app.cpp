@@ -4716,10 +4716,6 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     p += "<p class='muted'>Total " + String(grand / 1000.0f, 2) + " kg ($"
        + String(grandDollars, 2) + ") across "
        + String((unsigned)n) + " month/vendor/material buckets.</p>";
-    p += "<p class='muted'>$ totals only reflect spools with a recorded cost "
-         "&mdash; entered on the Restock form. Older spools, or ones where it "
-         "was left blank, contribute $0 here even though real grams were "
-         "consumed.</p>";
 
     // Yearly rollup, same shape as "by month" below but grouped one level
     // coarser — drilling down from the all-time summary above. Rows with no
