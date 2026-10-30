@@ -1827,6 +1827,11 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 "if(c&&/^[0-9]+$/.test(c))window.onScanCode(c);"
 "})()</script>";
 
+// "Capture tare" asks before using a reading above this as an EMPTY spool's
+// weight: cardboard and plastic 1 kg spools weigh ~100-300 g; a reading over
+// this is almost always the full spool still on the scale.
+static constexpr float CAPTURE_TARE_MAX_G = 500.0f;
+
 static void handleOnboardForm(AsyncWebServerRequest* req) {
     String p = head("Restock", "/onboard");
     p += "<p class='card' id='scan-msg' hidden></p>";
@@ -1900,6 +1905,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
            "var d=document.getElementById('prod'),"
                "s=document.getElementById('cat-source'),"
                "f=document.getElementById('profile');"
+           // Nothing chosen: no product, no catalog pick, and the manual
+           // fields never opened. They hold last time's vendor/material/
+           // colour, and used to be saved as this spool's identity unseen.
+           "var md=document.getElementById('cat-manual-details');"
+           "if((!d||d.value=='0')&&s&&s.value=='manual'&&md&&!md.open){"
+             "alert('Say what this spool is first: pick a Stock List item or product, "
+             "search the catalog, or open \\u201cOr enter manually\\u201d.');return false;}"
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&f&&f.value==''){"
              "alert('Pick a spool profile (next to the tare box) \\u2014 it sets "
              "this spool\\'s full and empty weights.');f.focus();return false;}"
@@ -1939,28 +1951,6 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // The last scan, for handleApiOnboard to learn (phase 3). Set by
     // ONBOARD_SCAN_SCRIPT.
     p += "<input type='hidden' name='scan_gtin' id='scan-gtin'>";
-
-    // Applies regardless of which of the three paths below resolves the rest
-    // of the identity -- what THIS spool cost is a fact about the purchase,
-    // not about the product, so it belongs outside #newprod (which hides for
-    // "another spool of X"). Deliberately no last-used default the way
-    // vendor/material/colour get one: a stale price silently kept is
-    // exactly the failure worth avoiding here, so it starts blank every time.
-    //
-    // What IS on record is shown beside the field as text, never as the
-    // input's value: pre-filling it would put a price back in the POST that
-    // nobody re-typed, which is the whole thing the blank field prevents.
-    // But leaving it invisible meant a price could be entered and never
-    // verified again, since no other page showed it either.
-    p += "<label>Cost for this spool ($) &mdash; leave blank if unknown</label>"
-         "<input type='number' step='0.01' min='0' name='cost'>";
-    p += "<p class='muted' style='margin-top:4px'>";
-    if (r.cost > 0.0f)
-        p += "Currently recorded: <b>$" + String(r.cost, 2) + "</b>. "
-             "Leaving this blank keeps it; enter 0 to clear it.";
-    else
-        p += "No cost recorded for this spool yet.";
-    p += "</p>";
 
     // ── "Another spool of X" ──────────────────────────────────────────────────
     // The path that makes this worth building. Nine onboardings out of ten are
@@ -2072,7 +2062,12 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<input type='hidden' name='cat_bed_min'     id='cat-f-cat_bed_min'>"
          "<input type='hidden' name='cat_bed_max'     id='cat-f-cat_bed_max'>";
 
-    p += "<details id='cat-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
+    // manual_open tells handleApiOnboard the manual fields were actually
+    // opened (see the submit check above): collapsed, they still hold last
+    // time's picks.
+    p += "<input type='hidden' name='manual_open' id='manual-open' value='0'>";
+    p += "<details id='cat-manual-details' ontoggle=\"document.getElementById('manual-open').value="
+         "this.open?'1':'0'\"><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
          "Or enter manually</summary>";
 
     // Every manual select ends with a "+ Add new ..." option that reveals a
@@ -2135,7 +2130,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // weight and tare from the profile alone, so handleApiOnboard refuses a
     // manual onboard with none picked, and the form checks the same thing on
     // submit, rather than silently writing 0 g / 0 g to the tag.
-    p += "<label>Spool profile &mdash; sets the tare below</label>"
+    p += "<label>Spool profile &mdash; fills in the tare</label>"
          "<select name='profile' id='profile' onchange=\""
            "document.getElementById('profile-new-wrap').style.display="
              "this.value=='__new__'?'block':'none';"
@@ -2157,12 +2152,50 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<label>Empty spool weight / tare (g)</label><input type='number' step='0.1' name='profile_new_empty' id='profile-new-empty'>"
          "</div>";
 
-    // Tare override (optional). "Capture tare" reads the load cell once.
-    p += "<label>Empty spool tare (g) &mdash; blank uses the product, catalog or profile value</label>"
-         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='from product, profile or catalog'>";
+    // Tare: one label and one line of help. The old wording ("profile sets the
+    // tare below" vs "blank uses the product, catalog or profile value")
+    // described the same box two different ways.
+    p += "<label>Tare: the empty spool's weight (g)</label>"
+         "<input type='number' step='0.1' name='empty_g' id='tare' placeholder='blank: the product&rsquo;s or catalog&rsquo;s'>"
+         "<p class='muted' style='margin-top:4px'>Picking a spool profile fills this in. "
+         "Blank uses the picked product's or the catalog's tare. Or weigh an empty spool "
+         "of the same kind with <b>Capture tare</b>.</p>";
+    // "Capture tare" reads the load cell once -- whatever is on it, which on
+    // this page is usually the FULL spool being entered. Nothing on the
+    // scale, or more than an empty spool weighs, asks first instead of
+    // silently filling in a tare that would zero the spool's filament.
     p += "<button type='button' class='sec' onclick=\"fetch('/api/tare',{method:'POST'})"
-         ".then(r=>r.json()).then(d=>{document.getElementById('tare').value=d.weight.toFixed(1)})\">"
+         ".then(r=>r.json()).then(d=>{var w=d.weight;"
+           "if(w<5){alert('Nothing on the scale. Put an empty spool of the same kind on it, then press Capture tare.');return}"
+           "if(w>" + String(CAPTURE_TARE_MAX_G, 0) + "&&!confirm('The scale reads '+w.toFixed(0)+' g. An empty spool "
+             "is usually 100\\u2013300 g, so this looks like a spool with filament on it. Use '"
+             "+w.toFixed(0)+' g as the empty weight anyway?'))return;"
+           "document.getElementById('tare').value=w.toFixed(1)})\">"
          "Capture tare from scale</button>";
+
+    // Cost. Below the identity and tare (it used to sit above them, first
+    // thing on the form, before anyone had said what the spool is).
+    // Applies regardless of which of the three paths above resolves the rest
+    // of the identity -- what THIS spool cost is a fact about the purchase,
+    // not about the product, so it sits outside #newprod (which hides for
+    // "another spool of X"). Deliberately no last-used default the way
+    // vendor/material/colour get one: a stale price silently kept is
+    // exactly the failure worth avoiding here, so it starts blank every time.
+    //
+    // What IS on record is shown beside the field as text, never as the
+    // input's value: pre-filling it would put a price back in the POST that
+    // nobody re-typed, which is the whole thing the blank field prevents.
+    // But leaving it invisible meant a price could be entered and never
+    // verified again, since no other page showed it either.
+    p += "<label>Cost for this spool ($) &mdash; leave blank if unknown</label>"
+         "<input type='number' step='0.01' min='0' name='cost'>";
+    p += "<p class='muted' style='margin-top:4px'>";
+    if (r.cost > 0.0f)
+        p += "Currently recorded: <b>$" + String(r.cost, 2) + "</b>. "
+             "Leaving this blank keeps it; enter 0 to clear it.";
+    else
+        p += "No cost recorded for this spool yet.";
+    p += "</p>";
 
     p += "<p id='scan-learn' hidden><span></span> <a href='#' id='scan-clear' "
          "style='color:#9c9'>clear</a></p>";
@@ -2246,6 +2279,15 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     // rows, creates a product, or rewrites the last-used memory: a request
     // that answers 4xx must not have changed anything.
     if (!haveChosen && arg("source") != "catalog") {
+        // The manual fields start on last time's picks, so a form sent with
+        // them never opened says nothing about THIS spool (see
+        // handleOnboardForm's manual_open). Checked before anything is written.
+        if (arg("manual_open") != "1") {
+            req->send(400, "text/plain",
+                      "say what this spool is: pick a Stock List item or product, search "
+                      "the catalog, or open \"Or enter manually\"");
+            return;
+        }
         const String prof = arg("profile");
         if (prof.length() == 0) {
             req->send(400, "text/plain",

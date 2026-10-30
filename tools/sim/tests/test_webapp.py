@@ -663,3 +663,61 @@ def test_admin_pages_stay_small_with_a_realistic_store(sim, page):
     first_row = page.locator("select.link-sel").first
     assert first_row.locator("option").count() >= 41      # "leave" + every product
     assert page.js_errors == []
+
+
+# ── Restock page review fixes ─────────────────────────────────────────────────
+# (The tests block the online catalog, and a catalog that fails to load opens
+# "Or enter manually" by itself, which is why the other tests' manual saves
+# pass the manual_open check. These close it on purpose.)
+
+def test_station_refuses_a_manual_save_whose_fields_were_never_opened(sim):
+    import urllib.error
+    sim.blank(gross=1220)
+    spool = sim.get_json("/_sim/state")["spool"]
+    form = dict(id=spool, product=0, source="manual", vendor="eSun", material="PLA",
+                color="Black", profile="eSun 1kg")
+    try:
+        sim._post("/api/onboard", **form)
+        assert False, "accepted"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+    assert sim.get_json("/api/spools")[0]["needs_onboarding"] is True   # nothing written
+    assert sim.get_json("/api/products") == []
+    sim._post("/api/onboard", manual_open=1, **form)
+    assert sim.get_json("/api/spools")[0]["needs_onboarding"] is False
+
+
+def test_page_asks_what_the_spool_is_before_saving_unopened_manual_fields(sim, page):
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    page.select_option("select#profile", index=1)
+    page.evaluate("document.getElementById('cat-manual-details').open = false")
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.dismiss()))
+    page.click("button[type=submit]")
+    page.wait_for_timeout(300)
+    assert msgs and "Say what this spool is" in msgs[0]
+    assert "/onboard" in page.url
+
+
+def test_capture_tare_asks_before_using_a_full_spool_as_the_tare(sim, page):
+    sim.blank(gross=1220)                       # the full spool is what's on the scale
+    page.goto(sim.url("/onboard"))
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.dismiss()))
+    page.click("text=Capture tare from scale")
+    page.wait_for_timeout(500)
+    assert msgs and "1220 g" in msgs[0]
+    assert page.input_value("#tare") == ""      # Cancel kept it blank
+    page.once("dialog", lambda d: d.accept())
+    page.click("text=Capture tare from scale")
+    page.wait_for_function("document.getElementById('tare').value == '1220.0'")
+
+
+def test_cost_comes_after_what_the_spool_is_and_its_tare(sim, page):
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    order = page.evaluate("""() => ['#cat-manual-details', '#tare', 'input[name=cost]']
+        .map(s => document.querySelector(s))
+        .map(e => [...document.querySelectorAll('*')].indexOf(e))""")
+    assert order == sorted(order)
