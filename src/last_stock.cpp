@@ -5,6 +5,7 @@
 #include <Preferences.h>
 
 static String sVendor, sMaterial, sColor;
+static String sCatVendor, sCatType, sCatPkg;
 
 // Read-write, same reasoning as last_onboard.cpp/station_name.cpp: a
 // read-only open of a namespace that doesn't exist yet (first boot) logs an
@@ -19,6 +20,9 @@ void lastStockBegin() {
     sVendor   = loadOne(p, "vendor");
     sMaterial = loadOne(p, "material");
     sColor    = loadOne(p, "color");
+    sCatVendor = loadOne(p, "cat_vendor");
+    sCatType   = loadOne(p, "cat_type");
+    sCatPkg    = loadOne(p, "cat_pkg");
     p.end();
 }
 
@@ -35,5 +39,21 @@ void lastStockSet(const char* vendor, const char* material, const char* color) {
     p.putString("vendor",   sVendor);
     p.putString("material", sMaterial);
     p.putString("color",    sColor);
+    p.end();
+}
+
+const char* lastStockCatVendor()  { return sCatVendor.c_str(); }
+const char* lastStockCatType()    { return sCatType.c_str(); }
+const char* lastStockCatPackage() { return sCatPkg.c_str(); }
+
+void lastStockSetCatalog(const char* vendorSlug, const char* typeTok, const char* pkgPath) {
+    sCatVendor = vendorSlug ? vendorSlug : "";
+    sCatType   = typeTok    ? typeTok    : "";
+    sCatPkg    = pkgPath    ? pkgPath    : "";
+    Preferences p;
+    p.begin("last_stk", false);
+    p.putString("cat_vendor", sCatVendor);
+    p.putString("cat_type",   sCatType);
+    p.putString("cat_pkg",    sCatPkg);
     p.end();
 }
