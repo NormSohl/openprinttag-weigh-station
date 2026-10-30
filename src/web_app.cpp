@@ -3645,12 +3645,8 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     bool haveEdit = editId && cfgStockFindById(editId, editRow);
 
     p += "<h3>Currently stocked</h3>";
-    p += "<p class='muted'>This is what we <b>want</b> to keep on the shelf, curated by "
-         "hand &mdash; not what's actually there right now. For that, see "
-         "<a href='/' style='color:#8f8'>Inventory</a>, every physical spool on hand. "
-         "The two lists are expected to differ: something can be in Inventory but not "
-         "here (we have some, we're not restocking it), or here but at zero on hand "
-         "(we ran out and haven't reordered yet).</p>";
+    p += "<p class='muted'>This is what we want to keep on the shelf, not what's "
+         "actually in the <a href='/' style='color:#8f8'>Inventory</a>.</p>";
     p += "<p class='muted'>Sorted by popularity, lowest first &mdash; the top of this "
          "list is where to look for items to remove. Popularity is grams consumed per "
          "day the material was actually IN STOCK over the last " + String(STOCK_POPULARITY_WINDOW_DAYS)
