@@ -934,3 +934,48 @@ def test_stock_list_tare_starts_at_175_and_a_catalog_weight_replaces_it(sim, pag
     page.evaluate(pick)
     page.evaluate(submit)
     assert page.input_value("#stock-tare") == "180"
+
+
+# ── Stock List remembers the last choice (setting up a stock list in a row) ───
+
+def _stock_add_manual(page, sim, material, color):
+    page.goto(sim.url("/stock"))
+    page.click("#stock-manual-details summary")
+    page.select_option("select[name=vendor]", "eSun")
+    page.select_option("select[name=material]", material)
+    page.select_option("select[name=color]", color)
+    box = page.locator("#confirm-new")          # names-are-labels: a typed entry is new
+    if box.count():
+        box.check()
+    page.click("#stockform ~ .card button[type=submit]")
+    page.wait_for_url("**/stock")
+
+
+def test_stock_list_manual_pickers_start_on_the_last_choice(sim, page):
+    _stock_add_manual(page, sim, "PLA", "Black")
+    page.goto(sim.url("/stock"))
+    assert page.input_value("select[name=material]") == "PLA"
+    _stock_add_manual(page, sim, "PETG", "White")
+    page.goto(sim.url("/stock"))
+    assert page.input_value("select[name=material]") == "PETG"
+    assert page.input_value("select[name=color]") == "White"
+    assert page.js_errors == []
+
+
+def test_stock_list_catalog_search_starts_on_the_last_stock_list_pick(sim, page):
+    def add(pkg, tok, name):
+        sim._post("/api/stock/add", source="catalog", min_spools=1,
+                  cat_vendor="eSUN", cat_material=name, cat_abbr=tok, cat_nom_g=1000,
+                  cat_empty_g=200, cat_dia=1.75, cat_vendor_slug="esun",
+                  cat_type_tok=tok.lower(), cat_pkg_path=pkg)
+    add("data/packages/esun/esun-pla-black.yaml", "PLA", "PLA Black")
+    add("data/packages/esun/esun-petg-white.yaml", "PETG", "PETG White")
+    page.goto(sim.url("/stock"))
+    last = page.locator("#cat-last")
+    assert last.count() == 1
+    assert last.get_attribute("data-pkg") == "data/packages/esun/esun-petg-white.yaml"
+    assert last.get_attribute("data-type") == "petg"
+    # Restock keeps its own memory: a Stock List pick doesn't change it.
+    sim.blank()
+    page.goto(sim.url("/onboard"))
+    assert page.locator("#cat-last").count() == 0

@@ -3024,16 +3024,18 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "</div>"
          "<div id='cat-resolved'></div>"
          "</div>";
-    // Start on the last catalog pick from ONBOARDING (last_onboard.h), on
-    // direct user request (2026-10-20): the same stored values, read only. A
-    // Stock List save never writes them, so a stock session still cannot shift
-    // onboarding's defaults (the reason last_stock.h is separate). Add only:
-    // an Edit form is about one existing row, and a different remembered
-    // product in its catalog fields would read as that row's.
-    if (s.id == 0 && lastOnboardCatPackage()[0])
-        p += "<div id=\"cat-last\" hidden data-vendor=\"" + esc(lastOnboardCatVendor())
-           + "\" data-type=\"" + esc(lastOnboardCatType())
-           + "\" data-pkg=\"" + esc(lastOnboardCatPackage()) + "\"></div>";
+    // Start on this page's last catalog pick (last_stock.h), else, before
+    // there is one, onboarding's (last_onboard.h, read only: a stock session
+    // never shifts onboarding's defaults). Add only: an Edit form is about one
+    // existing row, and a different remembered product in its catalog fields
+    // would read as that row's.
+    const bool ownCat = lastStockCatPackage()[0] != 0;
+    if (s.id == 0 && (ownCat || lastOnboardCatPackage()[0]))
+        p += "<div id=\"cat-last\" hidden data-vendor=\""
+           + esc(ownCat ? lastStockCatVendor() : lastOnboardCatVendor())
+           + "\" data-type=\"" + esc(ownCat ? lastStockCatType() : lastOnboardCatType())
+           + "\" data-pkg=\"" + esc(ownCat ? lastStockCatPackage() : lastOnboardCatPackage())
+           + "\"></div>";
     p += "<input type='hidden' name='source' id='cat-source' value='manual'>"
          "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
          "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
@@ -3045,7 +3047,10 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='hidden' name='cat_gtin'        id='cat-f-cat_gtin'>"
          "<input type='hidden' name='cat_pkg_uuid'    id='cat-f-cat_pkg_uuid'>"
          "<input type='hidden' name='cat_mat_uuid'    id='cat-f-cat_mat_uuid'>"
-         "<input type='hidden' name='cat_brand_uuid'  id='cat-f-cat_brand_uuid'>";
+         "<input type='hidden' name='cat_brand_uuid'  id='cat-f-cat_brand_uuid'>"
+         "<input type='hidden' name='cat_vendor_slug' id='cat-f-cat_vendor_slug'>"
+         "<input type='hidden' name='cat_type_tok'    id='cat-f-cat_type_tok'>"
+         "<input type='hidden' name='cat_pkg_path'    id='cat-f-cat_pkg_path'>";
 
     // "Or enter manually" — the pre-existing fallback, now second-string to
     // the catalog search rather than the only option. Vendor/Material/Color
@@ -3881,6 +3886,11 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         strlcpy(prod.brand_uuid, arg("cat_brand_uuid").c_str(), sizeof(prod.brand_uuid));
         prod.gtin = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
         pid = findOrCreateProduct(prod);
+        // So the next Add starts the catalog search on this pick. Only reached
+        // past the handlers' 4xx checks, like lastStockSet() below.
+        if (arg("cat_pkg_path").length())
+            lastStockSetCatalog(arg("cat_vendor_slug").c_str(), arg("cat_type_tok").c_str(),
+                                arg("cat_pkg_path").c_str());
     }
 
     ProductRecord q;
