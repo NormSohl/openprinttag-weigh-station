@@ -1627,7 +1627,9 @@ static void vendorPickerField(String& p, const char* defVendor) {
          "</div>";
 }
 
-static void materialPickerField(String& p, const char* defMaterial) {
+// askDia false: the page asks for a diameter itself (the Stock List), so the
+// new material takes that one instead of asking twice.
+static void materialPickerField(String& p, const char* defMaterial, bool askDia = true) {
     p += "<label>Material</label><select name='material' onchange=\""
          "document.getElementById('cat-source').value='manual';"
          "document.getElementById('material-new-wrap').style.display="
@@ -1649,9 +1651,10 @@ static void materialPickerField(String& p, const char* defMaterial) {
          "<label>Type</label><select name='material_new_type'>";
     for (const auto& t : kMatTypes)
         p += "<option value='" + String((int)t.key) + "'>" + t.abbr + "</option>";
-    p += "</select>"
-         "<label>Diameter (mm)</label><input type='number' step='0.01' name='material_new_dia' value='1.75'>"
-         "<label>Print temp min/max (&deg;C)</label>"
+    p += "</select>";
+    p += askDia ? "<label>Diameter (mm)</label><input type='number' step='0.01' name='material_new_dia' value='1.75'>"
+                : "<input type='hidden' name='material_new_dia' id='material-new-dia' value='1.75'>";
+    p += "<label>Print temp min/max (&deg;C)</label>"
          "<input type='number' name='material_new_print_min' placeholder='min' style='width:48%;display:inline-block'>"
          " <input type='number' name='material_new_print_max' placeholder='max' style='width:48%;display:inline-block'>"
          "<label>Bed temp min/max (&deg;C)</label>"
@@ -3030,7 +3033,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "<details id='stock-manual-details'><summary style='color:#9c9;cursor:pointer;margin:10px 0'>"
          "Or enter manually</summary>";
     vendorPickerField(p, defVendor);
-    materialPickerField(p, defMaterial);
+    materialPickerField(p, defMaterial, false);
     colorPickerField(p, defColor);
     p += NEW_PRODUCT_CHECKBOX;
     // Diameter/nominal weight stay plain numeric fields, not a picklist —
@@ -3038,8 +3041,12 @@ static void stockFormFields(String& p, const CfgStock& s) {
     // stock item just states its own numbers directly. Still resets `source`
     // back to 'manual' on edit, same reasoning as the picklists above.
     const char* resetSrc = " onchange=\"document.getElementById('cat-source').value='manual'\"";
+    // Also the diameter of a material added here (material_new_dia, hidden).
     p += String("<label>Diameter (mm)</label>"
-         "<input type='number' step='0.01' name='dia' value='") + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'" + resetSrc + ">";
+         "<input type='number' step='0.01' name='dia' value='") + String(s.dia > 0 ? s.dia : 1.75f, 2) + "'" + resetSrc
+       + " id='stock-dia' oninput=\"var m=document.getElementById('material-new-dia');if(m)m.value=this.value\">"
+         "<script>(function(){var m=document.getElementById('material-new-dia');"
+         "if(m)m.value=document.getElementById('stock-dia').value})()</script>";
     p += String("<label>Nominal spool weight (g)</label>"
          "<input type='number' step='0.1' name='spool_g' value='") + String(s.spool_g > 0 ? s.spool_g : 1000.0f, 0) + "'" + resetSrc + ">";
     p += "</details>";
@@ -3729,8 +3736,9 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "<p><a href='/stock.csv'><button type='button'>Download CSV</button></a></p>";
 
     p += "<h3 id='stockform'>" + String(haveEdit ? "Edit stock item" : "Add a stock item") + "</h3>";
-    p += "<p class='muted'>What you want to keep on the shelf, and how low it can go "
-         "before <a href='/reorder' style='color:#8f8'>Reorder</a> flags it.</p>";
+    p += "<p class='muted'>What you want to keep on the shelf. The target is how many "
+         "spools to keep; <a href='/reorder' style='color:#8f8'>Reorder</a> lists the item "
+         "once what's on hand drops below half of it.</p>";
     p += "<div class='card'>";
     // Same tare check as stockTareError(), before the page is replaced by a 400.
     p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "' "
@@ -3751,9 +3759,9 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "</div></form></div>";
     p += STOCK_SCAN_SCRIPT;
 
-    p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
-         "on the <a href='/config' style='color:#8f8'>Administration</a> and "
-         "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
+    p += "<p class='muted'>Bulk edit on <a href='/config/tables' style='color:#8f8'>"
+         "Administration &rarr; Raw tables</a>. Export or import all five Config tables "
+         "together on the <a href='/backup' style='color:#8f8'>Backup</a> page.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
