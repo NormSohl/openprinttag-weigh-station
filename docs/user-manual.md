@@ -84,21 +84,22 @@ every new spool.
 
 ### Onboarding it (web app)
 
-On the **Restock** page, say what the spool is. Try these in order:
+On the **Restock** page, say what the spool is under **What is this spool?**:
 
 - **Scan the box's barcode.** It can be scanned before or after the spool is
   placed (a scan with no spool on the scale is held for one minute). A
-  barcode the station knows picks the Stock List item for you. An unknown one
-  says so; pick the item, and the barcode is learned for next time.
-- **"Which stock item is this?"** Type to search the Stock List and click the
-  item. This is the best choice: Reorder counts the spool against that exact
-  item. Greyed items aren't linked to a product yet (an admin fixes that on
-  the Repair page).
-- **"This spool is…"** for a product on file that isn't a stock item. Type
-  in the box above it to filter the list.
-- **New product?** Use the **catalog search**. The vendor, material type and
-  material fields show the last product picked. Same product? Leave them.
-  Different? Click a field to see the full list, or type to narrow it.
+  barcode the station knows picks the item for you. An unknown one says so;
+  pick the item, and the barcode is learned for next time.
+- **Or pick it from the list.** Type a few words to narrow it ("petg black");
+  if only one item is left, Enter picks it. The list has **Stock List**
+  items first (the best choice: Reorder counts the spool against that exact
+  item), then **Other products** on file, then items **not linked yet**
+  (greyed; an admin fixes those on the Repair page). Press **change** to
+  pick again.
+- **New product?** Pick **+ New product…** at the bottom of the list. Then
+  use the **catalog search**: the vendor, material type and material fields
+  show the last product picked. Same product? Leave them. Different? Click a
+  field to see the full list, or type to narrow it.
 - **Not in the catalog?** Open **Or enter manually** and pick the vendor,
   material and colour. Use **+ Add new** for anything missing. Tick **This
   is a new product**: a typed entry always makes a new product, because the
@@ -130,8 +131,8 @@ Open **Restock** with the spool on the scale. The page names the spool. Click
 
 - **To add a price:** type it and save. Nothing else changes.
 - **To attach it to a different product:** pick that product and save.
-- **To give it a new product:** choose **a new product**. The page asks you to
-  confirm.
+- **To give it a new product:** press **change**, then **+ New product…**.
+  The page asks you to confirm.
 
 Saving rewrites the tag.
 
@@ -139,7 +140,7 @@ Saving rewrites the tag.
 
 Spools with a tag already on them (genuine Prusament, or tagged elsewhere)
 need no onboarding. **Just place them.** The station reads the tag's details
-and adds the spool. If the tag has no tare, it gets 170 g; correct it on the
+and adds the spool. If the tag has no tare, it gets 175 g; correct it on the
 product's page if that's wrong.
 
 **Don't rewrite station tags with the Prusa app** or any other app. The
@@ -200,13 +201,16 @@ do the same.)
 | Page | What it's for |
 |---|---|
 | **Inventory** | Remaining filament by material. Click a row for its spools; click a spool for its weigh history (CSV), its cost, and its product. Audits start here. |
-| **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
+| **Reorder** | Stock List items with less than half their target on the shelf, and how many to order. Download the list as CSV. |
 | **Restock** | Enter details for a new spool on the scale (onboarding). |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Administration** | For trained staff. **Staff tools:** Stock List (what the lab keeps in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
+| **Administration** | For trained staff. **Staff tools:** Stock List (what we want to keep in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
+
+**Tables sort:** tap any column heading to sort by it, tap again to reverse.
 
 **Editing a product** (name, colour, default tare, barcode…): on a spool's
-page, click its **Product #N** link, then click the product. Saving updates
+page, click its **Product #N** link, then click the product, or find it
+under **Administration → Products**. Saving updates
 every spool of that product; their tags update the next time each is placed.
 To fix a barcode, scan the box on that page or type it; blank removes it.
 Product edits are kept in the event log, so an unwanted one can be traced,
@@ -245,39 +249,48 @@ comes back automatically.
 
 ### Deciding what to stock
 
-The **Stock List** (**Administration → Stock List**) is what the lab *wants* to keep in stock. Inventory is
-what it *has*. Items at the top of the list (least popular, or never in
-stock) are the candidates to drop. Material in inventory but not on the list
-is fine.
+The **Stock List** (**Administration → Stock List**) is what we want to keep
+in stock. Inventory is what's actually on the shelf. It's managed by the
+team lead: discuss changes with the team first, since all ordering depends
+on it. Sort by **Popularity** (lowest first) to find candidates to drop.
+Material in inventory but not on the list is fine.
+
+**Target** is how many spools we want on the shelf. **Reorder** lists an item
+once what's on the shelf drops below **half** its target, counted by weight,
+so a part-used spool counts as part of one. It shows **To order**: the target
+minus what's on hand, rounded up to whole spools. An item kept one at a time
+is listed when its spool is under half full.
 
 **Scan to add.** With the form open, scan the box: the barcode field fills
-in, and if a product has that barcode it's picked under **"Item is…"**. The
-page says if the barcode is already on another item.
+in, and if a product has that barcode it's picked under **"Item is…"**. An
+unknown barcode opens **New product**. The page says if the barcode is
+already on another item.
 
 Items marked **not linked** have no product, so Reorder can't count them and
-leaves them off the reorder list (it says how many). Link them on
-**Administration → Repair**.
+leaves them off (it says how many). Link them on **Administration → Repair**.
 
-**Adding an item.** Use the form below the list. Under **"Item is…"**:
+**Adding an item.** Use the form below the list. Under **"Item is…"**, type
+to narrow the list:
 
-- **Already on file?** Pick the product.
-- **Otherwise:** use the **catalog search**. It starts on the last product
-  picked during onboarding; click a field to change it.
+- **Already on file?** Pick the product. Products already on the Stock List
+  say so.
+- **Otherwise:** pick **+ New product…** and use the **catalog search**. It
+  starts on the last product added here; click a field to change it.
 - **Not in the catalog?** Open **Or enter manually** and tick **This is a new
   product**.
 
-For the catalog and manual routes, enter a **Default spool tare** unless the
-catalog pick already lists one.
+**Target** starts at 1. **Default spool tare** starts at 175 g; change it if
+you know better. A catalog pick that lists its own empty weight uses that.
 
 ### Repairing the Stock List and products
 
 **Administration → Repair.** Nothing changes until you choose and press a button.
 
-- **Stock List items with no product.** Reorder can't count them, and
-  Restock can't offer them. Each has a product picker; ★ marks likely
+- **Stock List items with no product.** Reorder can't count them,
+  and Restock can't offer them. Each has a product picker; ★ marks likely
   matches, and a single likely match is chosen for you. Check the choices,
   then press **Link the items chosen**.
-- **Stock List items for the same product.** Keep one (set its threshold)
+- **Stock List items for the same product.** Keep one (set its target)
   and remove the others on the Stock List.
 - **Possible duplicate products:** one filament recorded twice (for example
   "PLA+ Black" and "PLA Plus Black"). Press **Compare** to see both side by

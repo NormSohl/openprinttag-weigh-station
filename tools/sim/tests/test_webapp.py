@@ -1027,3 +1027,14 @@ def test_stock_list_item_is_a_scrolling_list(sim, page):
     page.wait_for_selector("#scan-msg:has-text('no product has this barcode')")
     assert page.locator("#stocknew").is_visible()
     assert page.js_errors == []
+
+
+def test_stock_list_new_material_takes_the_items_diameter(sim, page):
+    page.goto(sim.url("/stock"))
+    if page.locator("#item-list .stk.new").count():
+        page.click("#item-list .stk.new")
+    page.click("#stock-manual-details summary")
+    assert page.locator("input[name=material_new_dia]").get_attribute("type") == "hidden"
+    page.fill("#stock-dia", "2.85")
+    assert page.input_value("#material-new-dia") == "2.85"
+    assert page.locator("label:text-is('Diameter (mm)')").count() == 1

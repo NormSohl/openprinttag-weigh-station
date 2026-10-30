@@ -14,10 +14,11 @@
 5. **Say what it is**, in this order:
    - **Scan the box's barcode** (press the scanner's trigger), before or after
      placing the spool. A known barcode picks the stock item for you.
-   - **Or pick it under "Which stock item is this?"** Type to search the
-     Stock List. Greyed items aren't linked yet; tell an admin.
-   - **Not a stock item?** Pick it under **"This spool is…"** (type to filter).
-   - **New product?** Use the catalog search, or **Or enter manually** and tick
+   - **Or pick it under "What is this spool?"** Type to narrow the list:
+     Stock List items first, then other products. Greyed items aren't
+     linked yet; tell an admin.
+   - **New product?** Pick **+ New product…**, then the catalog search, or
+     **Or enter manually** and tick
      **This is a new product**.
 6. **Set the tare** (required): pick a **spool profile**, type it, or put an
    empty spool of the same type on the scale and press **Capture tare**.
