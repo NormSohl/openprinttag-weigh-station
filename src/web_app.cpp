@@ -4792,10 +4792,6 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     }
     p += "</table>";
     p += "<p><a href='/usage.csv'><button type='button'>Download CSV</button></a></p>";
-    p += "<p class='muted'>Consumption is the drop in a spool's remaining weight "
-         "between two weighings, attributed to the vendor and material recorded "
-         "at that time; a spool's first weighing establishes its baseline and "
-         "counts as zero.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
