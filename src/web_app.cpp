@@ -3086,7 +3086,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
     // and a product created here is the one its first onboarded spool will
     // inherit from, so it has to start with a real value. Only a DEFAULT: each
     // spool keeps its own, and can differ when a different spool body arrives.
-    // Starts at STOCK_DEFAULT_TARE_G, since nobody adding a stock item knows
+    // Starts at DEFAULT_SPOOL_TARE_G, since nobody adding a stock item knows
     // the spool's weight yet; a catalog pick with a container weight uses
     // that instead unless the box was changed (the form's onsubmit). Hidden
     // with the rest of #stocknew when an existing product is picked, which
@@ -3094,7 +3094,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "<label>Default spool tare (g) &mdash; change it if you know better; a catalog "
          "pick with its own empty weight uses that</label>"
          "<input type='number' step='0.1' name='empty_g' id='stock-tare' value='"
-       + String(STOCK_DEFAULT_TARE_G, 0) + "' oninput=\"this.dataset.touched='1'\">";
+       + String(DEFAULT_SPOOL_TARE_G, 0) + "' oninput=\"this.dataset.touched='1'\">";
     p += "</div>";   // #stocknew
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;

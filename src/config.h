@@ -123,19 +123,17 @@
 // one: an item kept one at a time is listed at half a spool, not when empty.
 #define REORDER_FRACTION 0.5f
 
-// Tare given to a spool adopted from a tag that carries no
-// empty_container_weight, when it matches no product that has one. Tare is
-// never unknown (docs/design/onboarding-vocabulary.md): without a default the
-// spool body is silently counted as filament. 170 g is what most of the lab's
-// eSUN spools weigh empty. The product it creates stays provisional, and a
-// provisional product's spools never have Main written back, so this guess
-// stays off the vendor's tag until someone confirms it on /product.
-#define DEFAULT_SPOOL_TARE_G 170.0f
-
-// What the Stock List's "Default spool tare" box starts at: whoever adds a
-// stock item rarely knows the empty spool's weight yet (2026-10-30, on direct
-// user decision).
-#define STOCK_DEFAULT_TARE_G 175.0f
+// The empty-spool weight to assume when nothing better is known: a spool
+// adopted from a tag that carries no empty_container_weight and matches no
+// product that has one, and what the Stock List's "Default spool tare" box
+// starts at (whoever adds a stock item rarely knows it yet). Tare is never
+// unknown (docs/design/onboarding-vocabulary.md): without a default the spool
+// body is silently counted as filament. 175 g is the lab's newer figure
+// (2026-10-30, on direct user decision; it was 170). An adopted spool's
+// product stays provisional, and a provisional product's spools never have
+// Main written back, so this guess stays off the vendor's tag until someone
+// confirms it on /product.
+#define DEFAULT_SPOOL_TARE_G 175.0f
 
 // ── Clock ─────────────────────────────────────────────────────────────────────
 // The ESP32-S3 has no battery-backed RTC, so the clock reads 1970 on every
