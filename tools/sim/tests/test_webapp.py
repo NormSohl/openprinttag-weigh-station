@@ -735,3 +735,45 @@ def test_stock_list_refuses_a_barcode_with_a_bad_check_digit(sim):
     assert not [r for r in sim.get_json("/api/stock")["items"] if r["gtin"] == bad]
     sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1, gtin=f" {UPC} ")
     assert [r["gtin"] for r in sim.get_json("/api/stock")["items"] if r["gtin"]] == [UPC]
+
+
+# ── Reorder: grams on hand against half the target ───────────────────────────
+
+def test_reorder_lists_an_item_below_half_its_target_by_weight(sim, page):
+    first = _onboard_manually(sim, page)          # one full-ish spool
+    pid = first["product"]
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
+    sim.remove()
+    full = first["remaining_g"] + first["used_g"]   # the spool's nominal weight
+    tare = 1220 - first["remaining_g"]               # _onboard_manually's gross
+
+    # A spool with more than half left: not listed, though only one is kept.
+    page.goto(sim.url("/reorder"))
+    assert page.locator(f"tr:has(a[href='/product?id={pid}'])").count() == 0
+
+    # Weigh it down to under half: listed, with one spool to order.
+    sim.place(first["spool"], gross=tare + 0.4 * full)
+    sim.remove()
+    page.goto(sim.url("/reorder"))
+    row = page.locator(f"tr:has(a[href='/product?id={pid}'])")
+    assert row.count() == 1
+    assert "0.4 spools" in row.inner_text()
+    assert row.locator("td").nth(4).inner_text() == "1 spool"
+
+    csv = sim.get("/reorder?format=csv").splitlines()
+    assert csv[0].endswith(",to_order_spools")
+    assert any(l.endswith(",1,0,1") for l in csv[1:])   # target 1, no grams target, order 1
+    assert page.js_errors == []
+
+
+def test_reorder_rounds_to_order_up_to_whole_packs(sim, page):
+    first = _onboard_manually(sim, page)
+    pid = first["product"]
+    sim._post("/api/stock/add", product=pid, min_spools=4, pack_qty=3)
+    sim.remove()
+    # One full spool against a target of 4: below 2 spools' worth, so listed;
+    # 3 more needed, which is one pack of 3.
+    page.goto(sim.url("/reorder"))
+    row = page.locator(f"tr:has(a[href='/product?id={pid}'])")
+    assert row.count() == 1
+    assert row.locator("td").nth(4).inner_text() == "3 spools (1 pack)"
