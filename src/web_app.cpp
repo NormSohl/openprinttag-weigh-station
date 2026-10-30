@@ -2966,6 +2966,39 @@ static void handleReorder(AsyncWebServerRequest* req) {
 // which is fine since there is one operator at a time"; that assumption
 // broke the moment anything else touched the list between a page render and
 // its submit, and an Edit silently became an Add. See CfgStock::id.
+// The Stock List's "Item is..." list: a pick sets the hidden #sprod and
+// shows #stocknew only for "New product...". window.itemChosen is false
+// until something is picked (the form's submit check); window.itemPick(id)
+// is for STOCK_SCAN_SCRIPT ("0" opens New product).
+static const char ITEM_PICK_SCRIPT[] =
+"<style>.stk{padding:6px 8px;border-radius:4px;cursor:pointer}"
+".stk:hover,.stk:focus{background:#2a3a2a;outline:none}.stk.new{color:#9c9}</style>"
+"<script>(function(){"
+"var d=document.getElementById('sprod'),q=document.getElementById('item-q'),"
+"list=document.getElementById('item-list'),ok=document.getElementById('item-ok'),"
+"nw=document.getElementById('stocknew');"
+"function m(t,f){t=t.toLowerCase();return f.toLowerCase().split(/\\s+/)"
+  ".every(function(w){return t.indexOf(w)>=0})}"
+"function filt(f){[].forEach.call(list.children,function(e){e.hidden=!m(e.dataset.q,f)})}"
+"function show(e){window.itemChosen=!!e;ok.hidden=!e;list.hidden=!!e;q.hidden=!!e;"
+  "nw.style.display=e&&e.dataset.prod=='0'?'block':'none';"
+  "if(e)ok.querySelector('b').textContent=e.dataset.name}"
+"function pick(e){if(!e||e.dataset.prod===undefined)return;d.value=e.dataset.prod;"
+  "d.dispatchEvent(new Event('change'));q.value='';filt('');show(e)}"
+"q.addEventListener('input',function(){filt(q.value)});"
+"q.addEventListener('keydown',function(ev){if(ev.key!='Enter')return;ev.preventDefault();"
+  "var v=[].filter.call(list.children,function(e){return !e.hidden&&e.dataset.prod!='0'});"
+  "if(v.length==1)pick(v[0])});"
+"list.addEventListener('click',function(ev){pick(ev.target.closest('.stk'))});"
+"list.addEventListener('keydown',function(ev){if(ev.key=='Enter'){ev.preventDefault();"
+  "pick(ev.target.closest('.stk'))}});"
+"document.getElementById('item-change').addEventListener('click',function(ev){ev.preventDefault();"
+  "d.value='0';show(null);q.focus()});"
+"window.itemPick=function(id){var e=list.querySelector(\".stk[data-prod='\"+id+\"']\");"
+  "if(!e)return false;pick(e);return true};"
+"var c=d.value!='0'?list.querySelector(\".stk[data-prod='\"+d.value+\"']\"):null;show(c);"
+"})()</script>";
+
 static void stockFormFields(String& p, const CfgStock& s) {
     // "Pick an existing product" vs. type it in — same reasoning as Onboard's
     // "another spool of X": a stock row's vendor/material/color is free text
@@ -2977,22 +3010,44 @@ static void stockFormFields(String& p, const CfgStock& s) {
     const size_t np = storeProductCount();
     p += "<p class='card' id='scan-msg' hidden></p>";   // STOCK_SCAN_SCRIPT
     if (np) {
-        p += "<label>Item is&hellip;</label><select name='product' id='sprod' "
-             "onchange=\"document.getElementById('stocknew').style.display="
-             "this.value=='0'?'block':'none'\">";
-        p += String("<option value='0'") + (s.product == 0 ? " selected" : "")
-           + ">&mdash; Search catalog or type in &mdash;</option>";
+        // A scrolling list, like Restock's "What is this spool?" (on direct
+        // user request, 2026-10-30): every product, then "New product...",
+        // which shows #stocknew (catalog search, manual entry). It sets the
+        // hidden #sprod the form submits (ITEM_PICK_SCRIPT). Products already
+        // on the Stock List say so, since a second row for one is a duplicate.
+        std::vector<uint32_t> listed;
+        CfgStock r;
+        for (size_t i = 0; i < cfgStockCount(); i++)
+            if (cfgStockAt(i, r) && r.product && r.id != s.id) listed.push_back(r.product);
+        p += "<label>Item is&hellip;</label>"
+             "<input type='search' id='item-q' placeholder='Search products&hellip;' autocomplete='off'>"
+             "<p id='item-ok' hidden style='margin:8px 0'>&check; <b></b> "
+               "&mdash; <a href='#' id='item-change' style='color:#9c9'>change</a></p>"
+             "<div id='item-list' style='max-height:300px;overflow:auto;margin-top:8px'>";
+        String opts;
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
-            p += "<option value='" + String((unsigned)q.id) + "'"
-               + (s.product == q.id ? " selected" : "") + ">"
-               + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
-               + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
-               + "</option>";
+            String name = String(q.vendor) + " " + (q.material[0] ? q.material : "Unknown");
+            if (q.nom_g > 0) name += " " + String(q.nom_g, 0) + " g";
+            char gb[24] = "";
+            if (q.gtin) snprintf(gb, sizeof(gb), "%llu", (unsigned long long)q.gtin);
+            const bool dup = std::find(listed.begin(), listed.end(), q.id) != listed.end();
+            p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id)
+               + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
+               + " " + gb + "\">" + swatch(q.rgba) + esc(name.c_str())
+               + (dup ? " <span class='muted'>(already on the Stock List)</span>" : "") + "</div>";
+            opts += "<option value='" + String((unsigned)q.id) + "'"
+                  + (s.product == q.id ? " selected" : "") + ">"
+                  + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown") + "</option>";
         }
-        p += "</select>";
-        p += String("<div id='stocknew'") + (s.product != 0 ? " style='display:none'" : "") + ">";
+        p += "<div class='stk new' tabindex='0' data-prod='0' data-name='New product' "
+             "data-q='new product'>&plus; New product&hellip; "
+             "<span class='muted'>search the catalog or enter it</span></div></div>";
+        p += "<select name='product' id='sprod' hidden><option value='0'>&mdash; new &mdash;</option>"
+           + opts + "</select>";
+        // Hidden until "New product..." is picked.
+        p += "<div id='stocknew' style='display:none'>";
     } else {
         p += "<input type='hidden' name='product' value='0'>";
         p += "<div id='stocknew'>";
@@ -3106,6 +3161,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
          "<input type='number' step='0.1' name='empty_g' id='stock-tare' value='"
        + String(DEFAULT_SPOOL_TARE_G, 0) + "' oninput=\"this.dataset.touched='1'\">";
     p += "</div>";   // #stocknew
+    if (np) p += ITEM_PICK_SCRIPT;   // needs #sprod, the list and #stocknew in place
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
     // Grams on hand are always counted now, so the grams target is no longer
@@ -3657,13 +3713,12 @@ static const char STOCK_SCAN_SCRIPT[] =
     "if(dup.length)t='Already on the Stock List: '+dup.map(function(s){"
       "return '<a href=\"/stock?edit='+s.id+'#stockform\" style=\"color:#9c9\">'+s.name+'</a>'"
       "}).join(', ')+'. ';"
-    "if(P.length==1&&d){d.value=String(P[0].id);"
-      "if(d.value==String(P[0].id)){d.dispatchEvent(new Event('change'));"
-        "msg(t+'Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b>');return}}"
+    "if(P.length==1&&d&&window.itemPick&&itemPick(P[0].id)){"
+        "msg(t+'Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b>');return}"
     "if(P.length>1)msg(t+'Scanned '+c+': several products have this barcode &mdash; pick one "
       "under <i>Item is&hellip;</i>.');"
-    "else msg(t+'Scanned '+c+': no product has this barcode yet &mdash; search the catalog "
-      "or enter it; the barcode is filled in.')"
+    "else{if(window.itemPick)itemPick(0);msg(t+'Scanned '+c+': no product has this barcode yet "
+      "&mdash; search the catalog or enter it; the barcode is filled in.')}"
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed; the barcode is filled in.')})};"
 "})()</script>";
 
@@ -3786,7 +3841,9 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "<div class='card'>";
     // Same tare check as stockTareError(), before the page is replaced by a 400.
     p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "' "
-         "onsubmit=\"var d=document.getElementById('sprod');if(d&&d.value!='0')return true;"
+         "onsubmit=\"if(window.itemChosen===false){alert('Pick the item first: a product "
+           "from the list, or New product\\u2026');document.getElementById('item-q').focus();return false}"
+           "var d=document.getElementById('sprod');if(d&&d.value!='0')return true;"
            "var s=document.getElementById('cat-source');"
            "if(s&&s.value=='manual'&&!newProductOk(d))return false;"
            "if(d&&d.value!='0')return true;"   // newProductOk() picked a listed one
