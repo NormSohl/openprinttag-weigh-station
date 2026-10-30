@@ -592,8 +592,8 @@ def test_a_held_scan_can_be_forgotten(sim, page):
 def test_menu_has_administration_and_erase_lives_under_it(sim, page):
     page.goto(sim.url("/"))
     nav = page.locator("nav a")
-    assert nav.all_inner_texts() == ["Inventory", "Reorder", "Restock", "Stock List",
-                                     "Usage", "Administration", "Backup"]
+    assert nav.all_inner_texts() == ["Inventory", "Reorder", "Restock", "Usage",
+                                     "Administration"]
     page.goto(sim.url("/config"))
     warn = page.locator("#admin-warning")
     assert warn.inner_text() == ("These settings and tools are for use by trained staff only. "
@@ -604,5 +604,15 @@ def test_menu_has_administration_and_erase_lives_under_it(sim, page):
     page.click("#erase-link")
     page.wait_for_url("**/erase")
     # Erase Tag keeps Administration highlighted in the menu.
+    assert page.locator("nav a.active").inner_text() == "Administration"
+    assert page.js_errors == []
+
+
+@pytest.mark.parametrize("link,path", [("#stock-link", "/stock"), ("#backup-link", "/backup"),
+                                       ("#erase-link", "/erase"), ("#repair-link", "/repair")])
+def test_staff_pages_open_from_administration_and_keep_it_highlighted(sim, page, link, path):
+    page.goto(sim.url("/config"))
+    page.click(link)
+    page.wait_for_url("**" + path)
     assert page.locator("nav a.active").inner_text() == "Administration"
     assert page.js_errors == []

@@ -9,8 +9,8 @@ Open `http://weighstation.local/`.
 | Page | What it shows |
 |---|---|
 | **Inventory** | Remaining filament by material. Click a row for its spools; click a spool for its history. |
-| **Stock List** | What we keep in stock, with a popularity score. Items at the top are candidates to drop. |
 | **Reorder** | Stock List items running low. Download, copy or e-mail the list to order. |
+| **Administration → Stock List** | What we keep in stock, with a popularity score. Items at the top are candidates to drop. |
 | **Usage** | Filament used by month. CSV download. |
 
 ## Running a shelf audit

@@ -199,10 +199,8 @@ do the same.)
 | **Inventory** | Remaining filament by material. Click a row for its spools; click a spool for its weigh history (CSV), its cost, and its product. Audits start here. |
 | **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
 | **Restock** | Enter details for a new spool on the scale (onboarding). |
-| **Stock List** | What the lab keeps in stock, with a 90-day popularity score. |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Administration** | For trained staff. Station name, WiFi, **Calibrate**, products, **Repair** (link Stock List items, merge duplicate products), **Erase Tag** (see the Tag Erase quick reference), timezone and clock format, API key, and the picklists (vendors, materials, colours, spool profiles, stock items). |
-| **Backup** | Download or restore the event log, and the separate config catalog. |
+| **Administration** | For trained staff. Leads to: **Stock List** (what the lab keeps in stock, with a 90-day popularity score), **Backup** (download or restore the event log and the config catalog), **Calibrate**, products, **Repair** (link Stock List items, merge duplicate products) and **Erase Tag** (see the Tag Erase quick reference). Also station name, WiFi, timezone and clock format, API key, and the picklists (vendors, materials, colours, spool profiles, stock items). |
 
 **Editing a product** (name, colour, default tare, barcode…): on a spool's
 page, click its **Product #N** link, then click the product. Saving updates
@@ -244,7 +242,7 @@ comes back automatically.
 
 ### Deciding what to stock
 
-The **Stock List** is what the lab *wants* to keep in stock. Inventory is
+The **Stock List** (**Administration → Stock List**) is what the lab *wants* to keep in stock. Inventory is
 what it *has*. Items at the top of the list (least popular, or never in
 stock) are the candidates to drop. Material in inventory but not on the list
 is fine.
@@ -300,7 +298,7 @@ separate again.
 
 ### Backups
 
-- **Event log:** **Backup → Download**. This one file holds every spool and
+- **Event log:** **Administration → Backup → Download**. This one file holds every spool and
   all usage history. **Restore** on the same page loads it back.
 - **Config catalog** (the picklists and Stock List): downloaded and restored separately on the same page.
   Use this file to copy the picklists to another station.

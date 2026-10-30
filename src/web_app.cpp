@@ -600,12 +600,11 @@ static String head(const char* title, const char* active = "") {
     // station's QR code and bookmarks point there.
     navlink(h, "/reorder",   "Reorder",   active);
     navlink(h, "/onboard",   "Restock",   active);
-    navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
-    // Erase Tag lives under Administration (on direct user request: fewer
-    // tabs, and erasing is a staff task), so /erase highlights /config.
+    // Stock List, Backup and Erase Tag live under Administration (on direct
+    // user request: fewer tabs, and all three are staff tasks), so their
+    // pages highlight /config.
     navlink(h, "/config",    "Administration", active);
-    navlink(h, "/backup",    "Backup",    active);
     h += "</nav></header><main>";
     return h;
 }
@@ -3519,7 +3518,7 @@ static const char STOCK_SCAN_SCRIPT[] =
 "})()</script>";
 
 static void handleStockPage(AsyncWebServerRequest* req) {
-    String p = head("Stock List", "/stock");
+    String p = head("Stock List", "/config");   // under Administration
 
     // By id, not position (see CfgStock::id) -- stable no matter what else
     // has added/removed a row anywhere since this Edit link was rendered.
@@ -4039,6 +4038,14 @@ static void handleConfig(AsyncWebServerRequest* req) {
     // else (every other TFT title, the web app's own header) is deliberately
     // generic. Configurable because this firmware is meant to run at more
     // than one lab eventually.
+    // The two staff pages that used to be tabs, first: they are what most
+    // visits here are for.
+    p += "<h3>Stock List</h3><div class='card'><p class='muted'>What the lab keeps in "
+         "stock and when to reorder it. Add items by scanning their boxes.</p>"
+         "<a href='/stock'><button type='button' class='sec' id='stock-link'>Stock List&hellip;</button></a></div>";
+    p += "<h3>Backup</h3><div class='card'><p class='muted'>Download or restore the event "
+         "log and the config catalog. The staff PC also saves both every night.</p>"
+         "<a href='/backup'><button type='button' class='sec' id='backup-link'>Backup&hellip;</button></a></div>";
     p += "<h3>Station name</h3><div class='card'>";
     p += "<p class='muted'>Shown on the idle screen. Up to " + String(STATION_NAME_MAX_LEN)
        + " characters; the title doesn't wrap.</p>";
@@ -4305,7 +4312,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
     }
     LittleFS.remove(CONFIG_IMPORT_STAGING);
     if (cfgImportAll(body)) {
-        String p = head("Restore", "/backup");
+        String p = head("Restore", "/config");
         p += "<div class='card'><p>Config catalog restored &mdash; "
              + String((unsigned)cfgVendorCount())   + " vendors, "
              + String((unsigned)cfgMaterialCount()) + " materials, "
@@ -4583,7 +4590,7 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
 }
 
 static void handleBackupPage(AsyncWebServerRequest* req) {
-    String p = head("Backup", "/backup");
+    String p = head("Backup", "/config");   // under Administration
 
     // One click, two files -- NOT one combined file. The event log and the
     // config catalog stay independent artifacts (see the Config catalog card
@@ -4711,7 +4718,7 @@ static void handleImportDone(AsyncWebServerRequest* req) {
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
-        String p = head("Restore", "/backup");
+        String p = head("Restore", "/config");
         p += "<div class='card'><p>Restore complete &mdash; "
              + String((unsigned)storeSpoolCount()) + " spools, "
              + String((unsigned)storeLogLineCount()) + " log entries.</p>"
