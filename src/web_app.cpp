@@ -2846,7 +2846,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
     p += "<p class='muted'>This page compares our "
          "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
          "available) with the <a href='/' style='color:#8f8'>Inventory</a> (what is "
-         "actually on the shelf). If our current inventory is at or below the amount of "
+         "actually on the shelf). If our current inventory is below the amount of "
          "stock we want to have on hand, it is listed here. You can download this "
          "list to help with making an order.</p>";
     // No Color column: a linked row's Material already carries the colour
@@ -2854,7 +2854,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
     // virtually every row now that Stock List's manual entry links to a
     // product too -- see stockFormFields()/parseStockForm().
     p += "<table><tr><th>Vendor</th><th>Material</th>"
-         "<th>On hand</th><th>Threshold</th><th>Product</th></tr>";
+         "<th>On hand</th><th>Target</th><th>Product</th></tr>";
     CfgStock s;
     int flagged = 0;
     int unlinked = 0;
@@ -2874,7 +2874,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
            + "' style='color:#8f8'>product #" + String((unsigned)oh.product) + "</a></td></tr>";
     }
     if (flagged == 0)
-        p += "<tr><td colspan='5' class='muted'>Everything is above threshold "
+        p += "<tr><td colspan='5' class='muted'>Everything is at or above its target "
              "(or no stock items configured)</td></tr>";
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
@@ -3025,9 +3025,9 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "</div>";   // #stocknew
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
-    p += "<label>Minimum spools to keep &mdash; 0 = use grams instead</label>"
+    p += "<label>Target: spools to keep in stock &mdash; 0 = use grams instead</label>"
          "<input type='number' name='min_spools' value='" + String(s.min_spools) + "'>";
-    p += "<label>Minimum grams to keep &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
+    p += "<label>Target in grams &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
          "<input type='number' step='0.1' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
     p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
     p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
@@ -3302,8 +3302,8 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
         }
         if (shared.length())
             p += "<h3>Stock List items for the same product</h3><p class='muted'>Each "
-                 "has its own reorder threshold, so they can't be combined automatically. "
-                 "Keep one (edit its threshold) and remove the others.</p><ul id='shared'>"
+                 "has its own target, so they can't be combined automatically. "
+                 "Keep one (edit its target) and remove the others.</p><ul id='shared'>"
                + shared + "</ul>";
     }
 
@@ -3658,7 +3658,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
              "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
              "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
-         "<th>Threshold</th><th>SKU</th><th>Pack</th><th></th></tr>";
+         "<th>Target</th><th>SKU</th><th>Pack</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
         String thr = sr.min_spools > 0 ? (String(sr.min_spools) + " spools")
