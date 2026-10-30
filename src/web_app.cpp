@@ -3107,7 +3107,9 @@ static void stockFormFields(String& p, const CfgStock& s) {
     // asked for; a row that already has one keeps it (hidden) until its spool
     // target is set.
     p += "<label>Target: spools to keep in stock &mdash; listed on Reorder below half</label>"
-         "<input type='number' name='min_spools' min='0' value='" + String(s.min_spools) + "'>"
+         "<input type='number' name='min_spools' min='0' value='"
+       // A new item starts at 1; a row that already has a target shows it.
+       + String(s.min_spools ? s.min_spools : (s.id == 0 && s.min_grams <= 0.0f) ? 1 : 0) + "'>"
          "<input type='hidden' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
     p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
          "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' "

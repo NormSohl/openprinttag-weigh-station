@@ -979,3 +979,8 @@ def test_stock_list_catalog_search_starts_on_the_last_stock_list_pick(sim, page)
     sim.blank()
     page.goto(sim.url("/onboard"))
     assert page.locator("#cat-last").count() == 0
+
+
+def test_stock_list_target_starts_at_one(sim, page):
+    page.goto(sim.url("/stock"))
+    assert page.input_value("input[name=min_spools]") == "1"
