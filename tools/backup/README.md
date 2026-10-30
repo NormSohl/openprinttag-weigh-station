@@ -28,7 +28,7 @@ so no password is stored and no administrator rights are needed.
 | File | What it is |
 |---|---|
 | `events-YYYY-MM-DD.ndjson` | The event log: what **Backup → Download** saves. **Restore** on the Backup page loads it back. |
-| `config-YYYY-MM-DD.json` | The Settings tables. Restored separately on the Backup page. |
+| `config-YYYY-MM-DD.json` | The config catalog (picklists and Stock List). Restored separately on the Backup page. |
 | `backup-log.txt` | One line per run. |
 | `BACKUP FAILED.txt` | Only when the last run failed, with the reason. Goes away after the next good run. |
 

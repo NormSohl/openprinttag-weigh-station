@@ -8,7 +8,7 @@
 # Saves, under dated names:
 #   events-YYYY-MM-DD.ndjson   the event log (/export): every spool, weigh,
 #                              product and edit -- what Backup -> Download saves
-#   config-YYYY-MM-DD.json     the Settings tables (/config/export)
+#   config-YYYY-MM-DD.json     the config catalog: picklists and Stock List (/config/export)
 # Both are open reads: they need no API key and don't interrupt weighing.
 #
 # Keeps $KeepDays days of copies. A failure leaves "BACKUP FAILED.txt" in the
