@@ -751,6 +751,8 @@ static void handleRoot(AsyncWebServerRequest* req) {
 
     if (auditPhase == AuditPhase::Idle) {
         p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
+             "<p class='muted'>This page lists what we currently have in stock. Spools "
+             "are weighed after printing to keep this list up to date.</p>"
              "<p class='muted'><b>Auditing:</b> Before you make a new order, run an audit "
              "of the current inventory. Press <b>Start audit</b>, then "
              "weigh and scan all inventory in one pass. Press <b>Finish audit</b>, then "
@@ -844,9 +846,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
            : "<a href='/?retired=1' style='color:#8f8'>show</a>")
        + "</p>";
 
-    p += "<h3>Inventory</h3>"
-         "<p class='muted'>This page lists what we currently have in stock. Spools "
-         "are weighed after printing to keep this list up to date.</p><table>"
+    p += "<h3>Inventory</h3><table>"
          "<tr><th style='width:2em'></th><th>Filament</th><th>Spools</th><th>Remaining</th></tr>";
     size_t n = storeInventoryCount();
     MatInventory m;
