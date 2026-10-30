@@ -15,7 +15,7 @@ resumes*, not in the plan.
 | 5. Every source feeds the picklists; spool types replace spool profiles | not started |
 | 6. Abbreviation required or inferred | not started |
 | 7. Product merge | **built** 2026-10-29 on branch `barcode-onboarding`, as a `merged_into` field rather than separate alias/redirect events (see `barcode-onboarding.md`, step 5); native `--merge` test and simulator tests pass; not on the station |
-| 8. Name normalization (vendor aliases, then option A or C) | not started — wait for data |
+| 8. Name normalization (vendor aliases, then option A or C) | **option C chosen** 2026-10-29: names become display only — see `names-are-labels.md`; not started |
 
 ## Decisions
 
