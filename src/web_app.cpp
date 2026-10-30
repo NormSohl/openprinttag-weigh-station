@@ -606,7 +606,53 @@ static String head(const char* title, const char* active = "") {
     return h;
 }
 
-static const char* FOOT = "</main></body></html>";
+// ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
+// A keyboard-wedge scanner is a keyboard: it types what it read and Enter,
+// a few ms apart. This document-level capture listener, on EVERY page (it is
+// part of FOOT), tells that apart from a person by speed: 6 or more keys under
+// 50 ms apart, then Enter. People don't type that fast; a scanner always does.
+//
+// Every such burst is taken out of the page. Whatever it typed into a text
+// box is put back as it was, and its Enter never reaches a form, so a stray
+// scan -- a shipping label, the QR code on a spool, a box read by accident
+// in the stand -- never submits anything on any page.
+//
+// A burst that is a product barcode (8/12/13/14 digits, valid GS1 check
+// digit) goes to window.onScanCode, which the pages that use scans set
+// (Onboard, Stock List, a product). Anything else, or a barcode on a page
+// with no use for it, is only reported, in a note at the bottom of the page.
+// window.simulateScan(code) calls onScanCode directly, for the browser
+// console and tests.
+#define SCAN_SCRIPT_JS \
+"<script>(function(){" \
+"function valid(c){var n=c.length;if(!/^[0-9]+$/.test(c)||[8,12,13,14].indexOf(n)<0)return false;" \
+  "var s=0;for(var i=0;i<n-1;i++){var x=+c[n-2-i];s+=i%2?x:3*x}" \
+  "return(10-s%10)%10==+c[n-1]}" \
+"var buf='',last=0,el=null,val=null,t=null;" \
+"function note(h){if(!t){t=document.createElement('div');t.id='scan-note';" \
+  "t.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);" \
+  "background:#2a2a2a;color:#eee;padding:10px 14px;border:1px solid #a83;" \
+  "border-radius:6px;z-index:9;max-width:90%';document.body.appendChild(t)}" \
+  "t.textContent=h;t.hidden=false;clearTimeout(t.k);t.k=setTimeout(function(){t.hidden=true},6000)}" \
+"document.addEventListener('keydown',function(ev){" \
+  "if(['Shift','Control','Alt','Meta','CapsLock'].indexOf(ev.key)>=0)return;" \
+  "var fast=ev.timeStamp-last<50;" \
+  "if(ev.key.length==1&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){" \
+    "if(!buf||!fast){buf='';el=document.activeElement;" \
+      "val=el&&(el.tagName=='INPUT'||el.tagName=='TEXTAREA')?el.value:null}" \
+    "buf+=ev.key;last=ev.timeStamp;return}" \
+  "if(ev.key=='Enter'&&buf.length>=6&&fast){" \
+    "ev.preventDefault();ev.stopPropagation();var c=buf;buf='';" \
+    "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}" \
+    "if(!valid(c))note('The scanner read something that is not a product barcode. It was ignored.');" \
+    "else if(window.onScanCode)window.onScanCode(c);" \
+    "else note('Scanned '+c+'. Barcodes are used on Onboard, the Stock List and product pages; nothing changed here.');" \
+    "return}" \
+  "buf=''},true);" \
+"window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};" \
+"})()</script>"
+
+static const char* FOOT = SCAN_SCRIPT_JS "</main></body></html>";
 
 // ── Current spool on the scale ────────────────────────────────────────────────
 // Returns the local spool id if a tag is presently weighed/registered, else -1.
@@ -1049,38 +1095,6 @@ static void handleProducts(AsyncWebServerRequest* req) {
 // This is the page the whole model exists for: correct a wrong tare or a
 // misspelled name once, and every spool of that filament follows — including
 // their physical tags, on next placement.
-// ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
-// A keyboard-wedge scanner is a keyboard: it types the code's digits and
-// Enter, a few ms apart. A document-level capture listener tells that apart
-// from a person by speed and by the code itself: digits under 50 ms apart,
-// 8/12/13/14 of them, then Enter, with a valid GS1 check digit. The check
-// digit is what stops a fast typist or a pasted number from counting.
-//
-// A scan works wherever focus is. If the digits landed in a text box, its
-// value is put back as it was before the burst, and the Enter never reaches
-// the form, so a scan never submits anything. The page decides what a scan
-// means by setting window.onScanCode; window.simulateScan(code) calls it
-// directly, for the browser console and tests.
-static const char SCAN_SCRIPT[] =
-"<script>(function(){"
-"function valid(c){var n=c.length;if([8,12,13,14].indexOf(n)<0)return false;"
-  "var s=0;for(var i=0;i<n-1;i++){var x=+c[n-2-i];s+=i%2?x:3*x}"
-  "return(10-s%10)%10==+c[n-1]}"
-"var buf='',last=0,el=null,val=null;"
-"document.addEventListener('keydown',function(ev){"
-  "var fast=ev.timeStamp-last<50;"
-  "if(/^[0-9]$/.test(ev.key)&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){"
-    "if(!buf||!fast){buf='';el=document.activeElement;"
-      "val=el&&(el.tagName=='INPUT'||el.tagName=='TEXTAREA')?el.value:null}"
-    "buf+=ev.key;last=ev.timeStamp;return}"
-  "if(ev.key=='Enter'&&buf&&fast&&valid(buf)){"
-    "ev.preventDefault();ev.stopPropagation();var c=buf;buf='';"
-    "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}"
-    "if(window.onScanCode)window.onScanCode(c);return}"
-  "buf=''},true);"
-"window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};"
-"})()</script>";
-
 // A scanned barcode as a number, or 0 unless it is 8/12/13/14 digits with a
 // valid GS1 check digit -- the same rule SCAN_SCRIPT applies in the browser,
 // checked again here because a form field is only a claim.
@@ -1193,7 +1207,6 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     p += "<div><button type='submit'>Save &amp; update spools</button></div>";
     p += "</form>";
     p += "<p class='muted'><a href='/products' style='color:#8f8'>&larr; all products</a></p>";
-    p += SCAN_SCRIPT;
     p += "<script>window.onScanCode=function(c){var g=document.getElementById('gtin');"
          "g.value=c;g.focus()}</script>";
     p += FOOT;
@@ -1737,7 +1750,8 @@ static const char STOCK_PICK_SCRIPT[] =
 "})()</script>";
 
 // What a scan does on /onboard. With no spool on the scale there is no form
-// yet: the code is held in sessionStorage for up to 2 minutes and applied
+// yet: the code is held in sessionStorage for up to 1 minute (short, so a
+// stray scan can't land on some later spool) and applied
 // when the page reloads with the spool (onboardWatchScript), so scanning the
 // box first and placing the spool second works as well as the other order.
 // ?scan=CODE on the URL applies a code on load, for testing.
@@ -1756,23 +1770,42 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 "if(!document.querySelector(\"form[action='/api/onboard']\")){"
   "window.onScanCode=function(c){"
     "try{sessionStorage.setItem('scan',JSON.stringify({c:c,t:Date.now()}))}catch(e){}"
-    "msg('Scanned '+c+' &mdash; place the spool and it will be applied.')};"
+    "msg('Scanned '+c+' &mdash; place the spool within a minute and it will be applied. "
+      "<a href=\"#\" id=\"scan-forget\" style=\"color:#9c9\">Forget it</a>');"
+    "document.getElementById('scan-forget').onclick=function(e){e.preventDefault();"
+      "try{sessionStorage.removeItem('scan')}catch(x){}msg('')}};"
   "return}"
+// Which barcode a save will record, shown beside Save (#scan-learn) so a
+// stray scan is visible before it becomes a product's barcode; "clear"
+// drops it. window.scanPicked is the product the scan itself selected: a
+// product chosen any other way after a scan asks before recording (the
+// form's submit check).
+"var sf=document.getElementById('scan-gtin'),dd=document.getElementById('prod'),"
+    "chip=document.getElementById('scan-learn');window.scanPicked=null;"
+"function upd(){var g=sf.value;if(!g){chip.hidden=true;return}"
+  "var o=dd&&dd.value!='0'?dd.selectedOptions[0]:null,pg=o?(o.dataset.gtin||''):'';"
+  "chip.querySelector('span').textContent=o&&pg&&+pg==+g?'Barcode '+g+' matches this product.'"
+    ":o&&pg?'Barcode '+g+' differs from this product\u2019s ('+pg+'); it will not be recorded.'"
+    ":'Barcode '+g+' will be recorded for '+(o?o.text.trim():'the new product')+'.';"
+  "chip.hidden=false}"
+"if(dd)dd.addEventListener('change',upd);"
+"document.getElementById('scan-clear').onclick=function(e){e.preventDefault();"
+  "sf.value='';window.scanPicked=null;upd()};"
 "window.onScanCode=function(c){"
   "var w=document.getElementById('obwrap');"
   "if(w&&w.style.display=='none'){msg('Scanned '+c+'. This spool is already onboarded; "
     "open <i>Change this spool&rsquo;s details</i> first to use a scan.');return}"
-  "var sf=document.getElementById('scan-gtin');if(sf)sf.value=c;"
+  "sf.value=c;window.scanPicked=null;upd();"
   "msg('Scanned '+c+' &mdash; looking it up&hellip;');"
   "fetch('/api/lookup?gtin='+c).then(function(r){return r.json()}).then(function(j){"
     "var L=j.stock.filter(function(s){return s.product}),"
         "U=j.stock.filter(function(s){return !s.product}),seen={};"
     "L.forEach(function(s){seen[s.product]=1});"
     "var nl=Object.keys(seen).length,P=j.products;"
-    "if(nl==1&&window.stkPick){stkPick(L[0].id);msg('Scanned '+c+' &rarr; <b>'+L[0].name+'</b>');return}"
+    "if(nl==1&&window.stkPick){stkPick(L[0].id);window.scanPicked=dd.value;upd();msg('Scanned '+c+' &rarr; <b>'+L[0].name+'</b>');return}"
     "if(nl>1&&window.stkOnly){stkOnly(L.map(function(s){return s.id}));"
       "msg('Scanned '+c+': several Stock List items have this barcode &mdash; pick one.');return}"
-    "if(P.length==1&&window.prodPick&&prodPick(P[0].id)){"
+    "if(P.length==1&&window.prodPick&&prodPick(P[0].id)){window.scanPicked=dd.value;upd();"
       "msg('Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b> "
       "&mdash; not on the Stock List.');return}"
     "if(P.length>1){msg('Scanned '+c+': matches several products ('+P.map(function(p){"
@@ -1785,7 +1818,7 @@ static const char ONBOARD_SCAN_SCRIPT[] =
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed.')})};"
 "var c=new URLSearchParams(location.search).get('scan');"
 "try{var h=JSON.parse(sessionStorage.getItem('scan')||'null');sessionStorage.removeItem('scan');"
-  "if(!c&&h&&Date.now()-h.t<120000)c=h.c}catch(e){}"
+  "if(!c&&h&&Date.now()-h.t<60000)c=h.c}catch(e){}"
 "if(c&&/^[0-9]+$/.test(c))window.onScanCode(c);"
 "})()</script>";
 
@@ -1799,8 +1832,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
              "<p class='muted'>Place a spool and this page will update on its "
              "own once it's registered.</p></div>";
         p += onboardWatchScript(-1);
-        p += SCAN_SCRIPT;
-        p += ONBOARD_SCAN_SCRIPT;
+            p += ONBOARD_SCAN_SCRIPT;
         p += FOOT;
         req->send(200, "text/html", p);
         return;
@@ -1890,7 +1922,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
              "else if(s&&s.value=='catalog')pg=document.getElementById('cat-f-cat_gtin').value;"
              "if(pg&&+pg!=+sg&&!confirm((d&&d.value!='0'?'This product\\'s barcode is ':"
                "'The database says this package\\'s barcode is ')+pg+', but you scanned '+sg+"
-               "'. Wrong product? OK saves anyway; Cancel to check.'))return false}";
+               "'. Wrong product? OK saves anyway; Cancel to check.'))return false;"
+             // Not the product the scan picked: the scan came first and the
+             // product was chosen another way, so the scan may have been a
+             // different box. Ask before it becomes this product's barcode.
+             "if(!pg&&(!d||d.value!=window.scanPicked)&&!confirm('Record barcode '+sg+' for "
+               "this product? It was scanned before the product was chosen. If that was a "
+               "different box, press Cancel and clear it.'))return false}";
     p +=   "return true;\">";
     p += "<input type='hidden' name='id' value='" + String((unsigned)cur) + "'>";
     // The last scan, for handleApiOnboard to learn (phase 3). Set by
@@ -2121,12 +2159,13 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          ".then(r=>r.json()).then(d=>{document.getElementById('tare').value=d.weight.toFixed(1)})\">"
          "Capture tare from scale</button>";
 
+    p += "<p id='scan-learn' hidden><span></span> <a href='#' id='scan-clear' "
+         "style='color:#9c9'>clear</a></p>";
     p += "<div><button type='submit'>Save &amp; write tag</button></div>";
     p += "</form>";
     if (already) p += "</div>";   // #obwrap
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
-    p += SCAN_SCRIPT;
     p += ONBOARD_SCAN_SCRIPT;
     p += onboardWatchScript(cur);
     p += FOOT;
@@ -3608,7 +3647,6 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
     if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
     p += "</div></form></div>";
-    p += SCAN_SCRIPT;
     p += STOCK_SCAN_SCRIPT;
 
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "

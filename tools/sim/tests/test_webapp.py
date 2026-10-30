@@ -263,18 +263,20 @@ def test_unknown_barcode_says_so(sim, page):
     assert page.input_value("select#prod") == "0"
 
 
-def test_slow_typing_and_bad_check_digits_are_not_scans(sim, page):
+def test_slow_typing_is_typing_and_a_bad_check_digit_is_ignored(sim, page):
     _catalog_onboard(sim, EAN)
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
     page.focus("#prod-q")
     scan(page, EAN, gap_ms=120)                     # a person typing
-    bad = EAN[:-1] + str((int(EAN[-1]) + 1) % 10)
+    page.wait_for_timeout(200)
+    assert page.input_value("#prod-q") == EAN       # left alone
     page.fill("#prod-q", "")
-    scan(page, bad)                                 # fast, wrong check digit
-    page.wait_for_timeout(300)
+    bad = EAN[:-1] + str((int(EAN[-1]) + 1) % 10)
+    scan(page, bad)                                 # a scanner, but no product barcode
+    page.wait_for_selector("#scan-note:has-text('not a product barcode')")
+    assert page.input_value("#prod-q") == ""        # taken back out
     assert page.locator("#scan-msg").is_hidden()
-    assert page.input_value("#prod-q") == bad
     assert "/onboard" in page.url
 
 
@@ -319,8 +321,13 @@ def test_scan_then_pick_teaches_the_product_its_barcode(sim, page):
     scan(page, code)
     page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
     page.click(f"#stk-list .stk[data-prod='{pid}']")
+    assert "will be recorded for" in page.inner_text("#scan-learn")
+    # Picked by hand after the scan, so it asks first.
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
     page.click("button[type=submit]")
     page.wait_for_url("**/spool?id=*learned=1*")
+    assert msgs and "scanned before the product was chosen" in msgs[0]
     assert "now recorded for this product" in page.content()
     assert [p["id"] for p in sim.get_json("/api/lookup?gtin=" + code)["products"]] == [pid]
 
@@ -518,3 +525,65 @@ def test_merge_refuses_bad_requests_without_changing_anything(sim):
         except urllib.error.HTTPError as e:
             assert e.code == 400
     assert len(sim.get_json("/api/products")) == 1
+
+
+# ── Stray scans (any page) ─────────────────────────────────────────────────────
+
+def test_a_stray_qr_scan_never_submits_the_onboard_form(sim, page):
+    _onboard_manually(sim, page)
+    sim.remove()
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.focus("input[name=cost]")
+    # The QR code on an eSUN spool: a URL, typed at scanner speed, then Enter.
+    page.keyboard.type("https://www.esun3d.com/pla-pro", delay=5)
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#scan-note:has-text('not a product barcode')")
+    assert "/onboard" in page.url
+    assert page.input_value("input[name=cost]") == ""
+    assert len(sim.get_json("/api/spools")) == 2
+    assert sim.get_json("/api/spools")[-1]["needs_onboarding"] is True
+
+
+def test_a_barcode_on_a_page_with_no_use_for_it_changes_nothing(sim, page):
+    page.goto(sim.url("/config"))
+    box = page.locator("main input[type=text], main input:not([type])").first
+    before = box.input_value()
+    box.focus()
+    scan(page, EAN)
+    page.wait_for_selector("#scan-note:has-text('nothing changed here')")
+    assert box.input_value() == before
+    assert "/config" in page.url
+    assert page.js_errors == []
+
+
+def test_clearing_a_scan_records_nothing_and_asks_nothing(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    scan(page, gs1("400000000000"))
+    page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
+    page.click(f"#stk-list .stk[data-prod='{pid}']")
+    page.click("#scan-clear")
+    assert page.locator("#scan-learn").is_hidden()
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    assert dialogs == []
+    assert "learned" not in page.url
+    assert "gtin" not in _product(sim, pid)
+
+
+def test_a_held_scan_can_be_forgotten(sim, page):
+    _linked_stock_row(sim, page)                    # so the form has a product list
+    page.goto(sim.url("/onboard"))
+    scan(page, gs1("400000000000"))
+    page.wait_for_selector("#scan-msg:has-text('within a minute')")
+    page.click("#scan-forget")
+    assert page.locator("#scan-msg").is_hidden()
+    sim.blank(gross=1100)
+    page.wait_for_selector("select#prod")
+    page.wait_for_timeout(300)
+    assert page.locator("#scan-msg").is_hidden()
+    assert page.input_value("#scan-gtin") == ""

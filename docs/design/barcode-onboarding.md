@@ -152,7 +152,7 @@ product shows that row and says to fix it, rather than "unknown".*
       stock item"; the barcode is kept for phase 3.
 - **Scan before the spool is placed.** The page shows "No spool is on the
   scale" until one is, then `onboardWatchScript` reloads it. A scan on that
-  page is held in `sessionStorage` (≤ 2 min) and applied after the reload,
+  page is held in `sessionStorage` (≤ 1 min; see *Stray scans*) and applied after the reload,
   so either order works. Wrapped in try/catch like every storage access.
 - Scanner setup: none beyond the default (digits + Enter suffix). No prefix
   character needed thanks to the timing + check-digit rule.
@@ -253,6 +253,27 @@ somewhere to keep that), and the vendor alias table of
 
 Each phase is useful on its own and can ship separately: phase 1 fixes the
 matching without any hardware.
+
+## Stray scans (added 2026-10-29)
+
+The scanner is a keyboard, and it stays plugged in. Outside the browser it
+types into whatever has focus (an email gets a stray number and a newline);
+nothing reaches the station. Inside the web app:
+
+- The scan listener is on **every page** (it is part of `FOOT`) and takes
+  **every scanner-speed burst** out of the page: 6+ keys under 50 ms apart,
+  then Enter. What it typed into a box is put back, and its Enter never
+  submits a form. Only a product barcode (valid GS1) reaches the page's
+  `onScanCode`; a QR code, a shipping label, or a barcode on a page with no
+  use for one is reported in a note and otherwise ignored.
+- Onboard says, beside Save, which barcode the save will record, with
+  "clear". When the product was chosen any other way than by the scan
+  itself (the scan came first, then a manual pick), saving asks before
+  recording it.
+- A scan made with no spool on the scale is held for **1 minute** (was 2),
+  with "Forget it".
+- On the scanner: trigger-only mode, rather than auto-reading in the stand,
+  makes accidental reads rare in the first place.
 
 ## Open questions
 
