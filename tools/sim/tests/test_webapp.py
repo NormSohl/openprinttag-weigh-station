@@ -852,6 +852,8 @@ def test_stock_list_tare_starts_at_175_and_a_catalog_weight_replaces_it(sim, pag
 
 def _stock_add_manual(page, sim, material, color):
     page.goto(sim.url("/stock"))
+    if page.locator("#item-list .stk.new").count():   # products exist: choose New
+        page.click("#item-list .stk.new")
     page.click("#stock-manual-details summary")
     page.select_option("select[name=vendor]", "eSun")
     page.select_option("select[name=material]", material)
@@ -896,3 +898,33 @@ def test_stock_list_catalog_search_starts_on_the_last_stock_list_pick(sim, page)
 def test_stock_list_target_starts_at_one(sim, page):
     page.goto(sim.url("/stock"))
     assert page.input_value("input[name=min_spools]") == "1"
+
+
+def test_stock_list_item_is_a_scrolling_list(sim, page):
+    pid = _linked_stock_row(sim, page)                 # on the Stock List already
+    other = _catalog_onboard(sim, EAN, material="PETG Blue")
+    page.goto(sim.url("/stock"))
+    assert page.locator("select#sprod").is_hidden()
+    assert page.locator("#stocknew").is_hidden()        # nothing chosen yet
+    assert "already on the Stock List" in page.inner_text(f"#item-list .stk[data-prod='{pid}']")
+
+    msgs = []                                           # nothing chosen: refused
+    page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
+    page.click("#stockform ~ .card button[type=submit]")
+    page.wait_for_timeout(200)
+    assert msgs and "Pick the item first" in msgs[0] and "/stock" in page.url
+
+    page.fill("#item-q", "petg")
+    page.press("#item-q", "Enter")                      # the only match: picked
+    assert page.input_value("select#sprod") == str(other)
+    assert page.locator("#item-list").is_hidden() and page.locator("#stocknew").is_hidden()
+    page.click("#item-change")
+    page.click("#item-list .stk.new")
+    assert page.input_value("select#sprod") == "0"
+    assert page.locator("#stocknew").is_visible()
+
+    page.goto(sim.url("/stock"))                        # an unknown barcode opens New
+    scan(page, gs1("400000000000"))
+    page.wait_for_selector("#scan-msg:has-text('no product has this barcode')")
+    assert page.locator("#stocknew").is_visible()
+    assert page.js_errors == []
