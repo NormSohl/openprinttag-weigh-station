@@ -82,3 +82,95 @@ def test_seeded_store_rolls_up_on_reorder(sim, page):
     page.goto(sim.url("/reorder"))
     assert page.locator("table").count() >= 1
     assert page.js_errors == []
+
+
+# ── Stock List picker (docs/design/barcode-onboarding.md, phase 1) ────────────
+
+def _onboard_manually(sim, page, gross=1220):
+    sim.blank(gross=gross)
+    page.goto(sim.url("/onboard"))
+    page.select_option("select#profile", index=1)
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    return sim.get_json("/api/spools")[-1]
+
+
+def _linked_stock_row(sim, page):
+    """A product (from one onboarded spool) and a Stock List row linked to it."""
+    first = _onboard_manually(sim, page)
+    sim._post("/api/stock/add", product=first["product"], min_spools=2, pack_qty=1)
+    sim.remove()
+    return first["product"]
+
+
+def test_stock_pick_onboards_as_that_rows_product(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    row = page.locator(f"#stk-list .stk[data-prod='{pid}']")
+    assert row.count() == 1
+    row.click()
+    assert page.input_value("select#prod") == str(pid)
+    assert page.locator("#newprod").is_hidden()
+    assert page.locator("#stk-ok").is_visible()
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    spools = sim.get_json("/api/spools")
+    assert [s["product"] for s in spools] == [pid, pid]
+    assert page.js_errors == []
+
+
+def test_stock_search_enter_picks_the_only_match_without_submitting(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    name = page.locator(f"#stk-list .stk[data-prod='{pid}']").get_attribute("data-name")
+    page.fill("#stk-q", name)
+    page.press("#stk-q", "Enter")
+    page.wait_for_timeout(200)
+    assert "/onboard" in page.url          # the form did not submit
+    assert page.input_value("select#prod") == str(pid)
+
+
+def test_unlinked_stock_rows_cannot_be_picked(sim, page):
+    # The seeded Stock List rows were never linked to a product; a spool
+    # existing gives the page a #prod to (not) set.
+    _onboard_manually(sim, page)
+    sim.remove()
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    off = page.locator("#stk-list .stk.off")
+    assert off.count() >= 1
+    assert "not linked" in off.first.inner_text()
+    off.first.click(position={"x": 5, "y": 5})
+    assert page.input_value("select#prod") == "0"
+    assert page.locator("#stk-ok").is_hidden()
+
+
+def test_clear_and_manual_change_drop_the_stock_pick(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.click(f"#stk-list .stk[data-prod='{pid}']")
+    page.click("#stk-clear")
+    assert page.input_value("select#prod") == "0"
+    assert page.locator("#stk-ok").is_hidden()
+    assert page.locator("#newprod").is_visible()
+    page.click(f"#stk-list .stk[data-prod='{pid}']")
+    page.select_option("select#prod", "0")
+    assert page.locator("#stk-ok").is_hidden()
+
+
+def test_product_filter_narrows_the_list_and_keeps_the_selection(sim, page):
+    pid = _linked_stock_row(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.select_option("select#prod", str(pid))
+    page.fill("#prod-q", "zzz-no-such-product")
+    values = page.eval_on_selector_all("select#prod option", "os => os.map(o => o.value)")
+    assert sorted(values) == sorted(["0", str(pid)])   # "new" + the selection stay
+    assert page.input_value("select#prod") == str(pid)
+    page.press("#prod-q", "Enter")
+    assert "/onboard" in page.url
+    page.fill("#prod-q", "")
+    assert page.locator("select#prod option").count() >= 2

@@ -97,6 +97,10 @@ write path, the tag write and the reorder roll-up stay as they are.
 
 ### Phase 1 — Stock List picker (useful with no scanner)
 
+*Built on `barcode-onboarding` (`stockPickerField()`, `STOCK_PICK_SCRIPT` in
+`web_app.cpp`); tested in `tools/sim/tests/test_webapp.py`. Not yet on the
+station. Linked rows are listed first.*
+
 - `/onboard`, above "This spool is…": **"Which stock item is this?"**, a
   search box over Stock List rows, using the row's own name and the linked
   product's colour swatch. Rendered server-side from `cfgStockAt()` +
