@@ -1274,9 +1274,11 @@ static void handleApiProduct(AsyncWebServerRequest* req) {
     // Separate call, deliberately: without it every spool of this product keeps
     // a stale cached copy and a stale tag, and the edit would be invisible
     // everywhere except this page.
-    storePropagateProduct(id);
+    // q.id, not id: a merged product's id resolves to its survivor
+    // (storeGetProduct()), and propagation is by the survivor's own id.
+    storePropagateProduct(q.id);
 
-    req->redirect("/product?id=" + String((unsigned)id));
+    req->redirect("/product?id=" + String((unsigned)q.id));
 }
 
 static void handleApiProducts(AsyncWebServerRequest* req) {
@@ -3131,6 +3133,12 @@ static int countFor_(const std::vector<std::pair<uint32_t, int>>& v, uint32_t id
     return 0;
 }
 
+// A product picker's server-side options: only the likely matches (starred),
+// with `selected` chosen. Every other product is added in the browser by
+// REPAIR_SCRIPT from one shared list (repairProductList_()), because writing
+// all of them into every row made /repair ~200 KB with the default Stock List
+// (48 unlinked rows x 70 products) -- the whole page is one String in RAM on
+// a device with ~200 KB free.
 static void productOptions_(String& p, uint32_t selected, const std::vector<uint32_t>& first) {
     ProductRecord q;
     for (uint32_t id : first)
@@ -3138,13 +3146,29 @@ static void productOptions_(String& p, uint32_t selected, const std::vector<uint
             p += "<option value='" + String((unsigned)q.id) + "'"
                + (q.id == selected ? " selected" : "") + ">&#9733; " + productLabel_(q) + "</option>";
     if (!first.empty()) p += "<option disabled>&mdash;&mdash;&mdash;</option>";
+}
+
+// Every live product once, as [id, label] pairs for REPAIR_SCRIPT. The
+// labels are already HTML-escaped (productLabel_()), so the script sets them
+// as HTML; esc() also escapes the double quotes that would end a JSON string.
+static void repairProductList_(String& p) {
+    p += "<script>var REPAIR_PRODUCTS=[";
+    ProductRecord q;
     for (size_t i = 0, n = storeProductCount(); i < n; i++) {
         if (!storeProductAt(i, q)) continue;
-        if (std::find(first.begin(), first.end(), q.id) != first.end()) continue;
-        p += "<option value='" + String((unsigned)q.id) + "'"
-           + (q.id == selected ? " selected" : "") + ">" + productLabel_(q) + "</option>";
+        p += String(i ? "," : "") + "[" + String((unsigned)q.id) + ",\"" + productLabel_(q) + "\"]";
     }
+    p += "];</script>";
 }
+
+// Fill every select.prod-list with the products it doesn't already list.
+static const char REPAIR_SCRIPT[] =
+"<script>(function(){"
+"document.querySelectorAll('select.prod-list').forEach(function(sel){"
+  "var have={};[].forEach.call(sel.options,function(o){have[o.value]=1});"
+  "REPAIR_PRODUCTS.forEach(function(r){if(have[r[0]])return;"
+    "var o=document.createElement('option');o.value=r[0];o.innerHTML=r[1];sel.appendChild(o)})"
+"})})()</script>";
 
 static void handleRepairPage(AsyncWebServerRequest* req) {
     String p = head("Repair", "/config");   // under Administration, not a tab of its own
@@ -3205,7 +3229,7 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
             const CfgStock& s = rows[i];
             const auto& cand = cands[i];
             p += "<tr><td>" + stockLabel_(s) + "</td><td><select name='p"
-               + String((unsigned)s.id) + "' class='link-sel'>"
+               + String((unsigned)s.id) + "' class='link-sel prod-list'>"
                  "<option value='0'>&mdash; leave &mdash;</option>";
             productOptions_(p, cand.size() == 1 ? cand[0] : 0, cand);
             p += "</select></td></tr>";
@@ -3269,11 +3293,9 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
         p += "<p class='muted'>None found.</p>";
 
     p += "<h3>Merge any two products</h3>"
-         "<form method='GET' action='/repair/merge'><label>Product</label><select name='a'>";
-    productOptions_(p, 0, {});
-    p += "</select><label>and</label><select name='b'>";
-    productOptions_(p, 0, {});
-    p += "</select><div><button type='submit' class='sec'>Compare&hellip;</button></div></form>";
+         "<form method='GET' action='/repair/merge'><label>Product</label>"
+         "<select name='a' class='prod-list'></select><label>and</label>"
+         "<select name='b' class='prod-list'></select><div><button type='submit' class='sec'>Compare&hellip;</button></div></form>";
 
     // ── Undo ──────────────────────────────────────────────────────────────────
     const auto merged = storeMergedProducts();
@@ -3294,6 +3316,8 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
         }
         p += "</table>";
     }
+    repairProductList_(p);
+    p += REPAIR_SCRIPT;
     p += FOOT;
     req->send(200, "text/html", p);
 }

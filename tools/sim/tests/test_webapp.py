@@ -634,3 +634,32 @@ def test_raw_tables_have_their_own_page_and_saving_returns_there(sim, page):
     page.wait_for_url("**/config/tables")
     assert page.locator("textarea").count() == 5
     assert page.js_errors == []
+
+
+# ── Page size budget ──────────────────────────────────────────────────────────
+# Each page is built as one String in the station's RAM (~200 KB free). The
+# simulator has plenty, so size is the only signal it can give: /repair was
+# ~200 KB with the default Stock List before its product list was sent once.
+
+def _many_products(sim, n):
+    cols = ["Black", "White", "Red", "Blue", "Green", "Grey", "Orange", "Yellow", "Purple", "Pink"]
+    for i in range(n):
+        _catalog_onboard(sim, "", gross=1200, material=f"PLA Variant{i // 10} {cols[i % 10]}")
+
+
+def test_admin_pages_stay_small_with_a_realistic_store(sim, page):
+    _many_products(sim, 40)
+    assert len(sim.get_json("/api/products")) == 40
+    budget = {"/repair": 40_000, "/stock": 90_000, "/config": 20_000, "/products": 40_000}
+    sim.blank(gross=1100)
+    budget["/onboard"] = 90_000
+    for path, limit in budget.items():
+        size = len(sim.get(path).encode())
+        assert size < limit, f"{path} is {size:,} bytes (budget {limit:,})"
+    # The Repair page's pickers still offer every product, filled in the browser.
+    page.goto(sim.url("/repair"))
+    n = page.locator("select[name=a] option").count()
+    assert n == 40
+    first_row = page.locator("select.link-sel").first
+    assert first_row.locator("option").count() >= 41      # "leave" + every product
+    assert page.js_errors == []
