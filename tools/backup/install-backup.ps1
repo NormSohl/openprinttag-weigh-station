@@ -12,7 +12,7 @@
 param(
     [string]$Dest = 'C:\Inventory Backups',
     [string]$Station,
-    [string]$At = '12:00'      # daily; a PC that was off then catches up when it's next on
+    [string]$At = '00:00'      # daily at midnight; a PC that was off then catches up when it's next on
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,7 +33,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Daily at $At. StartWhenAvailable runs a missed time as soon as the PC is
-# next on, so a PC that is off at noon still backs up that day. Runs as this
+# next on, so a PC that is off at midnight still backs up that day. Runs as this
 # user, only while logged on, so no password is stored and no administrator
 # rights are needed; the window is hidden.
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
