@@ -185,6 +185,13 @@ not only on the result page, the same as the catalog cross-check.*
 
 ### Phase 4 — Stock List and Products pages
 
+*Built on `barcode-onboarding` (`STOCK_SCAN_SCRIPT`, the barcode field in
+`handleProductDetail()`/`handleApiProduct()`, the marker in
+`handleStockPage()`). Not yet on the station. Additions: a scan on `/stock`
+says when the code is already on another row; unlinked rows show their
+colour, since nothing else tells them apart. The Stock List row's own
+barcode field is still free text, as before.*
+
 - `/stock` Add/Edit: a scan fills the row's **GTIN** field and, if
   `/api/lookup` knows the product, preselects it. Building the Stock List
   by scanning the boxes on hand is then possible.

@@ -387,3 +387,56 @@ def test_server_ignores_a_scan_with_a_bad_check_digit(sim, page):
     bad = UPC[:-1] + str((int(UPC[-1]) + 1) % 10)
     sim._post("/api/onboard", id=spool, product=pid, scan_gtin=bad)
     assert "gtin" not in _product(sim, pid)
+
+
+# ── Stock List and Products pages (barcode-onboarding.md, phase 4) ───────────
+
+def test_product_page_edits_the_barcode(sim, page):
+    pid = _linked_stock_row(sim, page)
+    page.goto(sim.url(f"/product?id={pid}"))
+    scan(page, UPC)
+    assert page.input_value("#gtin") == UPC
+    page.click("button[type=submit]")
+    page.wait_for_url(f"**/product?id={pid}")
+    assert _product(sim, pid)["gtin"] == str(int(UPC))
+
+    bad = UPC[:-1] + str((int(UPC[-1]) + 1) % 10)
+    page.fill("#gtin", bad)
+    page.click("button[type=submit]")
+    assert "not a valid barcode" in page.content()
+    assert _product(sim, pid)["gtin"] == str(int(UPC))   # unchanged
+
+    page.goto(sim.url(f"/product?id={pid}"))
+    page.fill("#gtin", "")
+    page.click("button[type=submit]")
+    page.wait_for_url(f"**/product?id={pid}")
+    assert "gtin" not in _product(sim, pid)
+
+
+def test_stock_list_scan_picks_the_product_and_fills_the_barcode(sim, page):
+    pid = _catalog_onboard(sim, EAN)
+    page.goto(sim.url("/stock"))
+    scan(page, UPC)
+    page.wait_for_function("document.getElementById('sprod').value==%r" % str(pid))
+    assert page.input_value("#sgtin") == UPC
+    assert page.locator("#stocknew").is_hidden()
+    page.click("#stockform ~ .card button[type=submit]")
+    page.wait_for_url("**/stock")
+    rows = [r for r in sim.get_json("/api/stock")["items"] if r["gtin"] == UPC]
+    assert len(rows) == 1
+    found = sim.get_json("/api/lookup?gtin=" + UPC)["stock"]
+    assert [(r["id"], r["product"]) for r in found] == [(rows[0]["id"], pid)]
+
+    # Scanning the same box again says it is already there.
+    page.goto(sim.url("/stock"))
+    scan(page, EAN)
+    page.wait_for_selector("#scan-msg:has-text('Already on the Stock List')")
+    assert page.js_errors == []
+
+
+def test_stock_list_marks_unlinked_rows(sim, page):
+    pid = _linked_stock_row(sim, page)
+    page.goto(sim.url("/stock"))
+    seeded = len(sim.get_json("/api/stock")["items"]) - 1
+    assert page.locator(".unlinked").count() == seeded
+    assert page.locator("#unlinked-note").is_visible()

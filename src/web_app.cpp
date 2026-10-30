@@ -1049,6 +1049,54 @@ static void handleProducts(AsyncWebServerRequest* req) {
 // This is the page the whole model exists for: correct a wrong tare or a
 // misspelled name once, and every spool of that filament follows — including
 // their physical tags, on next placement.
+// ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
+// A keyboard-wedge scanner is a keyboard: it types the code's digits and
+// Enter, a few ms apart. A document-level capture listener tells that apart
+// from a person by speed and by the code itself: digits under 50 ms apart,
+// 8/12/13/14 of them, then Enter, with a valid GS1 check digit. The check
+// digit is what stops a fast typist or a pasted number from counting.
+//
+// A scan works wherever focus is. If the digits landed in a text box, its
+// value is put back as it was before the burst, and the Enter never reaches
+// the form, so a scan never submits anything. The page decides what a scan
+// means by setting window.onScanCode; window.simulateScan(code) calls it
+// directly, for the browser console and tests.
+static const char SCAN_SCRIPT[] =
+"<script>(function(){"
+"function valid(c){var n=c.length;if([8,12,13,14].indexOf(n)<0)return false;"
+  "var s=0;for(var i=0;i<n-1;i++){var x=+c[n-2-i];s+=i%2?x:3*x}"
+  "return(10-s%10)%10==+c[n-1]}"
+"var buf='',last=0,el=null,val=null;"
+"document.addEventListener('keydown',function(ev){"
+  "var fast=ev.timeStamp-last<50;"
+  "if(/^[0-9]$/.test(ev.key)&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){"
+    "if(!buf||!fast){buf='';el=document.activeElement;"
+      "val=el&&(el.tagName=='INPUT'||el.tagName=='TEXTAREA')?el.value:null}"
+    "buf+=ev.key;last=ev.timeStamp;return}"
+  "if(ev.key=='Enter'&&buf&&fast&&valid(buf)){"
+    "ev.preventDefault();ev.stopPropagation();var c=buf;buf='';"
+    "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}"
+    "if(window.onScanCode)window.onScanCode(c);return}"
+  "buf=''},true);"
+"window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};"
+"})()</script>";
+
+// A scanned barcode as a number, or 0 unless it is 8/12/13/14 digits with a
+// valid GS1 check digit -- the same rule SCAN_SCRIPT applies in the browser,
+// checked again here because a form field is only a claim.
+static uint64_t gs1Parse(const String& c) {
+    const size_t n = c.length();
+    if (n != 8 && n != 12 && n != 13 && n != 14) return 0;
+    int sum = 0;
+    for (size_t i = 0; i < n; i++) if (c[i] < '0' || c[i] > '9') return 0;
+    for (size_t i = 0; i + 1 < n; i++) {
+        const int d = c[n - 2 - i] - '0';
+        sum += (i % 2) ? d : 3 * d;
+    }
+    if ((10 - sum % 10) % 10 != c[n - 1] - '0') return 0;
+    return strtoull(c.c_str(), nullptr, 10);
+}
+
 static void handleProductDetail(AsyncWebServerRequest* req) {
     if (!req->hasParam("id")) { req->send(400, "text/plain", "missing id"); return; }
     uint32_t id = (uint32_t)req->getParam("id")->value().toInt();
@@ -1105,6 +1153,16 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
        + String(q.empty_g, 1) + "'>";
     p += "<label>Nominal full weight (g)</label><input type='number' step='0.1' name='nom_g' value='"
        + String(q.nom_g, 1) + "'>";
+    // Editable here because this is the one place products are edited, and a
+    // barcode learned from a scan at onboarding (barcode-onboarding.md, phase
+    // 3) can be wrong. Scanning the box on this page fills it.
+    {
+        char g[24] = "";
+        if (q.gtin) snprintf(g, sizeof(g), "%llu", (unsigned long long)q.gtin);
+        p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box, or blank for none</label>"
+             "<input name='gtin' id='gtin' inputmode='numeric' autocomplete='off' value='"
+           + String(g) + "'>";
+    }
 
     p += "<div class='card' style='margin-top:14px'>";
     if (mine.empty()) {
@@ -1125,6 +1183,9 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     p += "<div><button type='submit'>Save &amp; update spools</button></div>";
     p += "</form>";
     p += "<p class='muted'><a href='/products' style='color:#8f8'>&larr; all products</a></p>";
+    p += SCAN_SCRIPT;
+    p += "<script>window.onScanCode=function(c){var g=document.getElementById('gtin');"
+         "g.value=c;g.focus()}</script>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -1155,6 +1216,20 @@ static void handleApiProduct(AsyncWebServerRequest* req) {
     q.dia     = arg("dia").toFloat();
     q.empty_g = arg("empty_g").toFloat();
     q.nom_g   = arg("nom_g").toFloat();
+    // Absent (an older page) keeps the barcode; blank clears it; anything
+    // else must be a real one. Two products may share a barcode -- vendors
+    // do reuse them -- and /api/lookup lists both.
+    uint64_t newGtin = q.gtin;
+    if (const AsyncWebParameter* gp = req->getParam("gtin", true)) {
+        String gs = gp->value();
+        gs.trim();
+        newGtin = gs.length() ? gs1Parse(gs) : 0;
+        if (gs.length() && !newGtin) {
+            req->send(400, "text/plain", "not a valid barcode: it should be 8, 12, 13 or "
+                                         "14 digits with a correct check digit");
+            return;
+        }
+    }
     // Tare is never unknown. Checked before anything is written, like every
     // other 4xx here. It is the product's DEFAULT: saving it does not change
     // any spool's own tare (storePropagateProduct() keeps those), except a
@@ -1167,6 +1242,7 @@ static void handleApiProduct(AsyncWebServerRequest* req) {
     // "provisional" was waiting for. Confirming it is what re-admits the
     // product to tag write-back.
     q.provisional = false;
+    q.gtin = newGtin;
 
     if (!storeUpsertProduct(q)) { req->send(500, "text/plain", "write failed"); return; }
     // Separate call, deliberately: without it every spool of this product keeps
@@ -1650,38 +1726,6 @@ static const char STOCK_PICK_SCRIPT[] =
   "e.hidden=ids.indexOf(+e.dataset.sid)<0})};"
 "})()</script>";
 
-// ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
-// A keyboard-wedge scanner is a keyboard: it types the code's digits and
-// Enter, a few ms apart. A document-level capture listener tells that apart
-// from a person by speed and by the code itself: digits under 50 ms apart,
-// 8/12/13/14 of them, then Enter, with a valid GS1 check digit. The check
-// digit is what stops a fast typist or a pasted number from counting.
-//
-// A scan works wherever focus is. If the digits landed in a text box, its
-// value is put back as it was before the burst, and the Enter never reaches
-// the form, so a scan never submits anything. The page decides what a scan
-// means by setting window.onScanCode; window.simulateScan(code) calls it
-// directly, for the browser console and tests.
-static const char SCAN_SCRIPT[] =
-"<script>(function(){"
-"function valid(c){var n=c.length;if([8,12,13,14].indexOf(n)<0)return false;"
-  "var s=0;for(var i=0;i<n-1;i++){var x=+c[n-2-i];s+=i%2?x:3*x}"
-  "return(10-s%10)%10==+c[n-1]}"
-"var buf='',last=0,el=null,val=null;"
-"document.addEventListener('keydown',function(ev){"
-  "var fast=ev.timeStamp-last<50;"
-  "if(/^[0-9]$/.test(ev.key)&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){"
-    "if(!buf||!fast){buf='';el=document.activeElement;"
-      "val=el&&(el.tagName=='INPUT'||el.tagName=='TEXTAREA')?el.value:null}"
-    "buf+=ev.key;last=ev.timeStamp;return}"
-  "if(ev.key=='Enter'&&buf&&fast&&valid(buf)){"
-    "ev.preventDefault();ev.stopPropagation();var c=buf;buf='';"
-    "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}"
-    "if(window.onScanCode)window.onScanCode(c);return}"
-  "buf=''},true);"
-"window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};"
-"})()</script>";
-
 // What a scan does on /onboard. With no spool on the scale there is no form
 // yet: the code is held in sessionStorage for up to 2 minutes and applied
 // when the page reloads with the spool (onboardWatchScript), so scanning the
@@ -2093,22 +2137,6 @@ static void handleApiTare(AsyncWebServerRequest* req) {
 // (Onboard's catalog and manual paths, the Stock List's catalog path below)
 // so the same real filament converges on the same product id regardless of
 // which page or path it was entered through.
-// A scanned barcode as a number, or 0 unless it is 8/12/13/14 digits with a
-// valid GS1 check digit -- the same rule SCAN_SCRIPT applies in the browser,
-// checked again here because a form field is only a claim.
-static uint64_t gs1Parse(const String& c) {
-    const size_t n = c.length();
-    if (n != 8 && n != 12 && n != 13 && n != 14) return 0;
-    int sum = 0;
-    for (size_t i = 0; i < n; i++) if (c[i] < '0' || c[i] > '9') return 0;
-    for (size_t i = 0; i + 1 < n; i++) {
-        const int d = c[n - 2 - i] - '0';
-        sum += (i % 2) ? d : 3 * d;
-    }
-    if ((10 - sum % 10) % 10 != c[n - 1] - '0') return 0;
-    return strtoull(c.c_str(), nullptr, 10);
-}
-
 static uint32_t findOrCreateProduct(ProductRecord& probe) {
     ProductRecord found;
     if (storeFindProduct(probe, found)) return found.id;
@@ -2781,6 +2809,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
     // Picking the product directly sidesteps that: rollUp() (above) matches
     // by this id, not by recomposing a name.
     const size_t np = storeProductCount();
+    p += "<p class='card' id='scan-msg' hidden></p>";   // STOCK_SCAN_SCRIPT
     if (np) {
         p += "<label>Item is&hellip;</label><select name='product' id='sprod' "
              "onchange=\"document.getElementById('stocknew').style.display="
@@ -2904,13 +2933,45 @@ static void stockFormFields(String& p, const CfgStock& s) {
     p += "<label>Minimum grams to keep &mdash; 0 = use spools; both 0 means at least 1 spool</label>"
          "<input type='number' step='0.1' name='min_grams' value='" + String(s.min_grams, 0) + "'>";
     p += "<label>SKU</label><input type='text' name='sku' value='" + esc(s.sku) + "'>";
-    p += "<label>GTIN</label><input type='text' name='gtin' value='" + esc(s.gtin) + "'>";
+    p += "<label>Barcode (GTIN/EAN/UPC) &mdash; scan the box to fill it</label>"
+         "<input type='text' name='gtin' id='sgtin' inputmode='numeric' autocomplete='off' value='"
+       + esc(s.gtin) + "'>";
     p += "<label>Pack quantity</label>"
          "<input type='number' name='pack_qty' value='" + String(s.pack_qty > 0 ? s.pack_qty : 1) + "'>";
 }
 
 // STOCK_POPULARITY_WINDOW_DAYS itself lives in config.h now, shared with
 // storeCompact()'s retention floor -- see the comment there.
+
+// What a scan does on /stock (barcode-onboarding.md, phase 4): fill the
+// form's barcode field, and if a product already has that barcode, pick it
+// under "Item is..." -- so the Stock List can be built by scanning the boxes
+// on hand. Also says when the code is already on another Stock List row,
+// which is the duplicate a scan would otherwise create quietly.
+static const char STOCK_SCAN_SCRIPT[] =
+"<script>(function(){"
+"var box=document.getElementById('scan-msg');"
+"function msg(h){box.innerHTML=h;box.hidden=!h}"
+"window.onScanCode=function(c){"
+  "document.getElementById('sgtin').value=c;"
+  "document.getElementById('stockform').scrollIntoView();"
+  "msg('Scanned '+c+' &mdash; looking it up&hellip;');"
+  "fetch('/api/lookup?gtin='+c).then(function(r){return r.json()}).then(function(j){"
+    "var e=document.getElementById('stock-edit-id'),eid=e?+e.value:0,"
+        "dup=j.stock.filter(function(s){return s.id!=eid}),t='',"
+        "d=document.getElementById('sprod'),P=j.products;"
+    "if(dup.length)t='Already on the Stock List: '+dup.map(function(s){"
+      "return '<a href=\"/stock?edit='+s.id+'#stockform\" style=\"color:#9c9\">'+s.name+'</a>'"
+      "}).join(', ')+'. ';"
+    "if(P.length==1&&d){d.value=String(P[0].id);"
+      "if(d.value==String(P[0].id)){d.dispatchEvent(new Event('change'));"
+        "msg(t+'Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b>');return}}"
+    "if(P.length>1)msg(t+'Scanned '+c+': several products have this barcode &mdash; pick one "
+      "under <i>Item is&hellip;</i>.');"
+    "else msg(t+'Scanned '+c+': no product has this barcode yet &mdash; search the catalog "
+      "or enter it; the barcode is filled in.')"
+  "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed; the barcode is filled in.')})};"
+"})()</script>";
 
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock List", "/stock");
@@ -2968,6 +3029,22 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     // parseStockForm()), and that's virtually every row now that manual
     // entry links to a product too. sr.color stays populated internally for
     // the rare unlinked/fallback case, just not surfaced as its own column.
+    // Rows with no product, or one that no longer resolves: Reorder counts
+    // them by a name guess (rollUp()'s fallback) and Onboard's Stock List
+    // picker cannot offer them. Editing the row and picking its product fixes
+    // both; a bulk repair is barcode-onboarding.md's step 5.
+    std::vector<bool> linked(n);
+    size_t nUnlinked = 0;
+    for (size_t i = 0; i < n; i++) {
+        ProductRecord lp;
+        linked[i] = rows[i].product && storeGetProduct(rows[i].product, lp);
+        if (!linked[i]) nUnlinked++;
+    }
+    if (nUnlinked)
+        p += "<p class='ob' id='unlinked-note'>" + String((unsigned)nUnlinked)
+           + " item(s) marked <i>not linked</i> have no product: Reorder counts them "
+             "by name, which can miss, and Onboard can't offer them. Edit each one "
+             "and pick its product under <i>Item is&hellip;</i>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
          "<th>Threshold</th><th>SKU</th><th>Pack</th><th></th></tr>";
     for (size_t i : order) {
@@ -2982,7 +3059,13 @@ static void handleStockPage(AsyncWebServerRequest* req) {
             const float perWeek = pop[i].grams / pop[i].available_days * 7.0f;
             popCell = String(perWeek, 0) + " g/wk";
         }
-        p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material) + "</td><td>"
+        // An unlinked row's colour is NOT in its material (see above), and
+        // without it a column of "eSun PLA" rows can't be told apart.
+        p += "<tr><td>" + esc(sr.vendor) + "</td><td>" + esc(sr.material)
+           + (linked[i] ? String()
+                        : (sr.color[0] ? " " + esc(sr.color) : String())
+                          + " <span class='ob unlinked'>not linked</span>")
+           + "</td><td>"
            + popCell + "</td><td>" + thr + "</td><td>"
            + esc(sr.sku) + "</td><td>" + String(sr.pack_qty) + "</td><td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
@@ -3016,11 +3099,14 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            "if(t<=0&&s&&s.value=='catalog')t=parseFloat(c&&c.value)||0;"
            "if(t<=0){alert('Enter a default spool tare (empty spool weight) for this product.');"
              "document.getElementById('stock-tare').focus();return false;}return true;\">";
-    if (haveEdit) p += "<input type='hidden' name='id' value='" + String((unsigned)editId) + "'>";
+    if (haveEdit) p += "<input type='hidden' name='id' id='stock-edit-id' value='"
+                     + String((unsigned)editId) + "'>";
     stockFormFields(p, editRow);
     p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
     if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
     p += "</div></form></div>";
+    p += SCAN_SCRIPT;
+    p += STOCK_SCAN_SCRIPT;
 
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
          "on the <a href='/config' style='color:#8f8'>Settings</a> and "
