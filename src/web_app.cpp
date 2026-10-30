@@ -4666,9 +4666,7 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     p += "<h3>Filament consumed</h3>";
     p += "<p class='muted'>This is the lab's permanent consumption record "
          "&mdash; how much of each material has actually gone through the "
-         "station, by month and year, since tracking began. Once an entry "
-         "lands here it's permanent &mdash; even the raw weigh events it's "
-         "built from eventually get folded away, but these totals don't.</p>";
+         "lab, by month and year, since tracking began.</p>";
 
     const size_t n = storeUsageCount();
     if (n == 0) {
