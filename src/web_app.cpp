@@ -2823,7 +2823,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
 
     if (csv) {
         String out = "vendor,material,color,diameter,sku,gtin,pack_qty,"
-                     "on_hand_spools,on_hand_g,min_spools,min_grams\n";
+                     "on_hand_spools,on_hand_g,target_spools,target_grams\n";
         CfgStock s;
         for (size_t i = 0; i < cfgStockCount(); i++) {
             if (!cfgStockAt(i, s)) continue;
@@ -4105,7 +4105,7 @@ static void handleApiStock(AsyncWebServerRequest* req) {
 // carries popularity) or /config/export (which bundles all five Config
 // tables together). Same pattern as /usage.csv.
 static void handleStockCsv(AsyncWebServerRequest* req) {
-    String c = "vendor,material,color,dia,sku,gtin,pack_qty,min_spools,min_grams\n";
+    String c = "vendor,material,color,dia,sku,gtin,pack_qty,target_spools,target_grams\n";
     const size_t n = cfgStockCount();
     CfgStock s;
     for (size_t i = 0; i < n; i++) {
