@@ -660,7 +660,7 @@ void displayTask(void* param) {
                     // or colour yet and is useless for inventory until someone
                     // fills the form in. Say what is missing, not just what
                     // happened.
-                    row(3, "NEEDS ONBOARDING", tft.color565(220, 140, 0));
+                    row(3, "NEEDS DETAILS", tft.color565(220, 140, 0));
                     // Not everyone scans QR codes, and a phone camera is not
                     // always to hand, so give the typed route too — named by the
                     // page it lands on, so it matches the web app's own nav.
@@ -742,7 +742,7 @@ void displayTask(void* param) {
                 // Blue, not yellow: this is the same "working silently in the
                 // background, nothing needed from you" case as WiFiSetupMode/
                 // FormattingAndRegistering/WeighingAndSync, not a "success but
-                // incomplete" case like Present's NEEDS ONBOARDING banner —
+                // incomplete" case like Present's NEEDS DETAILS banner —
                 // yellow is reserved for that one. NeoPixel matches the other
                 // blue states' color for the same reason.
                 title("Updating tag...", tft.color565(0, 100, 220));

@@ -8,7 +8,7 @@
 2. **Place the spool on the scale.**
 3. The display counts down from 2 ("New tag found / Remove to cancel").
    **Remove the spool** to cancel; **leave it** to register.
-4. The display shows **"Registered! Spool #N / NEEDS ONBOARDING"**. Open the
+4. The display shows **"Registered! Spool #N / NEEDS DETAILS"**. Open the
    **Restock** page (or scan the QR code with a phone). Keep the spool on the
    scale.
 5. **Say what it is**, in this order:

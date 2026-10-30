@@ -2,7 +2,7 @@
 <rect width="480" height="320" rx="6" fill="#000"/>
 <text x="12" y="32" font-size="26" font-weight="700" fill="#ffff00">Registered!</text>
 <text x="12" y="81" font-size="17" fill="#ffffff">Spool #47  612 grams</text>
-<text x="12" y="109" font-size="17" fill="#dc8c00">NEEDS ONBOARDING</text>
+<text x="12" y="109" font-size="17" fill="#dc8c00">NEEDS DETAILS</text>
 <text x="12" y="137" font-size="17" fill="#c0c0c0">Scan QR to add details,</text>
 <text x="12" y="165" font-size="17" fill="#c0c0c0">or visit the Restock page:</text>
 <text x="12" y="193" font-size="17" fill="#00ffff">weighstation.local/onboard</text>

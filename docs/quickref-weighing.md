@@ -17,7 +17,7 @@
 | Green, "Place spool to begin" | Ready. Place a spool. |
 | "Weighing…" | Wait. Don't lift yet. |
 | Spool #, material, grams, "Weight recorded" | Done. Remove the spool. |
-| "Registered! / NEEDS ONBOARDING" | New tag. See the Onboarding quick-ref. |
+| "Registered! / NEEDS DETAILS" | New tag. See the Onboarding quick-ref. |
 | Red "Read Error" | Move the spool so the tag sits over the reader. |
 | Orange, "Scale not calibrated" | Tell an admin. |
 

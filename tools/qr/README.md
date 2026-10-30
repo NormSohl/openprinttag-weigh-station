@@ -62,7 +62,7 @@ That last line is why this matters. 33 characters is one over version 2's
 32-byte capacity. The original selection loop trusted the return code, so it
 stopped at the first version that "succeeded" — which was always the first
 one tried — and produced an unscannable code for precisely the mDNS-plus-
-`/onboard` URL the NEEDS ONBOARDING screen shows. Past ~44 characters it
+`/onboard` URL the NEEDS DETAILS screen shows. Past ~44 characters it
 stopped being a display bug and became a stack smash in `displayTask`.
 
 ## If you change `QR_VERSION_MAX`

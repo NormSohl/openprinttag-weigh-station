@@ -34,7 +34,7 @@ backups. There is no external server.
 | <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Ready.** Place a spool. |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing.** Don't lift yet. |
 | <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done.** Remove the spool. |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Restock page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS DETAILS, Scan QR to add details or visit the Restock page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag.** Don't lift yet. |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Scale not calibrated.** Tell an admin. |
 | Red **ERASE MODE** on the idle screen | **Erase mode is on.** Any tag placed is erased. |
@@ -76,11 +76,11 @@ every new spool.
    <img src="images/lcd/new-tag-countdown.svg" width="300" alt="New tag found screen with a large countdown digit">
 
 2. **Remove it** to cancel, or **leave it** to register.
-3. The display shows **Registered!**, the spool number and **NEEDS ONBOARDING**.
+3. The display shows **Registered!**, the spool number and **NEEDS DETAILS**.
    **Scan the QR code**, or open `weighstation.local/onboard`. Keep the spool
    on the scale.
 
-   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Restock page, both addresses, and a QR code">
+   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS DETAILS, Scan QR to add details or visit the Restock page, both addresses, and a QR code">
 
 ### Onboarding it (web app)
 
