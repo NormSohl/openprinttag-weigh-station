@@ -873,3 +873,47 @@ def test_reorder_orders_target_minus_on_hand_in_whole_spools(sim, page):
     row = page.locator(f"tr:has(a[href='/product?id={pid}'])")
     assert row.count() == 1
     assert row.locator("td").nth(4).inner_text() == "3 spools"
+
+
+def test_stock_list_sorts_by_clicking_a_heading(sim, page):
+    page.goto(sim.url("/stock"))
+    col = lambda i: page.eval_on_selector_all(
+        "#stock-table tr", f"rs => rs.slice(1).filter(r => r.cells.length > 1).map(r => r.cells[{i}].textContent.trim())")
+    page.click("#stock-table th:has-text('Material')")
+    names = col(1)
+    assert len(names) > 3 and names == sorted(names, key=str.lower)
+    page.click("#stock-table th:has-text('Material')")
+    assert col(1) == sorted(names, key=str.lower, reverse=True)
+    page.click("#stock-table th:has-text('Target')")
+    targets = page.eval_on_selector_all(
+        "#stock-table tr", "rs => rs.slice(1).filter(r => r.cells.length > 1).map(r => parseFloat(r.cells[3].dataset.v))")
+    assert targets == sorted(targets)
+    assert "▲" in page.inner_text("#stock-table th:has-text('Target')")
+    assert page.js_errors == []
+
+
+def test_every_table_sorts_and_inventory_keeps_each_spool_list_with_its_row(sim, page):
+    assert sim.cmd("SEED 6 20").startswith("ok")
+    page.goto(sim.url("/"))
+    pairs = lambda: page.eval_on_selector_all(
+        "table:first-of-type tr.inv-row",
+        "rs => rs.map(r => [r.cells[1].textContent.trim(), r.nextElementSibling.id,"
+        " parseFloat(r.cells[3].textContent)])")
+    before = {name: detail for name, detail, _ in pairs()}
+    assert len(before) > 2
+    page.click("th:has-text('Remaining')")
+    after = pairs()
+    grams = [g for _, _, g in after]
+    assert grams == sorted(grams)
+    assert {name: detail for name, detail, _ in after} == before   # lists moved with their rows
+    page.click("th:has-text('Filament')")
+    names = [n for n, _, _ in pairs()]
+    assert names == sorted(names, key=str.lower)
+
+    page.goto(sim.url("/usage"))
+    page.locator("th:has-text('Consumed')").first.click()
+    vals = page.eval_on_selector_all(
+        "table:first-of-type tr",
+        "rs => rs.slice(1).map(r => parseFloat(r.cells[1].textContent.replace(/,/g,'')))")
+    assert vals == sorted(vals)
+    assert page.js_errors == []

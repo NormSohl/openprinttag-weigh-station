@@ -655,7 +655,38 @@ static String head(const char* title, const char* active = "") {
 "window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};" \
 "})()</script>"
 
-static const char* FOOT = SCAN_SCRIPT_JS "</main></body></html>";
+// Every table whose first row is all headings sorts by clicking a heading,
+// again to reverse. A row with fewer cells than the heading (Inventory's
+// expandable spool list, a "nothing yet" row) moves with the row above it.
+// A column sorts as numbers when every cell starts with one (#, $, % and
+// commas ignored), else as text; a cell's data-v, when set, is its number.
+// A heading with data-dir='1' marks the order the page already starts in.
+#define SORT_SCRIPT_JS \
+"<script>(function(){" \
+"function num(c){var v=c.getAttribute('data-v');if(v!==null&&v!=='')return parseFloat(v);" \
+  "var m=c.textContent.trim().replace(/[#$,%]/g,'').match(/^-?[0-9]+(\\.[0-9]+)?/);" \
+  "return m?parseFloat(m[0]):null}" \
+"[].forEach.call(document.querySelectorAll('table'),function(t){" \
+  "var hr=t.rows[0];if(!hr)return;var hs=hr.cells,w=hs.length;" \
+  "for(var i=0;i<w;i++)if(hs[i].tagName!='TH')return;" \
+  "[].forEach.call(hs,function(th,col){" \
+    "if(!th.textContent.trim())return;th.style.cursor='pointer';" \
+    "th.onclick=function(){" \
+      "var dir=th.getAttribute('data-dir')=='1'?-1:1;" \
+      "[].forEach.call(hs,function(o){o.textContent=o.textContent.replace(/ [\\u25B2\\u25BC]$/,'');" \
+        "if(o!==th)o.removeAttribute('data-dir')});" \
+      "th.setAttribute('data-dir',dir==1?'1':'-1');th.textContent+=dir==1?' \\u25B2':' \\u25BC';" \
+      "var gs=[],cur=null;" \
+      "[].slice.call(t.rows,1).forEach(function(r){" \
+        "if(r.cells.length==w){cur=[r];gs.push(cur)}else if(cur)cur.push(r)});" \
+      "var isNum=gs.every(function(g){return num(g[0].cells[col])!==null});" \
+      "gs.sort(function(a,b){var x=a[0].cells[col],y=b[0].cells[col];" \
+        "return dir*(isNum?num(x)-num(y):x.textContent.trim().localeCompare(" \
+          "y.textContent.trim(),undefined,{numeric:true,sensitivity:'base'}))});" \
+      "gs.forEach(function(g){g.forEach(function(r){r.parentNode.appendChild(r)})})}})})" \
+"})()</script>"
+
+static const char* FOOT = SCAN_SCRIPT_JS SORT_SCRIPT_JS "</main></body></html>";
 
 // ── Current spool on the scale ────────────────────────────────────────────────
 // Returns the local spool id if a tag is presently weighed/registered, else -1.
@@ -3636,12 +3667,6 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += "<h3>Currently stocked</h3>";
     p += "<p class='muted'>This is what we want to keep on the shelf, not what's "
          "actually in the <a href='/' style='color:#8f8'>Inventory</a>.</p>";
-    p += "<p class='muted'>Sorted by popularity, lowest first &mdash; the top of this "
-         "list is where to look for items to remove. Popularity is grams consumed per "
-         "day the material was actually IN STOCK over the last " + String(STOCK_POPULARITY_WINDOW_DAYS)
-       + " days, not per calendar day &mdash; a spool that sold out early and sat empty "
-         "is scored on the days it was available, not diluted across the ones it wasn't, "
-         "so running out never makes something look unpopular.</p>";
 
     CfgStock s;
     const size_t n = cfgStockCount();
@@ -3694,17 +3719,22 @@ static void handleStockPage(AsyncWebServerRequest* req) {
              "them and Restock can't offer them. Edit each one "
              "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
              "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
-    p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
+    // Headings sort the table (SORT_SCRIPT_JS, in FOOT); the page starts in
+    // popularity order, lowest first. data-v holds the number to sort by.
+    p += "<table id='stock-table'><tr><th>Vendor</th><th>Material</th>"
+         "<th data-dir='1'>Popularity &#9650;</th>"
          "<th>Target</th><th>SKU</th><th></th></tr>";
     for (size_t i : order) {
         const CfgStock& sr = rows[i];
         String thr = targetText(sr);
         String popCell;
+        float popV = -1;   // no data sorts first, as the page starts
         if (!pop[i].has_data) {
             popCell = "<span class='ob'>no data</span>";
         } else {
             const float perWeek = pop[i].grams / pop[i].available_days * 7.0f;
             popCell = String(perWeek, 0) + " g/wk";
+            popV = perWeek;
         }
         // An unlinked row's colour is NOT in its material (see above), and
         // without it a column of "eSun PLA" rows can't be told apart.
@@ -3712,8 +3742,8 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + (linked[i] ? String()
                         : (sr.color[0] ? " " + esc(sr.color) : String())
                           + " <span class='ob unlinked'>not linked</span>")
-           + "</td><td>"
-           + popCell + "</td><td>" + thr + "</td><td>"
+           + "</td><td data-v='" + String(popV, 1) + "'>"
+           + popCell + "</td><td data-v='" + String(targetGrams(sr), 0) + "'>" + thr + "</td><td>"
            + esc(sr.sku) + "</td><td style='white-space:nowrap'>"
            + "<a href='/stock?edit=" + String((unsigned)sr.id) + "#stockform' style='color:#8f8'>Edit</a> "
            + "<form method='POST' action='/api/stock/delete' style='display:inline' "
