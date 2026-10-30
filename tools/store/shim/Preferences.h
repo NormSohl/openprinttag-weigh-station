@@ -16,6 +16,7 @@ public:
     void     putBool(const char* key, bool v);
     String   getString(const char* key, const char* def = "");
     void     putString(const char* key, const String& v);
+    bool     remove(const char* key);
 private:
     std::string ns_;
 };

@@ -142,3 +142,9 @@ void Preferences::putString(const char* key, const String& v) {
     m[key] = v.c_str();
     nvsSave(ns_, m);
 }
+bool Preferences::remove(const char* key) {
+    auto m = nvsLoad(ns_);
+    bool had = m.erase(key) > 0;
+    nvsSave(ns_, m);
+    return had;
+}
