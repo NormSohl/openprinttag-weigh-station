@@ -985,10 +985,17 @@ static int resolveProduct_(int i) {
 // Caller holds the lock. The ladder runs over merged products too -- their
 // identifiers are the aliases that send a tag or pick carrying them to the
 // survivor -- and its answer is resolved to that survivor.
-static int findProductRaw_(const ProductRecord& q);
-static int findProduct_(const ProductRecord& q) { return resolveProduct_(findProductRaw_(q)); }
+//
+// `byName` false stops after the identifier rungs (1-3): what a person enters
+// is matched by identifiers only (storeFindProductByIds()), so a typed or
+// renamed name never decides which product something is
+// (docs/design/names-are-labels.md).
+static int findProductRaw_(const ProductRecord& q, bool byName);
+static int findProduct_(const ProductRecord& q, bool byName = true) {
+    return resolveProduct_(findProductRaw_(q, byName));
+}
 
-static int findProductRaw_(const ProductRecord& q) {
+static int findProductRaw_(const ProductRecord& q, bool byName) {
     // 1) package_uuid — the SKU, and our product identity.
     if (q.pkg_uuid[0])
         for (size_t i = 0; i < sProducts.size(); i++)
@@ -1005,8 +1012,9 @@ static int findProductRaw_(const ProductRecord& q) {
             if (!strcasecmp(sProducts[i].mat_uuid, q.mat_uuid) &&
                 nomEq_(sProducts[i].nom_g, q.nom_g)) return (int)i;
     // 4) Names. What makes the second Prusament PETG Orange find the first
-    //    instead of creating a product and listing the filament twice.
-    if (q.material[0])
+    //    instead of creating a product and listing the filament twice. Only
+    //    for tags (adoption), whose products start provisional.
+    if (byName && q.material[0])
         for (size_t i = 0; i < sProducts.size(); i++)
             if (normEq_(sProducts[i].vendor, q.vendor) &&
                 normEq_(sProducts[i].material, q.material) &&
@@ -1017,6 +1025,14 @@ static int findProductRaw_(const ProductRecord& q) {
 bool storeFindProduct(const ProductRecord& probe, ProductRecord& out) {
     Lock lk;
     int i = findProduct_(probe);
+    if (i < 0) return false;
+    out = sProducts[i];
+    return true;
+}
+
+bool storeFindProductByIds(const ProductRecord& probe, ProductRecord& out) {
+    Lock lk;
+    int i = findProduct_(probe, false);
     if (i < 0) return false;
     out = sProducts[i];
     return true;

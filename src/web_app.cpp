@@ -1562,6 +1562,32 @@ static const struct { int8_t key; const char* abbr; } kMatTypes[] = {
     {35,"PPE"},{36,"PS"},{37,"PSU"},{38,"TPI"},{39,"SBS"},{40,"OBC"},{41,"EVA"},
 };
 
+// "This is a new product" -- on both forms' manual entry (Restock, Stock List).
+// A typed entry is always a new product (findOrCreateProduct() matches by
+// identifiers only, never by name), so it has to say so. newProductOk(sel)
+// runs on submit: unticked, it says what to do; ticked, but the typed vendor
+// + material + colour is the start of a product already in `sel` (#prod or
+// #sprod), it offers that product instead -- OK picks it, Cancel goes ahead
+// with a new one. Both forms name their manual fields the same
+// (vendorPickerField() and friends).
+static const char NEW_PRODUCT_CHECKBOX[] =
+"<label style='color:#eee'><input type='checkbox' name='confirm_new' value='1' "
+  "id='confirm-new' style='width:auto'> This is a new product: it isn't already listed</label>"
+"<script>function newProductOk(sel){"
+  "var c=document.getElementById('confirm-new');"
+  "if(!c.checked){alert('Tick \\u201cThis is a new product\\u201d, or pick the product "
+    "if it is already listed.');c.focus();return false}"
+  "function v(n){var e=document.querySelector('[name='+n+']');if(!e)return '';"
+    "if(e.value=='__new__'){var x=document.querySelector('[name='+n+'_new],[name='+n+'_new_name]');"
+    "return x?x.value:''}return e.value}"
+  "function norm(t){return t.toLowerCase().replace(/\\s+/g,' ').trim()}"
+  "var want=norm(v('vendor')+' '+v('material')+' '+v('color'));"
+  "if(!sel||!want)return true;"
+  "var hit=[].find.call(sel.options,function(o){return o.value!='0'&&norm(o.text).indexOf(want)==0});"
+  "if(hit&&confirm('\\u201c'+hit.text.trim()+'\\u201d is already a product. Use it? OK uses it; "
+    "Cancel makes a new one.')){sel.value=hit.value;sel.dispatchEvent(new Event('change'))}"
+  "return true}</script>";
+
 // Vendor/Material/Color manual-entry picklists — shared by Onboard's manual
 // path and Stock List's manual fallback, so "+ Add new material" (which
 // needs the full CfgMaterial shape: class/type enums, print/bed temps, not
@@ -1912,6 +1938,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&md&&!md.open){"
              "alert('Say what this spool is first: pick a Stock List item or product, "
              "search the catalog, or open \\u201cOr enter manually\\u201d.');return false;}"
+           "if((!d||d.value=='0')&&s&&s.value=='manual'&&!newProductOk(d))return false;"
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&f&&f.value==''){"
              "alert('Pick a spool profile (next to the tare box) \\u2014 it sets "
              "this spool\\'s full and empty weights.');f.focus();return false;}"
@@ -2088,6 +2115,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     vendorPickerField(p, lastOnboardVendor());
     materialPickerField(p, lastOnboardMaterial());
     colorPickerField(p, lastOnboardColor());
+    p += NEW_PRODUCT_CHECKBOX;
 
     p += "</details>";
     p += "</div>";   // #newprod — everything below applies to every path
@@ -2221,12 +2249,19 @@ static void handleApiTare(AsyncWebServerRequest* req) {
 
 // Resolve `probe` to an existing product, or create one if nothing matches.
 // Shared by every place a form resolves a product from typed/picked fields
-// (Onboard's catalog and manual paths, the Stock List's catalog path below)
-// so the same real filament converges on the same product id regardless of
-// which page or path it was entered through.
+// (Restock's catalog and manual paths, the Stock List's) so the same real
+// filament converges on the same product id regardless of which page or path
+// it was entered through.
+//
+// By IDENTIFIERS only (package UUID, GTIN, material UUID + size): a name
+// never decides which product something is (docs/design/names-are-labels.md,
+// item 4). A catalog pick still finds its product; a hand-typed entry, which
+// carries no identifiers, is always a new product -- which is why the forms
+// require "This is a new product" on that path, and offer a product whose
+// name matches instead.
 static uint32_t findOrCreateProduct(ProductRecord& probe) {
     ProductRecord found;
-    if (storeFindProduct(probe, found)) return found.id;
+    if (storeFindProductByIds(probe, found)) return found.id;
     if (storeUpsertProduct(probe))      return probe.id;
     return 0;
 }
@@ -2286,6 +2321,13 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
             req->send(400, "text/plain",
                       "say what this spool is: pick a Stock List item or product, search "
                       "the catalog, or open \"Or enter manually\"");
+            return;
+        }
+        // A typed entry is always a new product (findOrCreateProduct() matches
+        // by identifiers only), so it must say so.
+        if (arg("confirm_new") != "1") {
+            req->send(400, "text/plain",
+                      "tick \"This is a new product\", or pick the product if it is already listed");
             return;
         }
         const String prof = arg("profile");
@@ -2949,6 +2991,7 @@ static void stockFormFields(String& p, const CfgStock& s) {
     vendorPickerField(p, defVendor);
     materialPickerField(p, defMaterial);
     colorPickerField(p, defColor);
+    p += NEW_PRODUCT_CHECKBOX;
     // Diameter/nominal weight stay plain numeric fields, not a picklist —
     // Stock List has no "spool profile" concept the way Onboard does; each
     // stock item just states its own numbers directly. Still resets `source`
@@ -3653,6 +3696,9 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     // Same tare check as stockTareError(), before the page is replaced by a 400.
     p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "' "
          "onsubmit=\"var d=document.getElementById('sprod');if(d&&d.value!='0')return true;"
+           "var s=document.getElementById('cat-source');"
+           "if(s&&s.value=='manual'&&!newProductOk(d))return false;"
+           "if(d&&d.value!='0')return true;"   // newProductOk() picked a listed one
            "var t=parseFloat(document.getElementById('stock-tare').value)||0,"
                "s=document.getElementById('cat-source'),c=document.getElementById('cat-f-cat_empty_g');"
            "if(t<=0&&s&&s.value=='catalog')t=parseFloat(c&&c.value)||0;"
@@ -3694,6 +3740,20 @@ static String stockTareError(AsyncWebServerRequest* req) {
     return catalog ? "the catalog has no empty weight for this package: enter a "
                      "default spool tare"
                    : "enter a default spool tare (empty spool weight) for this product";
+}
+
+// A typed entry (no product picked, no catalog pick) is always a new product
+// (findOrCreateProduct() matches by identifiers only), so it must say so --
+// the same rule as Restock's. Pure, like stockTareError().
+static String stockNewProductError(AsyncWebServerRequest* req) {
+    auto arg = [&](const char* k) -> String {
+        const AsyncWebParameter* pp = req->getParam(k, true);
+        return pp ? pp->value() : String();
+    };
+    if (arg("product").toInt() != 0) return String();
+    if (arg("source") == "catalog" && arg("cat_vendor").length()) return String();
+    if (arg("confirm_new") == "1") return String();
+    return "tick \"This is a new product\", or pick the product if it is already listed";
 }
 
 // The row's barcode, when one is given, must be a real one (8/12/13/14
@@ -3867,6 +3927,8 @@ static void handleApiStockAdd(AsyncWebServerRequest* req) {
     if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
     const String gtinErr = stockGtinError(req);
     if (gtinErr.length()) { req->send(400, "text/plain", gtinErr); return; }
+    const String newErr = stockNewProductError(req);
+    if (newErr.length()) { req->send(400, "text/plain", newErr); return; }
     cfgStockAdd(parseStockForm(req));
     req->redirect("/stock");
 }
@@ -3899,6 +3961,8 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
     if (tareErr.length()) { req->send(400, "text/plain", tareErr); return; }
     const String gtinErr = stockGtinError(req);
     if (gtinErr.length()) { req->send(400, "text/plain", gtinErr); return; }
+    const String newErr = stockNewProductError(req);
+    if (newErr.length()) { req->send(400, "text/plain", newErr); return; }
     if (!cfgStockUpdate(id, parseStockForm(req))) {
         req->send(500, "text/plain", "stock item vanished mid-update");
         return;

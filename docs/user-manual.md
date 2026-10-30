@@ -100,7 +100,10 @@ On the **Restock** page, say what the spool is. Try these in order:
   material fields show the last product picked. Same product? Leave them.
   Different? Click a field to see the full list, or type to narrow it.
 - **Not in the catalog?** Open **Or enter manually** and pick the vendor,
-  material and colour. Use **+ Add new** for anything missing.
+  material and colour. Use **+ Add new** for anything missing. Tick **This
+  is a new product**: a typed entry always makes a new product, because the
+  station never matches products by name. If the name you typed is already
+  a product, the page offers it instead.
 
 Then:
 
@@ -260,7 +263,8 @@ leaves them off the reorder list (it says how many). Link them on
 - **Already on file?** Pick the product.
 - **Otherwise:** use the **catalog search**. It starts on the last product
   picked during onboarding; click a field to change it.
-- **Not in the catalog?** Open **Or enter manually**.
+- **Not in the catalog?** Open **Or enter manually** and tick **This is a new
+  product**.
 
 For the catalog and manual routes, enter a **Default spool tare** unless the
 catalog pick already lists one.

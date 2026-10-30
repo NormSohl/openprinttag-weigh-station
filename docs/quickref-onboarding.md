@@ -17,7 +17,8 @@
    - **Or pick it under "Which stock item is this?"** Type to search the
      Stock List. Greyed items aren't linked yet; tell an admin.
    - **Not a stock item?** Pick it under **"This spool is…"** (type to filter).
-   - **New product?** Use the catalog search, or **Or enter manually**.
+   - **New product?** Use the catalog search, or **Or enter manually** and tick
+     **This is a new product**.
 6. **Set the tare** (required): pick a **spool profile**, type it, or put an
    empty spool of the same type on the scale and press **Capture tare**.
 7. **Cost** (optional): type what the reel cost. Blank keeps the current

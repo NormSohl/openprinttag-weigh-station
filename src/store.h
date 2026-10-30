@@ -330,6 +330,12 @@ bool storeUpsertProduct(ProductRecord& p);
 // instead of listing the same filament once per spool.
 bool storeFindProduct(const ProductRecord& probe, ProductRecord& out);
 
+// The same ladder without step 4: identifiers only. For everything a person
+// enters (the web forms' catalog and manual paths), so a name -- typed, or a
+// product since renamed -- never decides which product something is
+// (docs/design/names-are-labels.md). Adoption of tags keeps step 4.
+bool storeFindProductByIds(const ProductRecord& probe, ProductRecord& out);
+
 // Resolve a tag to a product, CREATING one (marked provisional) if none matches.
 // Never updates an existing product, even when the tag disagrees with it:
 // product edits propagate to tags, so one odd or damaged tag could otherwise

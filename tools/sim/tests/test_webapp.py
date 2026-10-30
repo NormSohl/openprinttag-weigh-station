@@ -44,6 +44,7 @@ def test_manual_onboarding_writes_the_spool(sim, page):
     # Seeded catalog defaults fill vendor/material/colour; a profile sets the
     # nominal weight and tare, and is required on the manual path.
     page.select_option("select#profile", index=1)
+    page.check("#confirm-new")          # a typed entry is a new product
     page.click("button[type=submit]")
     page.wait_for_url("**/spool?id=*")
     spools = sim.get_json("/api/spools")
@@ -61,6 +62,7 @@ def test_another_spool_of_x_converges_on_one_product(sim, page):
     sim.blank(gross=1220)
     page.goto(sim.url("/onboard"))
     page.select_option("select#profile", index=1)
+    page.check("#confirm-new")          # a typed entry is a new product
     page.click("button[type=submit]")
     page.wait_for_url("**/spool?id=*")
     first = sim.get_json("/api/spools")[0]
@@ -91,6 +93,7 @@ def _onboard_manually(sim, page, gross=1220):
     sim.blank(gross=gross)
     page.goto(sim.url("/onboard"))
     page.select_option("select#profile", index=1)
+    page.check("#confirm-new")          # a typed entry is a new product
     page.click("button[type=submit]")
     page.wait_for_url("**/spool?id=*")
     return sim.get_json("/api/spools")[-1]
@@ -683,7 +686,12 @@ def test_station_refuses_a_manual_save_whose_fields_were_never_opened(sim):
         assert e.code == 400
     assert sim.get_json("/api/spools")[0]["needs_onboarding"] is True   # nothing written
     assert sim.get_json("/api/products") == []
-    sim._post("/api/onboard", manual_open=1, **form)
+    try:   # opened, but not marked as a new product: still refused
+        sim._post("/api/onboard", manual_open=1, **form)
+        assert False, "accepted"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+    sim._post("/api/onboard", manual_open=1, confirm_new=1, **form)
     assert sim.get_json("/api/spools")[0]["needs_onboarding"] is False
 
 
@@ -776,3 +784,50 @@ def test_reorder_never_guesses_an_unlinked_item(sim, page):
     assert page.locator("#reorder-unlinked").is_visible()
     assert "Everything is above threshold" in page.content()
     assert sim.get("/reorder?format=csv").strip().count("\n") == 0   # header only
+
+
+
+def test_a_typed_entry_never_matches_a_product_by_name(sim, page):
+    # Two spools typed in with the same vendor/material/colour/profile, each
+    # ticked "new product" and declining the offered match, make two products:
+    # names don't decide identity. (Repair finds them as duplicates.)
+    for gross in (1220, 1100):
+        sim.blank(gross=gross)
+        page.goto(sim.url("/onboard"))
+        page.select_option("select#profile", index=1)
+        page.check("#confirm-new")
+        page.once("dialog", lambda d: d.dismiss())        # "already a product. Use it?" -> no
+        page.click("button[type=submit]")
+        page.wait_for_url("**/spool?id=*")
+        sim.remove()
+    assert len(sim.get_json("/api/products")) == 2
+    page.goto(sim.url("/repair"))
+    assert page.locator("tr.dup").count() == 1
+
+
+def test_a_typed_entry_matching_a_listed_product_is_offered_it(sim, page):
+    _onboard_manually(sim, page)
+    sim.remove()
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.select_option("select#profile", index=1)
+    page.check("#confirm-new")
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))   # use it
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    assert msgs and "is already a product" in msgs[0]
+    assert len(sim.get_json("/api/products")) == 1
+    assert len({s["product"] for s in sim.get_json("/api/spools")}) == 1
+
+
+def test_unticked_new_product_is_explained_not_saved(sim, page):
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    page.select_option("select#profile", index=1)
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.dismiss()))
+    page.click("button[type=submit]")
+    page.wait_for_timeout(300)
+    assert msgs and "This is a new product" in msgs[0]
+    assert "/onboard" in page.url
