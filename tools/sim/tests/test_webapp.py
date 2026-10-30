@@ -68,7 +68,7 @@ def test_another_spool_of_x_converges_on_one_product(sim, page):
     sim.remove()
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
-    page.select_option("select#prod", str(first["product"]))
+    page.click(f"#stk-list .stk[data-prod='{first['product']}']")
     page.click("button[type=submit]")
     page.wait_for_url("**/spool?id=*")
 
@@ -153,28 +153,36 @@ def test_clear_and_manual_change_drop_the_stock_pick(sim, page):
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
     page.click(f"#stk-list .stk[data-prod='{pid}']")
-    page.click("#stk-clear")
+    page.click("#stk-clear")                        # "change": back to choosing
     assert page.input_value("select#prod") == "0"
     assert page.locator("#stk-ok").is_hidden()
+    assert page.locator("#stk-list").is_visible()
+    assert page.locator("#newprod").is_hidden()     # nothing chosen yet
+    page.click("#stk-list .stk.new")                # New product...
+    assert page.input_value("select#prod") == "0"
     assert page.locator("#newprod").is_visible()
-    page.click(f"#stk-list .stk[data-prod='{pid}']")
-    page.select_option("select#prod", "0")
-    assert page.locator("#stk-ok").is_hidden()
+    assert page.inner_text("#stk-ok b") == "New product"
 
 
-def test_product_filter_narrows_the_list_and_keeps_the_selection(sim, page):
-    pid = _linked_stock_row(sim, page)
+def test_one_list_holds_stock_items_other_products_and_new(sim, page):
+    pid = _linked_stock_row(sim, page)               # product 1, on the Stock List
+    _catalog_onboard(sim, EAN, material="PETG Blue") # product 2, not on it
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
-    page.select_option("select#prod", str(pid))
-    page.fill("#prod-q", "zzz-no-such-product")
-    values = page.eval_on_selector_all("select#prod option", "os => os.map(o => o.value)")
-    assert sorted(values) == sorted(["0", str(pid)])   # "new" + the selection stay
-    assert page.input_value("select#prod") == str(pid)
-    page.press("#prod-q", "Enter")
-    assert "/onboard" in page.url
-    page.fill("#prod-q", "")
-    assert page.locator("select#prod option").count() >= 2
+    heads = page.locator("#stk-list .stk-h").all_inner_texts()
+    assert heads[:2] == ["Stock List", "Other products"]
+    other = page.locator("#stk-list .stk[data-prod]:not([data-sid]):not(.new)")
+    assert other.count() == 1 and "PETG Blue" in other.inner_text()
+    assert page.locator("#newprod").is_hidden()      # nothing chosen yet
+    page.fill("#stk-q", "zzz-no-such-product")
+    assert page.locator("#stk-list .stk-h:visible").count() == 0
+    page.press("#stk-q", "Enter")
+    assert "/onboard" in page.url                    # Enter never submits
+    page.fill("#stk-q", "petg")
+    page.press("#stk-q", "Enter")                    # the only match: picked
+    assert page.input_value("select#prod") == other.get_attribute("data-prod")
+    assert page.locator("#newprod").is_hidden()
+    assert page.js_errors == []
 
 
 # ── Barcode lookup and scan capture (barcode-onboarding.md, phase 2) ──────────
@@ -233,13 +241,13 @@ def test_scan_picks_the_stock_row_and_restores_the_focused_box(sim, page):
     sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
-    page.fill("#stk-q", "abc")
-    page.focus("#stk-q")
+    page.fill("#tare", "12")
+    page.focus("#tare")
     scan(page, EAN)
     page.wait_for_selector("#scan-msg:not([hidden])")
     page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
     assert "/onboard" in page.url                   # Enter did not submit
-    assert page.input_value("#stk-q") == "abc"      # the digits were taken back
+    assert page.input_value("#tare") == "12"        # the digits were taken back
     assert page.locator("#stk-ok").is_visible()
     assert EAN in page.inner_text("#scan-msg")
     assert page.js_errors == []
@@ -267,15 +275,15 @@ def test_slow_typing_is_typing_and_a_bad_check_digit_is_ignored(sim, page):
     _catalog_onboard(sim, EAN)
     sim.blank(gross=1100)
     page.goto(sim.url("/onboard"))
-    page.focus("#prod-q")
+    page.focus("#stk-q")
     scan(page, EAN, gap_ms=120)                     # a person typing
     page.wait_for_timeout(200)
-    assert page.input_value("#prod-q") == EAN       # left alone
-    page.fill("#prod-q", "")
+    assert page.input_value("#stk-q") == EAN        # left alone
+    page.fill("#stk-q", "")
     bad = EAN[:-1] + str((int(EAN[-1]) + 1) % 10)
     scan(page, bad)                                 # a scanner, but no product barcode
     page.wait_for_selector("#scan-note:has-text('not a product barcode')")
-    assert page.input_value("#prod-q") == ""        # taken back out
+    assert page.input_value("#stk-q") == ""         # taken back out
     assert page.locator("#scan-msg").is_hidden()
     assert "/onboard" in page.url
 
@@ -288,7 +296,7 @@ def test_scan_before_the_spool_is_placed_is_applied_after(sim, page):
     scan(page, EAN)
     page.wait_for_selector("#scan-msg:has-text('place the spool')")
     sim.blank(gross=1100)                           # the page reloads over SSE
-    page.wait_for_selector("select#prod")
+    page.wait_for_selector("select#prod", state="attached")
     page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
     assert page.locator("#stk-ok").is_visible()
 
@@ -347,7 +355,7 @@ def test_a_scan_never_overwrites_a_different_barcode(sim, page):
     page.goto(sim.url("/onboard"))
     scan(page, other)
     page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
-    page.select_option("select#prod", str(pid))
+    page.click(f"#stk-list .stk[data-prod='{pid}']")
 
     # Cancel keeps the page; OK saves, but the product keeps its barcode.
     page.once("dialog", lambda d: d.dismiss())
@@ -583,7 +591,7 @@ def test_a_held_scan_can_be_forgotten(sim, page):
     page.click("#scan-forget")
     assert page.locator("#scan-msg").is_hidden()
     sim.blank(gross=1100)
-    page.wait_for_selector("select#prod")
+    page.wait_for_selector("select#prod", state="attached")
     page.wait_for_timeout(300)
     assert page.locator("#scan-msg").is_hidden()
     assert page.input_value("#scan-gtin") == ""

@@ -1687,39 +1687,39 @@ static void colorPickerField(String& p, const char* defColor) {
          "</div>";
 }
 
-// ── "Which stock item is this?" (docs/design/barcode-onboarding.md, phase 1) ─
-// The Stock List is the source of truth for what a spool IS: Reorder counts
-// spools against a row by CfgStock::product (rollUp()), so onboarding a spool
-// as that row's product is the one choice guaranteed to count. Picking a row
-// just sets #prod to that product -- the server path is the existing
-// "another spool of X", unchanged.
+// ── "What is this spool?" (docs/design/barcode-onboarding.md, phase 1) ─────
+// One search list for the one question, on direct user request (2026-10-30;
+// it was two: "Which stock item is this?" and a "This spool is..." dropdown
+// of every product, which set the same thing). In order:
+//   Stock List items -- the source of truth for what a spool IS: Reorder
+//     counts spools against a row by CfgStock::product (rollUp()), so this is
+//     the one choice guaranteed to count. Picking one sets #prod to its
+//     product, the existing "another spool of X" path, unchanged.
+//   Other products -- every product no Stock List item stands for (one-offs,
+//     donations, discontinued).
+//   Stock List items with no product, greyed: picking one would mean guessing
+//     a product from its name, the fragile match this replaces.
+//   New product... -- shows #newprod (catalog search, manual entry).
+// #prod, the <select> the form submits and the scan/tare/barcode checks
+// read, stays in the page, hidden; the list just sets it.
 //
-// Rows with no product, or one that no longer resolves, are listed but can't
-// be picked: choosing one would mean guessing a product from its name, which
-// is the fragile match this replaces. rollUp()'s name probe stays where it
-// is, for counting; it is not good enough to decide an identity.
-//
-// Rendered only when the store has products (the caller's `np`), since
-// otherwise there is no #prod to set and nothing could be linked anyway.
-static void stockPickerField(String& p) {
-    const size_t ns = cfgStockCount();
-    if (!ns) return;
+// Rendered only when the store has products (the caller's `np`).
+static void whatPickerField(String& p, uint32_t curId) {
     p += "<div class='card' id='stk'>"
-         "<label>Which stock item is this?</label>"
-         "<input type='search' id='stk-q' placeholder='Search the Stock List&hellip;' autocomplete='off'>"
-         "<p id='stk-ok' hidden style='margin:8px 0'>&check; <b></b> (Stock List) "
-           "&mdash; <a href='#' id='stk-clear' style='color:#9c9'>clear</a></p>"
-         "<div id='stk-list' style='max-height:260px;overflow:auto;margin-top:8px'>";
-    // Two passes, pickable rows first: unlinked rows are only there to say
-    // they need fixing, and listed in Stock List order they bury the rows
-    // that can actually be picked.
+         "<label>What is this spool?</label>"
+         "<input type='search' id='stk-q' placeholder='Search the Stock List and products&hellip;' "
+           "autocomplete='off'>"
+         "<p id='stk-ok' hidden style='margin:8px 0'>&check; <b></b> "
+           "&mdash; <a href='#' id='stk-clear' style='color:#9c9'>change</a></p>"
+         "<div id='stk-list' style='max-height:300px;overflow:auto;margin-top:8px'>";
+    const size_t ns = cfgStockCount();
+    std::vector<uint32_t> stocked;
     CfgStock s;
     ProductRecord q;
-    for (int pass = 0; pass < 2; pass++)
+    String off;   // unlinked rows, listed after the products
+    bool head = false;
     for (size_t i = 0; i < ns; i++) {
         if (!cfgStockAt(i, s)) continue;
-        const bool linked = s.product && storeGetProduct(s.product, q);
-        if (linked != (pass == 0)) continue;
         String name = String(s.vendor) + " " + s.material;
         if (s.color[0] && !strstr(s.material, s.color)) name += String(" ") + s.color;
         if (s.spool_g > 0) name += " " + String(s.spool_g, 0) + " g";
@@ -1727,72 +1727,93 @@ static void stockPickerField(String& p) {
         // since the two were named separately and either may be what's
         // printed on the box.
         String hay = name + " " + s.gtin;
-        if (linked) hay += String(" ") + q.vendor + " " + q.material;
+        const bool linked = s.product && storeGetProduct(s.product, q);
         if (linked) {
+            hay += String(" ") + q.vendor + " " + q.material;
+            stocked.push_back(q.id);
+            if (!head) { p += "<div class='stk-h'>Stock List</div>"; head = true; }
             p += "<div class='stk' tabindex='0' data-sid='" + String((unsigned)s.id)
                + "' data-prod='" + String((unsigned)q.id)
                + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(hay.c_str()) + "\">"
                + swatch(q.rgba) + esc(name.c_str()) + "</div>";
         } else {
-            p += "<div class='stk off' data-sid='" + String((unsigned)s.id)
-               + "' data-q=\"" + esc(hay.c_str()) + "\">"
-               + "<span class='sw sw0'></span>" + esc(name.c_str())
-               + " <span class='muted'>&mdash; not linked, "
-                 "<a href='/stock?edit=" + String((unsigned)s.id)
-               + "#stockform' style='color:#9c9'>fix on Stock List</a></span></div>";
+            off += "<div class='stk off' data-sid='" + String((unsigned)s.id)
+                 + "' data-q=\"" + esc(hay.c_str()) + "\">"
+                 + "<span class='sw sw0'></span>" + esc(name.c_str())
+                 + " <span class='muted'>&mdash; not linked, "
+                   "<a href='/stock?edit=" + String((unsigned)s.id)
+                 + "#stockform' style='color:#9c9'>fix on Stock List</a></span></div>";
         }
     }
+    head = false;
+    const size_t np = storeProductCount();
+    for (size_t i = 0; i < np; i++) {
+        if (!storeProductAt(i, q)) continue;
+        if (std::find(stocked.begin(), stocked.end(), q.id) != stocked.end()) continue;
+        String name = String(q.vendor) + " " + (q.material[0] ? q.material : "Unknown");
+        if (q.nom_g > 0) name += " " + String(q.nom_g, 0) + " g";
+        if (q.provisional) name += " (provisional)";
+        char gb[24] = "";
+        if (q.gtin) snprintf(gb, sizeof(gb), "%llu", (unsigned long long)q.gtin);
+        if (!head) { p += "<div class='stk-h'>Other products</div>"; head = true; }
+        p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id)
+           + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
+           + " " + gb + "\">" + swatch(q.rgba) + esc(name.c_str())
+           + (q.id == curId ? " <span class='muted'>(current)</span>" : "") + "</div>";
+    }
+    if (off.length()) p += "<div class='stk-h'>Not linked yet</div>" + off;
+    p += "<div class='stk new' tabindex='0' data-prod='0' data-name='New product' "
+         "data-q='new product'>&plus; New product&hellip; "
+         "<span class='muted'>search the catalog or enter it</span></div>";
     p += "</div></div>";
 }
 
-// Filters for the two lists above (#stk-list, #prod) and the pick itself.
-// #prod is filtered by removing options rather than hiding them: Safari
-// ignores display:none on <option>. The current selection and "a new product"
-// always stay, so filtering never changes what the form submits.
+// The list above (#stk-list) and the pick itself. A pick sets the hidden
+// #prod and fires its change (the barcode chip listens), then shows #newprod
+// only for "New product...". window.prodPick(id) / stkPick(stockId) /
+// stkOnly(stockIds) are for ONBOARD_SCAN_SCRIPT.
 static const char STOCK_PICK_SCRIPT[] =
 "<style>.stk{padding:6px 8px;border-radius:4px;cursor:pointer}"
 ".stk:hover,.stk:focus{background:#2a3a2a;outline:none}"
-".stk.off{cursor:default;color:#777}.stk.off:hover{background:none}</style>"
+".stk.off{cursor:default;color:#777}.stk.off:hover{background:none}"
+".stk-h{color:#9c9;font-size:13px;margin:8px 0 2px}.stk.new{color:#9c9}</style>"
 "<script>(function(){"
 "var d=document.getElementById('prod');if(!d)return;"
-// Select a product directly (a scan that matched a product with no Stock
-// List row); false when it is not in the list.
-"window.prodPick=function(id){filt('');if(q)q.value='';d.value=String(id);"
-  "if(d.value!=String(id)){d.value='0';return false}"
-  "d.dispatchEvent(new Event('change'));return true};"
-"var q=document.getElementById('prod-q'),all=[].slice.call(d.options),"
-"sq=document.getElementById('stk-q'),list=document.getElementById('stk-list'),"
-"ok=document.getElementById('stk-ok'),picked='';"
+"var sq=document.getElementById('stk-q'),list=document.getElementById('stk-list'),"
+"ok=document.getElementById('stk-ok'),np=document.getElementById('newprod');"
 "function m(t,f){t=t.toLowerCase();return f.toLowerCase().split(/\\s+/)"
   ".every(function(w){return t.indexOf(w)>=0})}"
-"function filt(f){var v=d.value;while(d.options.length)d.remove(0);"
-  "all.forEach(function(o){if(o.value=='0'||o.value==v||m(o.text,f))d.add(o)});d.value=v}"
-"if(q){q.addEventListener('input',function(){filt(q.value)});"
-  "q.addEventListener('keydown',function(ev){if(ev.key=='Enter')ev.preventDefault()})}"
-"d.addEventListener('change',function(){if(picked&&d.value!=picked){picked='';ok.hidden=true}});"
-"if(!list)return;"
-"sq.addEventListener('input',function(){[].forEach.call(list.children,function(e){"
-  "e.hidden=!m(e.dataset.q,sq.value)})});"
-// Enter in the search box picks the row when exactly one linked row is left,
-// and never submits the form.
+"function filt(f){var h=null,any=false;[].forEach.call(list.children,function(e){"
+  "if(e.classList.contains('stk-h')){if(h)h.hidden=!any;h=e;any=false;return}"
+  "e.hidden=!m(e.dataset.q,f);if(!e.hidden)any=true});if(h)h.hidden=!any}"
+// Show the choice, or (null) go back to choosing.
+"function show(e){if(!e){ok.hidden=true;list.hidden=false;sq.hidden=false;np.style.display='none';return}"
+  "ok.querySelector('b').textContent=e.dataset.name;ok.hidden=false;list.hidden=true;sq.hidden=true;"
+  "np.style.display=e.dataset.prod=='0'?'block':'none'}"
+"function pick(e){if(!e||e.dataset.prod===undefined)return;"
+  "d.value=e.dataset.prod;d.dispatchEvent(new Event('change'));sq.value='';filt('');show(e)}"
+"sq.addEventListener('input',function(){filt(sq.value)});"
+// Enter in the search box picks the item when exactly one is left, and
+// never submits the form.
 "sq.addEventListener('keydown',function(ev){if(ev.key!='Enter')return;ev.preventDefault();"
-  "var v=[].filter.call(list.children,function(e){return !e.hidden&&e.dataset.prod});"
+  "var v=[].filter.call(list.children,function(e){return !e.hidden&&e.dataset.prod&&e.dataset.prod!='0'});"
   "if(v.length==1)pick(v[0])});"
-"function pick(e){if(!e||!e.dataset.prod)return;"
-  "if(q)q.value='';filt('');"
-  "d.value=e.dataset.prod;d.dispatchEvent(new Event('change'));"
-  "picked=e.dataset.prod;ok.querySelector('b').textContent=e.dataset.name;ok.hidden=false}"
 "list.addEventListener('click',function(ev){if(ev.target.closest('a'))return;"
   "pick(ev.target.closest('.stk'))});"
 "list.addEventListener('keydown',function(ev){if(ev.key=='Enter'){ev.preventDefault();"
   "pick(ev.target.closest('.stk'))}});"
 "document.getElementById('stk-clear').addEventListener('click',function(ev){ev.preventDefault();"
-  "d.value='0';d.dispatchEvent(new Event('change'))});"
-// For ONBOARD_SCAN_SCRIPT: pick a row by stock id, or list only these rows.
-"function row(id){return list.querySelector(\".stk[data-sid='\"+id+\"']\")}"
-"window.stkPick=function(id){pick(row(id))};"
-"window.stkOnly=function(ids){sq.value='';[].forEach.call(list.children,function(e){"
-  "e.hidden=ids.indexOf(+e.dataset.sid)<0})};"
+  "d.value='0';d.dispatchEvent(new Event('change'));show(null);sq.focus()});"
+"function row(sel){return list.querySelector(sel)}"
+"window.prodPick=function(id){var e=row(\".stk[data-prod='\"+id+\"']:not([data-sid])\")"
+  "||row(\".stk[data-prod='\"+id+\"']\");if(!e)return false;pick(e);return true};"
+"window.stkPick=function(id){pick(row(\".stk[data-sid='\"+id+\"']\"))};"
+"window.stkOnly=function(ids){show(null);sq.value='';var h=null,any=false;"
+  "[].forEach.call(list.children,function(e){"
+  "if(e.classList.contains('stk-h')){if(h)h.hidden=!any;h=e;any=false;return}"
+  "e.hidden=ids.indexOf(+e.dataset.sid)<0;if(!e.hidden)any=true});if(h)h.hidden=!any};"
+// An already-onboarded spool opens on its current product.
+"if(d.value!='0'){var c=row(\".stk[data-prod='\"+d.value+\"']\");if(c)show(c)}"
 "})()</script>";
 
 // What a scan does on /onboard. With no spool on the scale there is no form
@@ -1951,8 +1972,8 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
            // colour, and used to be saved as this spool's identity unseen.
            "var md=document.getElementById('cat-manual-details');"
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&md&&!md.open){"
-             "alert('Say what this spool is first: pick a Stock List item or product, "
-             "search the catalog, or open \\u201cOr enter manually\\u201d.');return false;}"
+             "alert('Say what this spool is first: pick it under \\u201cWhat is this spool?\\u201d. "
+             "For a new product, search the catalog or open \\u201cOr enter manually\\u201d.');return false;}"
            "if((!d||d.value=='0')&&s&&s.value=='manual'&&f&&f.value==''){"
              "alert('Pick a spool profile (next to the tare box) \\u2014 it sets "
              "this spool\\'s full and empty weights.');f.focus();return false;}"
@@ -2000,21 +2021,12 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     // weight, because remaining is gross minus tare.
     const size_t np = storeProductCount();
     if (np) {
-        stockPickerField(p);
-        p += "<label>This spool is&hellip;</label>"
-             "<input type='search' id='prod-q' placeholder='Filter this list&hellip;' autocomplete='off'>"
-             "<select name='product' id='prod' "
-             "onchange=\"document.getElementById('newprod').style.display="
-             "this.value=='0'?'block':'none'\">";
-        // "A new product" listed FIRST and left as the browser's default
-        // selection, not appended after the MRU list -- on direct user
-        // correction. With it at the bottom, the unlabeled default was
-        // whichever product happened to sort first in the store (an
-        // unrelated leftover from an earlier onboarding), so onboarding a
-        // genuinely new reel without deliberately reselecting "a new
-        // product" first would silently attribute it to that stale product
-        // instead.
-        p += "<option value='0'>&mdash; A new product &mdash;</option>";
+        whatPickerField(p, haveCur ? curProd.id : 0);
+        // What the form submits, set by the list above (STOCK_PICK_SCRIPT).
+        // "0" is a new product, and also nothing chosen yet: the submit check
+        // refuses that unless the catalog or manual entry was used.
+        p += "<select name='product' id='prod' hidden>"
+             "<option value='0'>&mdash; A new product &mdash;</option>";
         ProductRecord q;
         for (size_t i = 0; i < np; i++) {
             if (!storeProductAt(i, q)) continue;
@@ -2025,19 +2037,11 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
                + String(q.empty_g, 1) + "' data-gtin='" + gb + "'"
                + (isCur ? " selected" : "") + ">"
                + esc(q.vendor) + " " + esc(q.material[0] ? q.material : "Unknown")
-               + (q.nom_g > 0 ? " &mdash; " + String(q.nom_g, 0) + " g" : String())
-               + (q.provisional ? " (provisional)" : "")
-               + (isCur ? " (current)" : "")
                + "</option>";
         }
         p += "</select>";
-        p += STOCK_PICK_SCRIPT;
-        // The default selection is "a new product" for a spool that needs
-        // onboarding, so the detail fields start visible to match -- they
-        // hide once an existing product is actually picked (the onchange
-        // handler above). An already-onboarded spool opens on its current
-        // product instead (see `already` above), so they start hidden.
-        p += haveCur ? "<div id='newprod' style='display:none'>" : "<div id='newprod'>";
+        // Hidden until "New product..." is picked.
+        p += "<div id='newprod' style='display:none'>";
     } else {
         // Nothing stocked yet, so there is no "another spool of X" to offer.
         p += "<input type='hidden' name='product' value='0'>";
@@ -2132,6 +2136,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
 
     p += "</details>";
     p += "</div>";   // #newprod — everything below applies to every path
+    if (np) p += STOCK_PICK_SCRIPT;   // needs #prod, the list and #newprod in place
 
     // ── Spool profile: the tare preset, OUTSIDE the manual-entry details ─────
     // A spool profile is a weight fact (tare + nominal full), not an identity
