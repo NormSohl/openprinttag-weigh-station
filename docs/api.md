@@ -22,9 +22,9 @@ work with no configuration.
 | `GET /api/status` | JSON | Everything a dashboard polls: state, spool on the scale, weight, WiFi, storage health |
 | `GET /api/spools` | JSON | Every spool: id, uuid, vendor, material, colour, remaining/used grams, product reference, cost, onboarding flag, retired flag |
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
-| `GET /api/stock` | JSON | Every Stock List item (what to keep + its reorder threshold), each with its 90-day popularity |
+| `GET /api/stock` | JSON | Every Stock List item (what to keep + its target, `min_spools`), each with its 90-day popularity |
 | `GET /stock.csv` | CSV | Every Stock List item, no popularity — plain line-by-line list for comparing against physical bins/tags |
-| `GET /reorder?format=csv` | CSV | Stock items below threshold |
+| `GET /reorder?format=csv` | CSV | Stock items below half their target, with `to_order_spools` |
 | `GET /api/usage` | JSON | Consumption per month per vendor+material, grams and dollars (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
@@ -91,7 +91,7 @@ before you save). It updates the definition, clears `provisional`, and emits one
   "items": [
     { "id": 7, "vendor": "eSun", "material": "PLA Beige", "color": "", "dia": 1.75,
       "spool_g": 1000.0, "min_spools": 1, "min_grams": 0.0,
-      "sku": "", "gtin": "", "pack_qty": 1,
+      "gtin": "", "pack_qty": 1,
       "has_data": true, "grams_in_window": 820.0, "available_days": 41.2,
       "grams_per_week": 139.3 }
   ]

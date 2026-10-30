@@ -72,6 +72,9 @@ fixed IP address (or `weighstation.local`).
 **Check A:**
 - [ ] The counts from step 1 match: spools, products, Stock List items,
       this month's Usage.
+- [ ] Reorder **will differ** from step 1: it now lists an item once it's
+      below half its target, by weight, and shows **To order**. Check a few
+      against the shelf.
 - [ ] Weigh the spool you noted. Remaining is the same, give or take a few grams.
 - [ ] The menu reads Inventory · Reorder · Restock · Usage · Administration.
 - [ ] Administration → Repair opens.
@@ -101,7 +104,7 @@ Only after B. Before it, unlinked items would drop off Reorder.
 
 **Check C:**
 - [ ] Counts from step 1 still match. Usage's total for this month is unchanged.
-- [ ] Reorder: same items as after B; any unlinked item is listed as unlinked.
+- [ ] Reorder: same items as after B (unlinked items are reported, not listed).
 - [ ] Weigh the noted spool once more. Remaining unchanged.
 - [ ] Restock → Or enter manually: Save is refused until **This is a new product** is ticked.
 - [ ] Download a backup into `~/WeighStation-backups/$(date +%F)-after-C`.
