@@ -35,5 +35,5 @@
 
 **Don't rewrite station tags with the Prusa app.** It retires the spool.
 
-**"Read Error" after a failed registration:** on **Erase Tag**, press **Start
-erase mode**, place the spool, press **Stop erase mode**, place it again.
+**"Read Error" after a failed registration:** on **Administration → Erase Tag**,
+press **Start erase mode**, place the spool, press **Stop erase mode**, place it again.

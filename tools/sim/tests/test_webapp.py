@@ -587,3 +587,23 @@ def test_a_held_scan_can_be_forgotten(sim, page):
     page.wait_for_timeout(300)
     assert page.locator("#scan-msg").is_hidden()
     assert page.input_value("#scan-gtin") == ""
+
+
+def test_menu_has_administration_and_erase_lives_under_it(sim, page):
+    page.goto(sim.url("/"))
+    nav = page.locator("nav a")
+    labels = nav.all_inner_texts()
+    assert "Administration" in labels
+    assert "Settings" not in labels and "Erase Tag" not in labels
+    page.goto(sim.url("/config"))
+    warn = page.locator("#admin-warning")
+    assert warn.inner_text() == ("These settings and tools are for use by trained staff only. "
+                                 "CHANGES MADE HERE CAN BREAK THINGS!")
+    assert warn.evaluate("e => getComputedStyle(e).fontWeight") in ("700", "bold")
+    assert warn.evaluate("e => getComputedStyle(e).color") == "rgb(255, 68, 68)"
+    assert page.locator("main h3", has_text="Products").count() == 1
+    page.click("#erase-link")
+    page.wait_for_url("**/erase")
+    # Erase Tag keeps Administration highlighted in the menu.
+    assert page.locator("nav a.active").inner_text() == "Administration"
+    assert page.js_errors == []

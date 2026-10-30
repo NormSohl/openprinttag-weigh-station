@@ -181,7 +181,7 @@ The idle screen shows **"Scale not calibrated"** until this is done.
 
 <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code">
 
-1. Open **Settings → Calibrate**.
+1. Open **Administration → Calibrate**.
 2. **Clear the scale**, then press **Zero (tare)**.
 3. **Place a known weight**, type its mass in grams, then press **Set calibration**.
 
@@ -201,9 +201,8 @@ do the same.)
 | **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
 | **Stock List** | What the lab keeps in stock, with a 90-day popularity score. |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Erase Tag** | Erase tags (see the Tag Erase quick reference). |
-| **Settings** | Picklists (vendors, materials, colours, spool profiles, stock items), WiFi, API key, timezone and clock format, station name, **Calibrate**, and **Repair** (link Stock List items, merge duplicate products). |
-| **Backup** | Download or restore the event log, and the separate Settings backup. |
+| **Administration** | For trained staff. Station name, WiFi, **Calibrate**, products, **Repair** (link Stock List items, merge duplicate products), **Erase Tag** (see the Tag Erase quick reference), timezone and clock format, API key, and the picklists (vendors, materials, colours, spool profiles, stock items). |
+| **Backup** | Download or restore the event log, and the separate config catalog. |
 
 **Editing a product** (name, colour, default tare, barcode…): on a spool's
 page, click its **Product #N** link, then click the product. Saving updates
@@ -255,7 +254,7 @@ in, and if a product has that barcode it's picked under **"Item is…"**. The
 page says if the barcode is already on another item.
 
 Items marked **not linked** have no product, so Reorder only guesses their
-count. Link them on **Settings → Repair**.
+count. Link them on **Administration → Repair**.
 
 **Adding an item.** Use the form below the list. Under **"Item is…"**:
 
@@ -269,7 +268,7 @@ catalog pick already lists one.
 
 ### Repairing the Stock List and products
 
-**Settings → Repair.** Nothing changes until you choose and press a button.
+**Administration → Repair.** Nothing changes until you choose and press a button.
 
 - **Stock List items with no product.** Reorder can only guess their count,
   and Onboard can't offer them. Each has a product picker; ★ marks likely
@@ -291,7 +290,7 @@ separate again.
 
 ### Changing the WiFi network
 
-- **Station reachable:** on **Settings**, press **Choose a WiFi network**.
+- **Station reachable:** on **Administration**, press **Choose a WiFi network**.
   The station restarts as `WeighStation-Setup`; set it up as in *First-time
   WiFi setup*.
 - **Station unreachable:** power-cycle it. If it can't join its network, the
@@ -303,7 +302,7 @@ separate again.
 
 - **Event log:** **Backup → Download**. This one file holds every spool and
   all usage history. **Restore** on the same page loads it back.
-- **Settings tables:** downloaded and restored separately on the same page.
+- **Config catalog** (the picklists and Stock List): downloaded and restored separately on the same page.
   Use this file to copy the picklists to another station.
 
 Download a backup before a firmware update. For **daily backups without
@@ -330,7 +329,7 @@ No setup needed.
 |---|---|
 | `/usage.csv` | Usage per month per vendor + material (spreadsheet) |
 | `/export` | The full event log (same as the Backup download) |
-| `/config/export` | The Settings tables |
+| `/config/export` | The config catalog (picklists and Stock List) |
 | `/api/status` | Station state, what's on the scale, WiFi, storage |
 | `/api/spools` | Every spool and its remaining filament (JSON) |
 | `/api/products` | Every product (JSON) |
@@ -355,7 +354,7 @@ curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
 Without an API key, **anything on the network can change the station**:
 onboard spools, edit tables, recalibrate, replace the log, reset WiFi.
 
-To require a key for changes, set an **API key** on **Settings** (*API
+To require a key for changes, set an **API key** on **Administration** (*API
 access*, at the bottom). Reading stays open. The web app asks for the key the
 first time you save something.
 
@@ -387,7 +386,7 @@ lab traffic could capture it. Keep the station off guest networks.
 
 The tag was left half-written.
 
-1. Open **Erase Tag**, press **Start erase mode**, and place the spool.
+1. Open **Administration → Erase Tag**, press **Start erase mode**, and place the spool.
 2. Press **Stop erase mode**.
 3. Place the spool again. It registers as new.
 
@@ -401,7 +400,7 @@ The tag was left half-written.
 
 ### Weights are zero or wildly wrong
 
-- Recalibrate: **Settings → Calibrate**.
+- Recalibrate: **Administration → Calibrate**.
 - Check the load cell wiring (especially E+ / E−).
 
 ### Display is blank

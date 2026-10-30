@@ -599,8 +599,9 @@ static String head(const char* title, const char* active = "") {
     navlink(h, "/reorder",   "Reorder",   active);
     navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
-    navlink(h, "/erase",     "Erase Tag", active);
-    navlink(h, "/config",    "Settings",  active);
+    // Erase Tag lives under Administration (on direct user request: fewer
+    // tabs, and erasing is a staff task), so /erase highlights /config.
+    navlink(h, "/config",    "Administration", active);
     navlink(h, "/backup",    "Backup",    active);
     h += "</nav></header><main>";
     return h;
@@ -2602,7 +2603,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
 // once they've decided. The device screen shows "ERASE MODE" in red on Idle
 // the instant this mode is toggled on, so it's obvious from across the room.
 static void handleEraseForm(AsyncWebServerRequest* req) {
-    String p = head("Erase Tag", "/erase");
+    String p = head("Erase Tag", "/config");   // under Administration
 
     if (!gEraseModeActive) {
         p += "<div class='card'><p>Erase mode is off.</p>"
@@ -2837,7 +2838,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         p += "<p class='muted'>" + String(unmatched) + " item(s) matched by name, not "
              "an exact product, so their on-hand count lumps every colour of that "
              "vendor's material together. See <a href='/config' style='color:#8f8'>"
-             "Settings</a> for what that means.</p>";
+             "Administration</a> for what that means.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
 }
@@ -3144,7 +3145,7 @@ static void productOptions_(String& p, uint32_t selected, const std::vector<uint
 }
 
 static void handleRepairPage(AsyncWebServerRequest* req) {
-    String p = head("Repair", "/config");   // under Settings, not a tab of its own
+    String p = head("Repair", "/config");   // under Administration, not a tab of its own
     p += "<h3>Repair</h3><p class='muted'>Fixes for the two ways the Stock List and the "
          "shelf stop agreeing: Stock List items with no product, and one filament "
          "recorded as two products. Nothing here changes anything until you choose and "
@@ -3650,7 +3651,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     p += STOCK_SCAN_SCRIPT;
 
     p += "<p class='muted'>Bulk edit, or export/import all five Config tables together, "
-         "on the <a href='/config' style='color:#8f8'>Settings</a> and "
+         "on the <a href='/config' style='color:#8f8'>Administration</a> and "
          "<a href='/backup' style='color:#8f8'>Backup</a> pages.</p>";
     p += FOOT;
     req->send(200, "text/html", p);
@@ -4024,7 +4025,11 @@ static void configTableForm(String& p, const char* label, const char* which) {
 }
 
 static void handleConfig(AsyncWebServerRequest* req) {
-    String p = head("Settings", "/config");
+    String p = head("Administration", "/config");
+    // On direct user request: this page and the tools it leads to are for
+    // trained staff, and the station is deliberately open (no API key).
+    p += "<p id='admin-warning' style='color:#f44;font-weight:bold'>These settings and tools "
+         "are for use by trained staff only. CHANGES MADE HERE CAN BREAK THINGS!</p>";
 
     // Station name: the Idle screen's green heading, and the only place on
     // the whole device that greets by the owning org's name -- everything
@@ -4032,8 +4037,8 @@ static void handleConfig(AsyncWebServerRequest* req) {
     // generic. Configurable because this firmware is meant to run at more
     // than one lab eventually.
     p += "<h3>Station name</h3><div class='card'>";
-    p += "<p class='muted'>Shown on the idle screen. Max " + String(STATION_NAME_MAX_LEN)
-       + " characters -- the title has no wrap.</p>";
+    p += "<p class='muted'>Shown on the idle screen. Up to " + String(STATION_NAME_MAX_LEN)
+       + " characters; the title doesn't wrap.</p>";
     p += "<input id='snin' type='text' maxlength='" + String(STATION_NAME_MAX_LEN)
        + "' value='" + esc(stationNameGet()) + "'>"
          "<div style='margin-top:8px'><button type='button' onclick='ssn()'>Save name</button></div>"
@@ -4107,6 +4112,9 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "that have no product, and find and merge products that are the same "
          "filament recorded twice.</p>"
          "<a href='/repair'><button type='button' class='sec' id='repair-link'>Repair&hellip;</button></a></div>";
+    p += "<h3>Erase tags</h3><div class='card'><p class='muted'>Erase the tags of "
+         "finished spools so the stickers can be reused. Erasing retires the spool.</p>"
+         "<a href='/erase'><button type='button' class='sec' id='erase-link'>Erase Tag&hellip;</button></a></div>";
 
     // Display-only: the log itself always stores UTC (storeNowIso(), gmtime_r)
     // so it stays unambiguous and string-sortable across a DST transition —
@@ -4167,18 +4175,6 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "the current key is required to change it.';});}"
          "</script>";
 
-    // Products dropped off the top nav — it's a diagnostic/admin list (is
-    // adoption converging, edit a product's definition), not a shelf-facing
-    // page like Inventory/Reorder/Onboard, and belongs with the other
-    // occasional-admin surfaces on this page. A spool's own detail page
-    // already links straight to ITS product's edit page for the common
-    // "fix this one spool's product" case; this is for browsing everything.
-    p += "<h3>Products</h3>"
-         "<p class='muted'>What we stock, and whether tag adoption is converging "
-         "on it correctly — two spools of the same filament should be one entry, "
-         "not two. Also the only place a product's definition can be edited.</p>"
-         "<a href='/products'><button type='button' class='sec'>Products</button></a>";
-
     // Raw-JSON catalog tables — the bulk-edit / power-user path. Everyday
     // add/edit/remove for Stock items lives on the friendlier /stock page;
     // these stay here for the tables that don't have one yet, and for
@@ -4186,13 +4182,13 @@ static void handleConfig(AsyncWebServerRequest* req) {
     // what most visits to this page are actually for.
     p += "<h3>Config catalog</h3>";
     p += "<p class='muted'>Edit the reference tables that drive onboarding and "
-         "reordering. Each is a JSON array; Save validates and persists it. "
-         "Stock items has a friendlier editor, Stock List, at "
-         "<a href='/stock' style='color:#8f8'>/stock</a>.</p>";
+         "reordering. Each is a JSON array; Save checks it before storing it. "
+         "Stock items are easier to edit on the "
+         "<a href='/stock' style='color:#8f8'>Stock List</a> page.</p>";
     configTableForm(p, "Vendors",        "vendors");
     configTableForm(p, "Materials",      "materials");
     configTableForm(p, "Spool profiles", "spool-profiles");
-    configTableForm(p, "Colors",         "colors");
+    configTableForm(p, "Colours",        "colors");
     configTableForm(p, "Stock items",    "stock-items");
 
     p += FOOT;
@@ -4313,7 +4309,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
              + String((unsigned)cfgProfileCount())  + " spool profiles, "
              + String((unsigned)cfgColorCount())    + " colors, "
              + String((unsigned)cfgStockCount())    + " stock items.</p>"
-             "<a href='/config'><button type='button'>Back to Settings</button></a></div>";
+             "<a href='/config'><button type='button'>Back to Administration</button></a></div>";
         p += FOOT;
         req->send(200, "text/html", p);
     } else {
