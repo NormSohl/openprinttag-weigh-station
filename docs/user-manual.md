@@ -84,10 +84,18 @@ every new spool.
 
 ### Onboarding it (web app)
 
-On the **Onboard** page, under **"This spool is…"**:
+On the **Onboard** page, say what the spool is. Try these in order:
 
-- **Same product as one on file?** Pick it from the list. Everything is filled
-  in for you.
+- **Scan the box's barcode.** It can be scanned before or after the spool is
+  placed (a scan with no spool on the scale is held for one minute). A
+  barcode the station knows picks the Stock List item for you. An unknown one
+  says so; pick the item, and the barcode is learned for next time.
+- **"Which stock item is this?"** Type to search the Stock List and click the
+  item. This is the best choice: Reorder counts the spool against that exact
+  item. Greyed items aren't linked to a product yet (an admin fixes that on
+  the Repair page).
+- **"This spool is…"** for a product on file that isn't a stock item. Type
+  in the box above it to filter the list.
 - **New product?** Use the **catalog search**. The vendor, material type and
   material fields show the last product picked. Same product? Leave them.
   Different? Click a field to see the full list, or type to narrow it.
@@ -104,7 +112,11 @@ Then:
    With manual entry, a spool profile is required (it also sets the full weight).
 2. **Cost** (optional): what the reel cost. Leave it blank if you don't know.
    Blank keeps a price already recorded; `0` clears it.
-3. Press **Save & write tag.**
+3. Check the line above **Save**. **"Barcode … will be recorded for …"** is
+   right only if the scan was this box; otherwise press **clear**.
+4. Press **Save & write tag.** The page asks first if the barcode doesn't
+   match the product (wrong pick, or a scan of a different box), or if the
+   product was picked by hand after the scan.
 
 **Next spool:** place it. The page moves to it.
 
@@ -190,12 +202,28 @@ do the same.)
 | **Stock List** | What the lab keeps in stock, with a 90-day popularity score. |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
 | **Erase Tag** | Erase tags (see the Tag Erase quick reference). |
-| **Settings** | Picklists (vendors, materials, colours, spool profiles, stock items), WiFi, API key, timezone and clock format, station name, and **Calibrate**. |
+| **Settings** | Picklists (vendors, materials, colours, spool profiles, stock items), WiFi, API key, timezone and clock format, station name, **Calibrate**, and **Repair** (link Stock List items, merge duplicate products). |
 | **Backup** | Download or restore the event log, and the separate Settings backup. |
 
-**Editing a product** (name, colour, default tare…): on a spool's page, click
-its **Product #N** link, then click the product. Saving updates every spool of
-that product; their tags update the next time each is placed.
+**Editing a product** (name, colour, default tare, barcode…): on a spool's
+page, click its **Product #N** link, then click the product. Saving updates
+every spool of that product; their tags update the next time each is placed.
+To fix a barcode, scan the box on that page or type it; blank removes it.
+Every product edit is kept in the event log, so an unwanted one can be traced.
+
+### The barcode scanner
+
+A corded USB scanner on the staff PC. It types like a keyboard, so it needs no
+setup beyond its defaults (it must press Enter after each scan). Set it to
+**read only when the trigger is pressed**, not automatically in its stand
+(the manual has a setup barcode), so boxes set down nearby aren't read.
+
+Scans are used on **Onboard**, the **Stock List** form and a **product's
+page**. On any page, a scan never types into a box or submits a form:
+anything that isn't a product barcode (a spool's QR code, a shipping label)
+is ignored with a note at the bottom of the page. Outside the browser (an
+email, say) the scanner types its digits like a keyboard; nothing reaches the
+station.
 
 ### Physical inventory audits
 
@@ -220,6 +248,13 @@ what it *has*. Items at the top of the list (least popular, or never in
 stock) are the candidates to drop. Material in inventory but not on the list
 is fine.
 
+**Scan to add.** With the form open, scan the box: the barcode field fills
+in, and if a product has that barcode it's picked under **"Item is…"**. The
+page says if the barcode is already on another item.
+
+Items marked **not linked** have no product, so Reorder only guesses their
+count. Link them on **Settings → Repair**.
+
 **Adding an item.** Use the form below the list. Under **"Item is…"**:
 
 - **Already on file?** Pick the product.
@@ -229,6 +264,28 @@ is fine.
 
 For the catalog and manual routes, enter a **Default spool tare** unless the
 catalog pick already lists one.
+
+### Repairing the Stock List and products
+
+**Settings → Repair.** Nothing changes until you choose and press a button.
+
+- **Stock List items with no product.** Reorder can only guess their count,
+  and Onboard can't offer them. Each has a product picker; ★ marks likely
+  matches, and a single likely match is chosen for you. Check the choices,
+  then press **Link the items chosen**.
+- **Stock List items for the same product.** Keep one (set its threshold)
+  and remove the others on the Stock List.
+- **Possible duplicate products:** one filament recorded twice (for example
+  "PLA+ Black" and "PLA Plus Black"). Press **Compare** to see both side by
+  side, choose which to keep, and press **Merge**. The other's spools and
+  Stock List items move to it, each spool keeping its own tare and cost. Its
+  barcode and catalog ids keep working and lead to the one kept. Any two
+  products can be compared from **Merge any two products**.
+- **Undo** a merge under **Merged products**. The product comes back; its
+  spools stay where the merge put them (move any back through Onboard).
+
+After a merge, don't install older firmware: it shows merged products as
+separate again.
 
 ### Changing the WiFi network
 

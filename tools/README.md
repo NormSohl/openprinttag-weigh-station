@@ -5,6 +5,11 @@
 hardware, plus browser tests. Prefer it to `preview_webapp.py` below, which
 copies markup by hand and drifts. See `sim/README.md`.
 
+**`quickrefs/` rebuilds the printable PDFs** in `docs/` (the four quickrefs,
+one page each, and the user manual) from their Markdown: `build-pdf.sh` on a
+Mac or Linux PC, `build-pdf.ps1` on Windows. Rebuild after editing any of
+them; the script warns when a quickref no longer fits on one page.
+
 Two kinds of thing here: UI previews (Python, below) and `qr/` — C harnesses
 that build and run the real QR encoder natively under AddressSanitizer, to
 check the capacity table `drawQr()` depends on. Unlike the previews, those
