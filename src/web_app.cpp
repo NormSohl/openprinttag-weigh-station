@@ -3097,11 +3097,15 @@ static void stockFormFields(String& p, const CfgStock& s) {
     // and a product created here is the one its first onboarded spool will
     // inherit from, so it has to start with a real value. Only a DEFAULT: each
     // spool keeps its own, and can differ when a different spool body arrives.
-    // Blank uses the catalog's container weight when it has one. Hidden with
-    // the rest of #stocknew when an existing product is picked, which already
-    // has its own.
-    p += "<label>Default spool tare (g) &mdash; blank uses the catalog's, if it has one</label>"
-         "<input type='number' step='0.1' name='empty_g' id='stock-tare' placeholder='empty spool weight'>";
+    // Starts at STOCK_DEFAULT_TARE_G, since nobody adding a stock item knows
+    // the spool's weight yet; a catalog pick with a container weight uses
+    // that instead unless the box was changed (the form's onsubmit). Hidden
+    // with the rest of #stocknew when an existing product is picked, which
+    // already has its own.
+    p += "<label>Default spool tare (g) &mdash; change it if you know better; a catalog "
+         "pick with its own empty weight uses that</label>"
+         "<input type='number' step='0.1' name='empty_g' id='stock-tare' value='"
+       + String(STOCK_DEFAULT_TARE_G, 0) + "' oninput=\"this.dataset.touched='1'\">";
     p += "</div>";   // #stocknew
     p += CATALOG_STYLE;
     p += CATALOG_SCRIPT;
@@ -3781,9 +3785,10 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     // Same tare check as stockTareError(), before the page is replaced by a 400.
     p += "<form method='POST' action='" + String(haveEdit ? "/api/stock/update" : "/api/stock/add") + "' "
          "onsubmit=\"var d=document.getElementById('sprod');if(d&&d.value!='0')return true;"
-           "var t=parseFloat(document.getElementById('stock-tare').value)||0,"
-               "s=document.getElementById('cat-source'),c=document.getElementById('cat-f-cat_empty_g');"
-           "if(t<=0&&s&&s.value=='catalog')t=parseFloat(c&&c.value)||0;"
+           "var b=document.getElementById('stock-tare'),t=parseFloat(b.value)||0,"
+               "s=document.getElementById('cat-source'),c=document.getElementById('cat-f-cat_empty_g'),"
+               "ct=s&&s.value=='catalog'?parseFloat(c&&c.value)||0:0;"
+           "if(ct>0&&(!b.dataset.touched||t<=0)){b.value=ct;t=ct}"
            "if(t<=0){alert('Enter a default spool tare (empty spool weight) for this product.');"
              "document.getElementById('stock-tare').focus();return false;}return true;\">";
     if (haveEdit) p += "<input type='hidden' name='id' id='stock-edit-id' value='"

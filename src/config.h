@@ -132,6 +132,11 @@
 // stays off the vendor's tag until someone confirms it on /product.
 #define DEFAULT_SPOOL_TARE_G 170.0f
 
+// What the Stock List's "Default spool tare" box starts at: whoever adds a
+// stock item rarely knows the empty spool's weight yet (2026-10-30, on direct
+// user decision).
+#define STOCK_DEFAULT_TARE_G 175.0f
+
 // ── Clock ─────────────────────────────────────────────────────────────────────
 // The ESP32-S3 has no battery-backed RTC, so the clock reads 1970 on every
 // power-up until SNTP answers. That matters more than it looks: the consumption

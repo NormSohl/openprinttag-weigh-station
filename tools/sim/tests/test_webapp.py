@@ -821,3 +821,20 @@ def test_every_table_sorts_and_inventory_keeps_each_spool_list_with_its_row(sim,
         "rs => rs.slice(1).map(r => parseFloat(r.cells[1].textContent.replace(/,/g,'')))")
     assert vals == sorted(vals)
     assert page.js_errors == []
+
+
+def test_stock_list_tare_starts_at_175_and_a_catalog_weight_replaces_it(sim, page):
+    page.goto(sim.url("/stock"))
+    assert page.input_value("#stock-tare") == "175"
+    submit = "document.querySelector('#stockform ~ .card form').onsubmit()"
+    pick = ("document.getElementById('cat-source').value='catalog';"
+            "document.getElementById('cat-f-cat_empty_g').value='212';")
+    page.evaluate(pick)
+    assert page.evaluate(submit) is True
+    assert page.input_value("#stock-tare") == "212"          # untouched: catalog wins
+
+    page.goto(sim.url("/stock"))
+    page.fill("#stock-tare", "180")                           # typed: the person wins
+    page.evaluate(pick)
+    page.evaluate(submit)
+    assert page.input_value("#stock-tare") == "180"
