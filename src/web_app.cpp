@@ -2849,9 +2849,12 @@ static void handleReorder(AsyncWebServerRequest* req) {
 
     String p = head("Reorder", "/reorder");
     p += "<h3>Reorder list</h3>";
-    p += "<p class='muted'>Standard-stock items at or below their threshold. "
-         "Download the CSV to place the order. Manage what's tracked (add, edit, "
-         "remove) on the <a href='/stock' style='color:#8f8'>Stock List</a> page.</p>";
+    p += "<p class='muted'>This page compares our "
+         "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
+         "available) with the <a href='/' style='color:#8f8'>Inventory</a> (what is "
+         "actually on the shelf). If our current inventory is below the amount of "
+         "stock we want to have on hand, it is listed here. You can download this "
+         "list to help with making an order.</p>";
     // No Color column: a linked row's Material already carries the colour
     // (the product's full display string, e.g. "PETG Magenta"), and that's
     // virtually every row now that Stock List's manual entry links to a
