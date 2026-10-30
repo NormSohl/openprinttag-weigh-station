@@ -592,9 +592,8 @@ def test_a_held_scan_can_be_forgotten(sim, page):
 def test_menu_has_administration_and_erase_lives_under_it(sim, page):
     page.goto(sim.url("/"))
     nav = page.locator("nav a")
-    labels = nav.all_inner_texts()
-    assert "Administration" in labels
-    assert "Settings" not in labels and "Erase Tag" not in labels
+    assert nav.all_inner_texts() == ["Inventory", "Reorder", "Restock", "Stock List",
+                                     "Usage", "Administration", "Backup"]
     page.goto(sim.url("/config"))
     warn = page.locator("#admin-warning")
     assert warn.inner_text() == ("These settings and tools are for use by trained staff only. "

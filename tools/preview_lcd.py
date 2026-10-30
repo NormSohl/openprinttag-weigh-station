@@ -130,7 +130,7 @@ states=[
  ("Present  (needs onboarding)", ("#ffe033","yellow"),
   [T("Registered!",YEL), R(2,"Spool #47  612 g",W),
    R(3,"NEEDS ONBOARDING",AMBER), R(4,"Scan QR to add details,",GREY),
-   R(5,"or visit the Onboard page:",GREY),
+   R(5,"or visit the Restock page:",GREY),
    R(6,"weighstation.local/onboard",CYAN), R(7,"or 192.168.1.42/onboard",GREY),
    QR("onboard")]),
  ("Present  (normal)", ("#2ecc40","green"),

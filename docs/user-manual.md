@@ -34,7 +34,7 @@ backups. There is no external server.
 | <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Ready.** Place a spool. |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing.** Don't lift yet. |
 | <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done.** Remove the spool. |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Restock page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag.** Don't lift yet. |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Scale not calibrated.** Tell an admin. |
 | Red **ERASE MODE** on the idle screen | **Erase mode is on.** Any tag placed is erased. |
@@ -80,11 +80,11 @@ every new spool.
    **Scan the QR code**, or open `weighstation.local/onboard`. Keep the spool
    on the scale.
 
-   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Onboard page, both addresses, and a QR code">
+   <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS ONBOARDING, Scan QR to add details or visit the Restock page, both addresses, and a QR code">
 
 ### Onboarding it (web app)
 
-On the **Onboard** page, say what the spool is. Try these in order:
+On the **Restock** page, say what the spool is. Try these in order:
 
 - **Scan the box's barcode.** It can be scanned before or after the spool is
   placed (a scan with no spool on the scale is held for one minute). A
@@ -122,7 +122,7 @@ Then:
 
 ### Changing a spool that's already onboarded
 
-Open **Onboard** with the spool on the scale. The page names the spool. Click
+Open **Restock** with the spool on the scale. The page names the spool. Click
 **Change this spool's details**:
 
 - **To add a price:** type it and save. Nothing else changes.
@@ -197,8 +197,8 @@ do the same.)
 | Page | What it's for |
 |---|---|
 | **Inventory** | Remaining filament by material. Click a row for its spools; click a spool for its weigh history (CSV), its cost, and its product. Audits start here. |
-| **Onboard** | Enter details for the spool on the scale. |
 | **Reorder** | Stock List items at or below their threshold. Download, copy or e-mail the list. |
+| **Restock** | Enter details for a new spool on the scale (onboarding). |
 | **Stock List** | What the lab keeps in stock, with a 90-day popularity score. |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
 | **Administration** | For trained staff. Station name, WiFi, **Calibrate**, products, **Repair** (link Stock List items, merge duplicate products), **Erase Tag** (see the Tag Erase quick reference), timezone and clock format, API key, and the picklists (vendors, materials, colours, spool profiles, stock items). |
@@ -219,7 +219,7 @@ setup beyond its defaults (it must press Enter after each scan). Set it to
 **read only when the trigger is pressed**, not automatically in its stand
 (the manual has a setup barcode), so boxes set down nearby aren't read.
 
-Scans are used on **Onboard**, the **Stock List** form and a **product's
+Scans are used on **Restock**, the **Stock List** form and a **product's
 page**. On any page, a scan never types into a box or submits a form:
 anything that isn't a product barcode (a spool's QR code, a shipping label)
 is ignored with a note at the bottom of the page. Outside the browser (an
@@ -271,7 +271,7 @@ catalog pick already lists one.
 **Administration → Repair.** Nothing changes until you choose and press a button.
 
 - **Stock List items with no product.** Reorder can only guess their count,
-  and Onboard can't offer them. Each has a product picker; ★ marks likely
+  and Restock can't offer them. Each has a product picker; ★ marks likely
   matches, and a single likely match is chosen for you. Check the choices,
   then press **Link the items chosen**.
 - **Stock List items for the same product.** Keep one (set its threshold)
@@ -283,7 +283,7 @@ catalog pick already lists one.
   barcode and catalog ids keep working and lead to the one kept. Any two
   products can be compared from **Merge any two products**.
 - **Undo** a merge under **Merged products**. The product comes back; its
-  spools stay where the merge put them (move any back through Onboard).
+  spools stay where the merge put them (move any back through Restock).
 
 After a merge, don't install older firmware: it shows merged products as
 separate again.

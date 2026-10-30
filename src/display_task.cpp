@@ -668,7 +668,7 @@ void displayTask(void* param) {
                     // not say which spool it would act on, and the whole point
                     // here is to reach the form for THIS one.
                     row(4, "Scan QR to add details,", TFT_SILVER);
-                    row(5, "or visit the Onboard page:", TFT_SILVER);
+                    row(5, "or visit the Restock page:", TFT_SILVER);
                     // mDNS only resolves on a real LAN. In SoftAP fallback the
                     // numeric address is the only one that works, so don't
                     // advertise a name that would just fail there.

@@ -595,8 +595,11 @@ static String head(const char* title, const char* active = "") {
     h += STYLE;
     h += "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
-    navlink(h, "/onboard",   "Onboard",   active);
+    // "Restock" (on direct user request): the tab for entering new spools,
+    // next to Reorder. The page and API keep their /onboard paths -- the
+    // station's QR code and bookmarks point there.
     navlink(h, "/reorder",   "Reorder",   active);
+    navlink(h, "/onboard",   "Restock",   active);
     navlink(h, "/stock",     "Stock List", active);
     navlink(h, "/usage",     "Usage",     active);
     // Erase Tag lives under Administration (on direct user request: fewer
@@ -647,7 +650,7 @@ static String head(const char* title, const char* active = "") {
     "if(val!==null){el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}))}" \
     "if(!valid(c))note('The scanner read something that is not a product barcode. It was ignored.');" \
     "else if(window.onScanCode)window.onScanCode(c);" \
-    "else note('Scanned '+c+'. Barcodes are used on Onboard, the Stock List and product pages; nothing changed here.');" \
+    "else note('Scanned '+c+'. Barcodes are used on Restock, the Stock List and product pages; nothing changed here.');" \
     "return}" \
   "buf=''},true);" \
 "window.simulateScan=function(c){if(window.onScanCode)window.onScanCode(String(c))};" \
@@ -1413,7 +1416,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
                  "This product's barcode is <b>" + String(b) + "</b>, but you scanned <b>"
                + esc(sc.c_str()) + "</b>. Either this spool was attached to the wrong "
                  "product, or the product's barcode is wrong. Nothing was changed: check "
-                 "the box, then fix the spool (Onboard) or <a href='/product?id="
+                 "the box, then fix the spool (Restock) or <a href='/product?id="
                + String((unsigned)sp.id) + "' style='color:#9c9'>the product</a>.</p>";
         }
     }
@@ -1824,7 +1827,7 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 "})()</script>";
 
 static void handleOnboardForm(AsyncWebServerRequest* req) {
-    String p = head("Onboard", "/onboard");
+    String p = head("Restock", "/onboard");
     p += "<p class='card' id='scan-msg' hidden></p>";
     int cur = currentSpool();
 
@@ -1875,7 +1878,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         p += "<div id='obwrap' style='display:none'>";
     }
 
-    p += "<h3>" + String(already ? "Change" : "Onboard") + " spool #"
+    p += "<h3>" + String(already ? "Change" : "Restock") + " spool #"
        + String((unsigned)cur) + "</h3>";
     // The submit check mirrors handleApiOnboard's: a manual-entry onboard (not
     // "another spool of X", not a catalog pick) takes its nominal weight and
@@ -3167,7 +3170,7 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
     if (num("unmerged") > 0)
         p += "<p class='card' id='repair-done'>Product #" + String(num("unmerged"))
            + " is a product again. Its spools stayed where the merge put them; move any "
-             "that belong back through Onboard.</p>";
+             "that belong back through Restock.</p>";
 
     const auto counts = spoolCounts_();
     const size_t ns = cfgStockCount();
@@ -3585,7 +3588,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     if (nUnlinked)
         p += "<p class='ob' id='unlinked-note'>" + String((unsigned)nUnlinked)
            + " item(s) marked <i>not linked</i> have no product: Reorder counts them "
-             "by name, which can miss, and Onboard can't offer them. Edit each one "
+             "by name, which can miss, and Restock can't offer them. Edit each one "
              "and pick its product under <i>Item is&hellip;</i>, or link them all at once "
              "on the <a href='/repair' style='color:#9c9'>Repair page</a>.</p>";
     p += "<table><tr><th>Vendor</th><th>Material</th><th>Popularity</th>"
@@ -4445,7 +4448,7 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
        + String(grandDollars, 2) + ") across "
        + String((unsigned)n) + " month/vendor/material buckets.</p>";
     p += "<p class='muted'>$ totals only reflect spools with a recorded cost "
-         "&mdash; entered on the Onboard form. Older spools, or ones where it "
+         "&mdash; entered on the Restock form. Older spools, or ones where it "
          "was left blank, contribute $0 here even though real grams were "
          "consumed.</p>";
 
