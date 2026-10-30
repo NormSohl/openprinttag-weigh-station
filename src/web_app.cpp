@@ -3634,6 +3634,9 @@ static const char STOCK_SCAN_SCRIPT[] =
 
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock List", "/config");   // under Administration
+    p += "<p id='stock-warning' style='color:#f44;font-weight:bold'>This table is managed "
+         "by the team lead. Don't make changes without discussing them with the team "
+         "first: all ordering logic depends on it.</p>";
 
     // By id, not position (see CfgStock::id) -- stable no matter what else
     // has added/removed a row anywhere since this Edit link was rendered.
