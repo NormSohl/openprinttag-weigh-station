@@ -753,9 +753,9 @@ static void handleRoot(AsyncWebServerRequest* req) {
         p += "<div class='card'><label style='margin-top:0'>Physical inventory</label>"
              "<p class='muted'><b>Auditing:</b> Before you make a new order, run an audit "
              "of the current inventory. Press <b>Start audit</b>, then "
-             "weigh and scan all inventory in one pass. Press <b>Finish audit</b> and "
-             "you will be asked to mark each spool that wasn't found as "
-             "<b>Close</b> (used up) or <b>Found</b>.</p>"
+             "weigh and scan all inventory in one pass. Press <b>Finish audit</b>, then "
+             "press <b>Close</b> (used up) or <b>Found</b> for each spool that "
+             "wasn't found.</p>"
              "<form method='POST' action='/api/audit/start'>"
              "<button type='submit'>Start audit</button></form></div>";
     } else if (auditPhase == AuditPhase::Scanning) {
