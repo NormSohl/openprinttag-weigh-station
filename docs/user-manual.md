@@ -289,7 +289,8 @@ you know better. A catalog pick that lists its own empty weight uses that.
 - **Stock List items with no product.** Reorder can't count them,
   and Restock can't offer them. Each has a product picker; ★ marks likely
   matches, and a single likely match is chosen for you. Check the choices,
-  then press **Link the items chosen**.
+  then press **Link the items chosen**: choosing alone saves nothing. Items
+  left on "leave" are skipped.
 - **Stock List items for the same product.** Keep one (set its target)
   and remove the others on the Stock List.
 - **Possible duplicate products:** one filament recorded twice (for example
