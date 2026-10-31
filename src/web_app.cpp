@@ -3391,10 +3391,11 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
     if (unl.empty()) {
         p += "<p class='muted'>None &mdash; every Stock List item is linked to a product.</p>";
     } else {
-        p += "<p class='muted'>Pick the product each one means. &#9733; marks likely matches "
-             "(same barcode, or same vendor and size with every word of the item in the "
-             "product's name); one likely match is chosen for you. Items left on "
-             "&ldquo;leave&rdquo; are not changed.</p>";
+        p += "<p class='muted'>For each item, choose the product it stands for. &#9733; marks "
+             "the station's best guesses (same barcode, or same vendor and size with the "
+             "item's words in the product's name). When there's only one guess, it's already "
+             "chosen; just check it. Items left on &ldquo;leave&rdquo; are skipped. Nothing "
+             "changes until you press <b>Link the items chosen</b>.</p>";
         p += "<form method='POST' action='/api/repair/link'><table>"
              "<tr><th>Stock List item</th><th>Product</th></tr>";
         // Rows with likely matches first: with a long unlinked list (the
