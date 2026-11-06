@@ -869,8 +869,8 @@ def test_reorder_lists_an_item_below_half_its_target_by_weight(sim, page):
     assert row.locator("td").nth(4).inner_text() == "1 spool"
 
     csv = sim.get("/reorder?format=csv").splitlines()
-    assert csv[0].endswith(",to_order_spools")
-    assert any(l.endswith(",1,0,1") for l in csv[1:])   # target 1, no grams target, order 1
+    assert ",to_order_spools," in csv[0]
+    assert any(l.endswith(",1,0,1,0") for l in csv[1:])   # target 1, no grams target, order 1, no subs
     assert page.js_errors == []
 
 
@@ -1254,3 +1254,220 @@ def test_scan_then_a_catalogue_item_without_a_barcode_teaches_it(sim, page):
     page.goto(sim.url("/onboard"))
     scan(page, code)
     page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
+
+
+# ── Substitutes (CfgStock::subs) ──────────────────────────────────────────────
+
+SUB_GTIN = gs1("400000000001")
+
+
+def _item_with_substitute_on_shelf(sim, page):
+    """A Stock List item (target 2) and a separate product with a spool of
+    1 kg, not linked yet. Returns (item, usual product, other product)."""
+    usual = _linked_stock_row(sim, page)
+    other = _catalog_onboard(sim, SUB_GTIN, vendor="Overture", material="PLA Black")
+    return sim.get_json("/api/stock")["items"][-1], usual, other
+
+
+def _save_subs(sim, item, usual, subs):
+    sim._post("/api/stock/update", id=item["id"], product=usual, min_spools=2,
+              pack_qty=1, subs=subs)
+
+
+def _status(fn, *a, **k):
+    import urllib.error
+    try:
+        fn(*a, **k)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+    return 200, ""
+
+
+def test_restock_links_a_substitute_and_only_offers_it_for_other_products(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    assert page.locator("#sub-box").is_hidden()
+
+    page.click(f"#stk-list .stk[data-prod='{usual}'][data-sid]")
+    assert page.locator("#sub-box").is_hidden()           # it IS the Stock List item
+    page.click("#stk-clear")
+
+    page.click(f"#stk-list .stk[data-prod='{other}']")
+    assert page.locator("#sub-box").is_visible()
+    page.fill("#sub-q", "no such thing")
+    assert page.locator(f"#sub-list .stk[data-to='{item['id']}']").is_hidden()
+    page.fill("#sub-q", "")
+    page.click(f"#sub-list .stk[data-to='{item['id']}']")
+    assert page.input_value("#stands-for") == str(item["id"])
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    assert "now counts toward" in page.inner_text("#sub-result")
+
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [other]
+    # The spool keeps its identity: it is still the other product.
+    assert sim.get_json("/api/spools")[-1]["product"] == other
+
+    # The next spool of it needs no second choice, and says where it counts.
+    sim.remove()
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.click(f"#stk-list .stk[data-prod='{other}']")
+    assert page.locator("#sub-box").is_hidden()
+    assert "Counts toward" in page.inner_text("#sub-note")
+    assert page.js_errors == []
+
+
+def test_a_one_off_links_nothing(sim, page):
+    item, _, other = _item_with_substitute_on_shelf(sim, page)
+    sim.blank(gross=1100)
+    page.goto(sim.url("/onboard"))
+    page.click(f"#stk-list .stk[data-prod='{other}']")
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    assert page.locator("#sub-result").count() == 0
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == []
+
+
+def test_reorder_counts_substitutes_and_shows_them_split(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    # Run the usual spool down, so only the substitute can keep it off the list.
+    spool = sim.get_json("/api/spools")[0]["spool"]
+    sim.place(spool, gross=300)
+    sim.remove()
+    page.goto(sim.url("/reorder"))
+    assert page.locator("tr", has_text=f"product #{usual}").count() == 1
+
+    _save_subs(sim, item, usual, str(other))
+    page.goto(sim.url("/reorder"))
+    assert page.locator("tr", has_text=f"product #{usual}").count() == 0
+    covered = page.inner_text("#reorder-covered")
+    assert "1000 g" in covered
+
+    # Run the substitute down too: back on the list, with the split shown.
+    sub_spool = next(s for s in sim.get_json("/api/spools") if s["product"] == other)["spool"]
+    sim.place(sub_spool, gross=520)
+    sim.remove()
+    page.goto(sim.url("/reorder"))
+    row = page.locator("tr", has_text=f"product #{usual}")
+    assert "300 g of it substitutes" in row.inner_text()
+    assert page.locator("#reorder-covered").count() == 0
+    csv = sim.get("/reorder?format=csv").strip().split("\n")
+    assert csv[0].endswith(",on_hand_substitute_g")
+    assert csv[1].endswith(",300")
+
+
+def test_a_substitute_counts_toward_popularity_not_usage(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    _save_subs(sim, item, usual, str(other))
+    sub_spool = next(s for s in sim.get_json("/api/spools") if s["product"] == other)["spool"]
+    sim.place(sub_spool, gross=1220)
+    sim.place(sub_spool, gross=1120)                     # 100 g of the substitute used
+    sim.remove()
+    assert sim.get_json("/api/stock")["items"][-1]["grams_in_window"] == 100
+
+    # Usage still names what was really used, under the real product.
+    usage = sim.get("/usage.csv")
+    assert "Overture" in usage
+
+
+def test_stock_form_adds_and_removes_substitutes(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    page.goto(sim.url(f"/stock?edit={item['id']}#stockform"))
+    page.fill("#subs-q", "Overture")
+    page.click(f"#subs-add .stk[data-prod='{other}']")
+    assert page.input_value("#subs") == str(other)
+    page.click("#stockform ~ .card button[type=submit]")
+    page.wait_for_url("**/stock")
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [other]
+    assert "+ substitutes" in page.inner_text("#stock-table")
+
+    page.goto(sim.url(f"/product?id={other}"))
+    assert "counts toward" in page.inner_text("#product-subof")
+
+    page.goto(sim.url(f"/stock?edit={item['id']}#stockform"))
+    assert page.locator(f"#subs-add .stk[data-prod='{other}']").is_hidden()
+    page.click("#subs-now a")
+    assert page.input_value("#subs") == ""
+    page.click("#stockform ~ .card button[type=submit]")
+    page.wait_for_url("**/stock")
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == []
+    assert page.js_errors == []
+
+
+def test_a_save_without_the_subs_field_keeps_them(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    _save_subs(sim, item, usual, str(other))
+    sim._post("/api/stock/update", id=item["id"], product=usual, min_spools=5, pack_qty=1)
+    row = sim.get_json("/api/stock")["items"][-1]
+    assert row["min_spools"] == 5 and row["substitutes"] == [other]
+
+
+def test_making_a_substitute_the_usual_product_drops_it_from_the_list(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    _save_subs(sim, item, usual, str(other))
+    sim._post("/api/stock/update", id=item["id"], product=other, min_spools=2, pack_qty=1,
+              subs=f"{other},{usual}")
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [usual]
+
+
+def test_a_substitute_belongs_to_one_item(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    third = _catalog_onboard(sim, gs1("400000000002"), vendor="Sunlu", material="PLA Black")
+    sim._post("/api/stock/add", product=third, min_spools=1, pack_qty=1)
+    second = sim.get_json("/api/stock")["items"][-1]
+
+    # Another item's usual product can't be a substitute: it counts there.
+    code, body = _status(_save_subs, sim, item, usual, str(third))
+    assert code == 400 and "already counts there" in body
+
+    _save_subs(sim, item, usual, str(other))
+    code, body = _status(_save_subs, sim, second, third, str(other))
+    assert code == 400 and "already counts toward" in body
+    code, body = _status(_save_subs, sim, item, usual, "99999")
+    assert code == 400 and "unknown product" in body
+
+    # And the Restock path refuses before saving anything about the spool.
+    sim.blank(gross=1100)
+    spool = sim.get_json("/_sim/state")["spool"]
+    code, body = _status(sim._post, "/api/onboard", id=spool, product=other,
+                         stands_for=second["id"])
+    assert code == 400 and "already counts toward" in body
+    assert next(s for s in sim.get_json("/api/spools") if s["spool"] == spool)["product"] != other
+    assert page.js_errors == []
+
+
+def test_stored_substitutes_are_checked_before_they_count(sim, page):
+    """A restored config or raw-JSON edit bypasses the forms."""
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    third = _catalog_onboard(sim, gs1("400000000002"), vendor="Sunlu", material="PLA Black")
+    sim._post("/api/stock/add", product=third, min_spools=1, pack_qty=1)
+
+    cfg = sim.get_json("/config/export")
+    rows = cfg["stock-items"]
+    first, second = rows[-2], rows[-1]
+    first["subs"] = [99999, usual, third, other]    # gone, itself, another's usual, real
+    second["subs"] = [other]                        # listed twice: the first row wins
+    sim.upload("/config/import", json.dumps(cfg).encode())
+    items = sim.get_json("/api/stock")["items"]
+    assert items[-2]["substitutes"] == [other]
+    assert items[-1]["substitutes"] == []
+
+
+def test_substitutes_survive_a_config_backup_and_restore(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    _save_subs(sim, item, usual, str(other))
+    cfg = sim.get_json("/config/export")
+    rows = cfg["stock-items"]
+    assert rows[-1]["subs"] == [other]
+    assert "subs" not in rows[0]                     # omitted when there are none
+    sim.upload("/config/import", json.dumps(cfg).encode())
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [other]
+
+
+def test_substitutes_follow_a_merge(sim, page):
+    item, usual, other = _item_with_substitute_on_shelf(sim, page)
+    third = _catalog_onboard(sim, gs1("400000000002"), vendor="Overture", material="PLA Blk")
+    _save_subs(sim, item, usual, str(other))
+    sim._post("/api/repair/merge", a=other, b=third, into=third)
+    assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [third]

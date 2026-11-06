@@ -114,6 +114,12 @@ On the **Restock** page, say what the spool is under **What is this spool?**:
   is a new product**: a typed entry always makes a new product, because the
   station never matches products by name. If the name you typed is already
   a product, the page offers it instead.
+- **A substitute for something we usually stock?** Once you've picked a
+  product that isn't a Stock List item (or + New product…), **Counts toward a
+  Stock List item?** appears. Pick the item it stands in for, and Reorder
+  counts every spool of this product toward that item from then on. Leave it
+  on **One-off** otherwise. The spool keeps its own name and tag; only the
+  count changes.
 
 Then:
 
@@ -269,6 +275,23 @@ once what's on the shelf drops below **half** its target, counted by weight,
 so a part-used spool counts as part of one. It shows **To order**: the target
 minus what's on hand, rounded up to whole spools. An item kept one at a time
 is listed when its spool is under half full.
+
+**Substitutes.** When we buy something similar because the usual choice is out
+of stock, link it so it counts toward that item: on **Restock** with
+**Counts toward a Stock List item?**, or on the item's **Edit** form under
+**Substitutes**, where you can also remove one. An item can have up to six,
+and a product can be a substitute for only one item. It can't be one if it's
+already on the Stock List in its own right.
+
+- Reorder includes substitutes in what's on hand and shows how much of it they
+  are. **To order** still means the usual product. An item that's off the list
+  only because substitutes cover it is named below the table, in case you want
+  to buy the usual product anyway.
+- Popularity counts them too, including their use from before you linked them,
+  and time with only a substitute on the shelf isn't a stockout.
+- Inventory, Usage and the spools' tags still show what's really on each spool.
+- Don't **merge** a substitute into the usual product: that renames its spools
+  and rewrites their tags.
 
 **Scan to add.** With the form open, scan the box: the barcode field fills
 in, and if a product has that barcode it's picked under **"Item is…"**. An

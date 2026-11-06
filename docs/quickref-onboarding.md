@@ -20,6 +20,8 @@
    - **New product?** Pick **+ New product…**, then the catalog search, or
      **Or enter manually** and tick
      **This is a new product**.
+   - **Standing in for a Stock List item?** After picking a product that isn't
+     on the list, choose it under **Counts toward a Stock List item?**
 6. **Set the tare** (required): pick a **spool profile**, type it, or put an
    empty spool of the same type on the scale and press **Capture tare**.
 7. **Cost** (optional): type what the reel cost. Blank keeps the current

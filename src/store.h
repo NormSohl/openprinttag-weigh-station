@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "config.h"
 
 // Local-storage core (redesign Phase 1). Append-only NDJSON event log on
 // LittleFS + derived, rebuildable indices, plus an NVS spool-ID counter.
@@ -501,6 +502,13 @@ struct PopularityQuery {
     uint32_t product  = 0;
     char vendor[64]   = {};
     char material[64] = {};
+    // The row's substitute products (0 = empty). Their spools count as this
+    // row's own: demand for the item didn't drop because the shelf held a
+    // stand-in, and a stretch with only a stand-in on hand isn't a stockout.
+    // Applied to the whole window, so a product made a substitute today brings
+    // its earlier use with it. The caller must pass each product for one row
+    // only, and never a row's own product (stockSubs() in web_app.cpp).
+    uint32_t subs[STOCK_MAX_SUBS] = {};
 };
 struct PopularityResult {
     float grams          = 0;      // consumed within the window

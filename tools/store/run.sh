@@ -78,6 +78,10 @@ echo "    folds away in-window history does to the numbers -- see README) ---"
 STORE_TEST_ROOT="$OUT/fs6" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --popularity
 
 echo
+echo "--- substitutes: their grams count, and a stand-in on the shelf is no stockout ---"
+STORE_TEST_ROOT="$OUT/fs6s" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --substitutes | tail -1
+
+echo
 echo "--- cost rollup: \$/gram from the record, unpriced consumption stays \$0, ---"
 echo "    a later price never backdates earlier grams, dollars survive the fold ---"
 STORE_TEST_ROOT="$OUT/fs7" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --cost | tail -9

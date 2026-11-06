@@ -24,7 +24,7 @@ work with no configuration.
 | `GET /api/products` | JSON | Every product: what we stock, as opposed to the spools on the shelf |
 | `GET /api/stock` | JSON | Every Stock List item (what to keep + its target, `min_spools`), each with its 90-day popularity |
 | `GET /stock.csv` | CSV | Every Stock List item, no popularity — plain line-by-line list for comparing against physical bins/tags |
-| `GET /reorder?format=csv` | CSV | Stock items below half their target, with `to_order_spools` |
+| `GET /reorder?format=csv` | CSV | Stock items below half their target, with `to_order_spools` and `on_hand_substitute_g` (how much of `on_hand_g` is substitutes) |
 | `GET /api/usage` | JSON | Consumption per month per vendor+material, grams and dollars (all-time, coarse — see `/api/stock` for the finer-grained, windowed number) |
 | `GET /usage.csv` | CSV | Same data for spreadsheets and analysis pipelines |
 | `GET /api/scale` | JSON | Live load-cell reading + calibration flag |
@@ -91,7 +91,7 @@ before you save). It updates the definition, clears `provisional`, and emits one
   "items": [
     { "id": 7, "vendor": "eSun", "material": "PLA Beige", "color": "", "dia": 1.75,
       "spool_g": 1000.0, "min_spools": 1, "min_grams": 0.0,
-      "gtin": "", "pack_qty": 1,
+      "gtin": "", "pack_qty": 1, "substitutes": [],
       "has_data": true, "grams_in_window": 820.0, "available_days": 41.2,
       "grams_per_week": 139.3 }
   ]
@@ -120,6 +120,11 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
 - **`has_data: false`** means the item was never in stock at all during the
   window — the strongest possible signal it's a candidate to remove from the
   Stock List, not an edge case to hide. `grams_per_week` is `null` in that case.
+- **`substitutes`** lists the product ids that count toward this item besides
+  its own: on Reorder, and in these popularity figures, including use from
+  before they were linked. Only ids that really count are listed (see
+  `stockSubs()`), so it can be shorter than the stored `subs` in
+  `/config/export`. `/api/usage` is unaffected: it still reports each product.
 - **`data_since`** is the earliest event timestamp actually found in the log.
   If it's less than `window_days` ago, coverage is shorter than the window
   implies — shown rather than silently assumed.
@@ -202,14 +207,14 @@ These change state and are guarded once an API key is set.
 
 | Endpoint | Effect |
 |---|---|
-| `POST /api/onboard` | Fill in the spool currently on the scale (or point it at an existing product) |
+| `POST /api/onboard` | Fill in the spool currently on the scale (or point it at an existing product). Optional `stands_for`: a Stock List item id its product should count toward as a substitute |
 | `POST /api/product` | Edit a product **and propagate the edit to every spool of it** |
 | `POST /api/tare` | Tare for onboarding |
 | `POST /api/cal-zero` | Zero the scale |
 | `POST /api/cal` | Calibrate against a known weight |
 | `POST /api/config` | Replace a config catalog table |
 | `POST /api/stock/add` | Add a Stock List item |
-| `POST /api/stock/update` | Edit a Stock List item (form field `id`, from `/api/stock`) |
+| `POST /api/stock/update` | Edit a Stock List item (form field `id`, from `/api/stock`). Optional `subs`: comma-separated product ids replacing its substitutes; left out, they stay as they are |
 | `POST /api/stock/delete` | Remove a Stock List item (form field `id`) |
 | `POST /api/audit/start` | Begin a physical-inventory audit (Idle → Scanning) |
 | `POST /api/audit/finish` | Move to reviewing what wasn't found (Scanning → Resolving) |

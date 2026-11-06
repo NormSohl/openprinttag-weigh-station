@@ -4,6 +4,7 @@
 #pragma once
 #include <Arduino.h>
 #include <stdint.h>
+#include "config.h"
 
 // Config catalog (redesign Phase 3). Web-editable reference tables on
 // LittleFS that make onboarding pick-not-type and drive reordering.
@@ -70,6 +71,14 @@ struct CfgStock {       // a standard-stock SKU to keep + reorder threshold
     // rename via /product?id=N (the FK still resolves; a stale re-typed name
     // would not).
     uint32_t product;
+    // Products that stand in for this item when the usual one can't be had
+    // (0 = empty slot). Their spools count toward this row on Reorder and in
+    // its popularity, but keep their own identity everywhere else: tags,
+    // Inventory and Usage still name what is really on the spool. Like
+    // `product`, these are ids into the event log, so they may not resolve
+    // after a config restore: read them through stockSubs() (web_app.cpp),
+    // which checks each one and drops any that would count twice.
+    uint32_t subs[STOCK_MAX_SUBS];
 };
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -111,6 +120,9 @@ bool cfgStockAdd(CfgStock s);   // by value: assigns s.id itself, ignoring any p
 // field wins, so a row can never be re-pointed at another one's identity).
 bool cfgStockUpdate(uint32_t id, const CfgStock& s);
 bool cfgStockRemove(uint32_t id);
+// Add `product` to a row's substitutes. True if it is there afterwards
+// (already listed counts); false if the row is gone or its slots are full.
+bool cfgStockAddSub(uint32_t id, uint32_t product);
 
 // Replace a whole table from a JSON array string (web CRUD posts this).
 // `which` ∈ vendors|materials|spool-profiles|colors|stock-items.

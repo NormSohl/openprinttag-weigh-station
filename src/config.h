@@ -123,6 +123,11 @@
 // one: an item kept one at a time is listed at half a spool, not when empty.
 #define REORDER_FRACTION 0.5f
 
+// How many substitute products one Stock List item can have (CfgStock::subs).
+// A fixed array, not a vector: CfgStock is copied by value throughout, and this
+// is a handful of stand-ins for one item, not a catalog.
+#define STOCK_MAX_SUBS 6
+
 // The empty-spool weight to assume when nothing better is known: a spool
 // adopted from a tag that carries no empty_container_weight and matches no
 // product that has one, and what the Stock List's "Default spool tare" box

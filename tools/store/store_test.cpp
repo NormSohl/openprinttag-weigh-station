@@ -25,6 +25,8 @@
 //                                       every other suite's dollars are $0.00).
 //   store_test --popularity           — the Stock List's stockout-corrected
 //                                       popularity math (storeMaterialPopularity).
+//   store_test --substitutes          — a substitute's spools count as the
+//                                       Stock List row's own in popularity.
 //   store_test --tare                 — a tare change moves remaining weight at
 //                                       once and is never booked as consumption.
 //   store_test --usage-labels         — usage keyed by product: a renamed or
@@ -401,6 +403,66 @@ static void auditTest() {
 // Real definition lives in shim.cpp (mirroring main.cpp on the device); the
 // compaction floor gates on it, same as periodOf_() gates on it for Usage.
 extern volatile bool gClockSet;
+
+// A substitute's spools count as the row's own in popularity. The point of it:
+// a stretch with only a substitute on the shelf is not a stockout.
+static void substitutesTest() {
+    gClockSet = true;
+    run("WIPE ALL");
+    const time_t now = time(nullptr);
+
+    ProductRecord usual, sub;
+    strlcpy(usual.vendor, "eSUN", sizeof(usual.vendor));
+    strlcpy(usual.material, "PLA Black", sizeof(usual.material));
+    usual.nom_g = 1000; usual.empty_g = 200;
+    strlcpy(sub.vendor, "Overture", sizeof(sub.vendor));
+    strlcpy(sub.material, "PLA Jet", sizeof(sub.material));
+    sub.nom_g = 1000; sub.empty_g = 200;
+    CHECK(storeUpsertProduct(usual) && storeUpsertProduct(sub), "upsert failed");
+
+    auto ev = [](StoreEv kind, const char* uuid, uint32_t spool, const std::string& ts,
+                 const ProductRecord& p, float remaining) {
+        StoreEvent e;
+        e.ev = kind;
+        strlcpy(e.uuid, uuid, sizeof(e.uuid));
+        e.spool = spool;
+        strlcpy(e.ts, ts.c_str(), sizeof(e.ts));
+        strlcpy(e.vendor, p.vendor, sizeof(e.vendor));
+        strlcpy(e.material, p.material, sizeof(e.material));
+        e.product = p.id;
+        e.remaining_g = remaining;
+        e.gross_g = remaining;
+        storeAppendEvent(e);
+    };
+    const char* U1 = "eeee0000000000000000000000000001";
+    const char* S1 = "eeee0000000000000000000000000002";
+    uint32_t a = storeNextSpoolId();
+    ev(StoreEv::Onboard, U1, a, agoTs(now, 60), usual, 0);
+    ev(StoreEv::Weigh,   U1, a, agoTs(now, 60), usual, 1000);
+    ev(StoreEv::Weigh,   U1, a, agoTs(now, 25), usual, 0);     // usual runs out
+    uint32_t b = storeNextSpoolId();
+    ev(StoreEv::Onboard, S1, b, agoTs(now, 28), sub, 0);
+    ev(StoreEv::Weigh,   S1, b, agoTs(now, 28), sub, 900);     // stand-in arrives first
+    ev(StoreEv::Weigh,   S1, b, agoTs(now, 10), sub, 400);     // 500 g of it used
+
+    PopularityQuery q[1] = {};
+    q[0].product = usual.id;
+    PopularityResult r[1];
+    storeMaterialPopularity(q, r, 1, 30);
+    CHECK(fabsf(r[0].grams - 1000.0f) < 1.0f, "without the link: 1000 g, got %.1f", r[0].grams);
+    CHECK(fabsf(r[0].available_days - 5.0f) < 0.05f,
+          "without the link: out of stock for 25 of 30 days, got %.2f available",
+          r[0].available_days);
+
+    q[0].subs[0] = sub.id;
+    storeMaterialPopularity(q, r, 1, 30);
+    CHECK(fabsf(r[0].grams - 1500.0f) < 1.0f,
+          "with the link the substitute's 500 g counts, got %.1f", r[0].grams);
+    CHECK(fabsf(r[0].available_days - 30.0f) < 0.05f,
+          "with the link it was never out of stock, got %.2f available", r[0].available_days);
+
+    printf("\n%s\n", fails ? "FAIL" : "PASS: substitutes (grams count, no false stockout)");
+}
 
 static void popularityTest() {
     gClockSet = true;   // exercise the floor -- see storeCompact()'s own comment
@@ -936,6 +998,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--audit"))         { auditTest();      return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--cost"))          { costTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--popularity"))    { popularityTest(); return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--substitutes"))   { substitutesTest(); return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--merge"))         { mergeTest();      return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--usage-labels"))  { usageLabelsTest(); return fails != 0; }

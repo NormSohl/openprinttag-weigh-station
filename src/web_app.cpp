@@ -746,6 +746,111 @@ static String head(const char* title, const char* active = "") {
     return h;
 }
 
+// ── Substitutes (CfgStock::subs) ─────────────────────────────────────────────
+// A product that stands in for a Stock List item when the usual one can't be
+// had. It counts toward the item on Reorder and in popularity; nothing else
+// changes, so tags, Inventory and Usage still name what is really on the
+// spool. (Merging the two would get the count right by making the records
+// wrong: it rewrites the substitute's spools, and their tags, as the usual
+// product.) A substitute belongs to one item, or a spool would count twice.
+
+static String stockItemName(const CfgStock& s) {
+    String n = String(s.vendor) + " " + s.material;
+    if (s.color[0] && !strstr(s.material, s.color)) n += String(" ") + s.color;
+    return n;
+}
+
+// The substitutes that actually count toward `s`, as live product ids. The
+// stored list can't be trusted as it stands: the ids point into the event log,
+// so a restored config may hold ones that no longer resolve (or belong to a
+// merged product), and a raw-JSON edit can bypass every form's checks. An item
+// that isn't linked counts nothing, substitutes included. A product that is
+// some row's usual product counts there and nowhere else, and one listed on
+// two rows counts on the first.
+static std::vector<uint32_t> stockSubs(const CfgStock& s) {
+    std::vector<uint32_t> out;
+    bool any = false;
+    for (uint32_t sub : s.subs) any = any || sub;
+    ProductRecord q;
+    if (!any || !s.product || !storeGetProduct(s.product, q)) return out;
+    const uint32_t own = q.id;
+    for (uint32_t sub : s.subs) {
+        if (!sub || !storeGetProduct(sub, q)) continue;
+        const uint32_t pid = q.id;
+        if (pid == own || std::find(out.begin(), out.end(), pid) != out.end()) continue;
+        bool taken = false, before = true;
+        CfgStock r;
+        ProductRecord p;
+        for (size_t i = 0, n = cfgStockCount(); i < n && !taken; i++) {
+            if (!cfgStockAt(i, r)) continue;
+            if (r.id == s.id) { before = false; continue; }
+            taken = r.product && storeGetProduct(r.product, p) && p.id == pid;
+            if (before)
+                for (uint32_t o : r.subs)
+                    taken = taken || (o && storeGetProduct(o, p) && p.id == pid);
+        }
+        if (!taken) out.push_back(pid);
+    }
+    return out;
+}
+
+// Why `pid` can't be a substitute for row `rowId`, or empty if it can. `own`
+// false skips the row's own usual product, for the Stock List form, where a
+// save may swap the two.
+static String subConflict(uint32_t pid, uint32_t rowId, bool own = true) {
+    CfgStock r;
+    ProductRecord q;
+    for (size_t i = 0, n = cfgStockCount(); i < n; i++) {
+        if (!cfgStockAt(i, r)) continue;
+        if (r.product && storeGetProduct(r.product, q) && q.id == pid) {
+            if (r.id != rowId) return "that product is on the Stock List as " + stockItemName(r)
+                                    + ", so it already counts there";
+            if (own) return "that product is this item's usual product";
+        }
+        if (r.id == rowId) continue;
+        for (uint32_t sub : r.subs)
+            if (sub && storeGetProduct(sub, q) && q.id == pid)
+                return "that product already counts toward " + stockItemName(r)
+                     + ": remove it there first";
+    }
+    return String();
+}
+
+// Why a spool's product can't start counting toward row `rowId`, or empty.
+// `pid` 0: a new product, which can't conflict with anything yet.
+static String standsForError(uint32_t rowId, uint32_t pid) {
+    CfgStock r;
+    ProductRecord q;
+    if (!cfgStockFindById(rowId, r))
+        return "no such stock item (it may have been removed since this page loaded)";
+    if (!r.product || !storeGetProduct(r.product, q))
+        return "that Stock List item isn't linked to a product, so nothing can count toward it";
+    size_t used = 0;
+    for (uint32_t sub : r.subs) {
+        if (!sub) continue;
+        used++;
+        if (pid && storeGetProduct(sub, q) && q.id == pid) return String();   // already there
+    }
+    if (pid) {
+        const String why = subConflict(pid, rowId);
+        if (why.length()) return why;
+    }
+    if (used >= STOCK_MAX_SUBS)
+        return "that Stock List item already has " + String(STOCK_MAX_SUBS)
+             + " substitutes: remove one on its Stock List page first";
+    return String();
+}
+
+// Finds the row `pid` counts toward as a substitute.
+static bool stockRowForSub(uint32_t pid, CfgStock& out) {
+    for (size_t i = 0, n = cfgStockCount(); i < n; i++) {
+        if (!cfgStockAt(i, out)) continue;
+        const std::vector<uint32_t> subs = stockSubs(out);
+        if (std::find(subs.begin(), subs.end(), pid) != subs.end()) return true;
+    }
+    return false;
+}
+
 // ── Barcode scans (docs/design/barcode-onboarding.md, phase 2) ───────────────
 // A keyboard-wedge scanner is a keyboard: it types what it read and Enter,
 // a few ms apart. This document-level capture listener, on EVERY page (it is
@@ -1323,6 +1428,13 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
         p += "<p class='ob'>Provisional &mdash; this was read off a tag and nobody "
              "has confirmed it. Provisional products are never written back to "
              "tags. Saving this form confirms it.</p>";
+    {
+        CfgStock subOf;
+        if (stockRowForSub(id, subOf))
+            p += "<p id='product-subof'>Substitute: counts toward <a href='/stock?edit="
+               + String((unsigned)subOf.id) + "#stockform' style='color:#9c9'>"
+               + esc(stockItemName(subOf).c_str()) + "</a> on Reorder.</p>";
+    }
     String ident;
     if (q.pkg_uuid[0])   ident += kv("package_uuid",  esc(q.pkg_uuid));
     if (q.mat_uuid[0])   ident += kv("material_uuid", esc(q.mat_uuid));
@@ -1596,6 +1708,19 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
                + String((unsigned)sp.id) + "' style='color:#9c9'>the product</a>.</p>";
         }
     }
+    // After a Restock that chose "Counts toward" (handleApiOnboard).
+    if (req->hasParam("sub")) {
+        CfgStock sr;
+        if (cfgStockFindById((uint32_t)req->getParam("sub")->value().toInt(), sr))
+            p += "<p class='card' id='sub-result'>This product now counts toward <b>"
+               + esc(stockItemName(sr).c_str()) + "</b> on Reorder, for this spool and "
+                 "every other spool of it.</p>";
+    } else if (req->hasParam("subfail")) {
+        p += "<p class='card' id='sub-result' style='border-color:#a83'>The spool was saved, "
+             "but its product doesn't count toward the Stock List item you chose: it is "
+             "already on the Stock List or counts toward another item, or that item is "
+             "full. Check <a href='/stock' style='color:#9c9'>the Stock List</a>.</p>";
+    }
     p += "<div class='card'>";
     p += "<div class='big'>" + swatch(r.rgba)
        + "#" + String((unsigned)r.spool) + " "
@@ -1866,6 +1991,12 @@ static void colorPickerField(String& p, const char* defColor) {
 // #prod, the <select> the form submits and the scan/tare/barcode checks
 // read, stays in the page, hidden; the list just sets it.
 //
+// A pick that isn't a Stock List item also shows "Counts toward a Stock List
+// item?" (#sub-box), which sets the hidden stands_for the form submits. This
+// is where a substitute gets linked, since it's when someone is holding one.
+// Its list is built in the browser from the rows above, so the page doesn't
+// carry the Stock List twice.
+//
 // Rendered only when the store has products (the caller's `np`).
 static void whatPickerField(String& p, uint32_t curId) {
     p += "<div class='card' id='stk'>"
@@ -1880,12 +2011,15 @@ static void whatPickerField(String& p, uint32_t curId) {
     CfgStock s;
     ProductRecord q;
     String off;   // unlinked rows, listed after the products
+    std::vector<std::pair<uint32_t, String>> subOf;   // product -> the item it counts toward
     bool head = false;
     for (size_t i = 0; i < ns; i++) {
         if (!cfgStockAt(i, s)) continue;
-        String name = String(s.vendor) + " " + s.material;
-        if (s.color[0] && !strstr(s.material, s.color)) name += String(" ") + s.color;
+        String name = stockItemName(s);
         if (s.spool_g > 0) name += " " + String(s.spool_g, 0) + " g";
+        for (uint32_t sub : stockSubs(s)) subOf.push_back({sub, name});
+        size_t used = 0;
+        for (uint32_t sub : s.subs) used += sub ? 1 : 0;
         // Searchable text: the row's own words plus the linked product's,
         // since the two were named separately and either may be what's
         // printed on the box.
@@ -1896,8 +2030,9 @@ static void whatPickerField(String& p, uint32_t curId) {
             stocked.push_back(q.id);
             if (!head) { p += "<div class='stk-h'>Stock List</div>"; head = true; }
             p += "<div class='stk' tabindex='0' data-sid='" + String((unsigned)s.id)
-               + "' data-prod='" + String((unsigned)q.id)
-               + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(hay.c_str()) + "\">"
+               + "' data-prod='" + String((unsigned)q.id) + "'"
+               + (used >= STOCK_MAX_SUBS ? " data-full='1'" : "")
+               + " data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(hay.c_str()) + "\">"
                + swatch(q.rgba) + esc(name.c_str()) + "</div>";
         } else {
             off += "<div class='stk off' data-sid='" + String((unsigned)s.id)
@@ -1918,17 +2053,35 @@ static void whatPickerField(String& p, uint32_t curId) {
         if (q.provisional) name += " (provisional)";
         char gb[24] = "";
         if (q.gtin) snprintf(gb, sizeof(gb), "%llu", (unsigned long long)q.gtin);
+        String subAttr, subTag;
+        for (const auto& so : subOf) {
+            if (so.first != q.id) continue;
+            subAttr = " data-subof=\"" + esc(so.second.c_str()) + "\"";
+            subTag  = " <span class='muted'>(counts toward " + esc(so.second.c_str()) + ")</span>";
+        }
         if (!head) { p += "<div class='stk-h'>Other products</div>"; head = true; }
         p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id)
-           + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
-           + " " + gb + "\">" + swatch(q.rgba) + esc(name.c_str())
+           + "'" + subAttr + " data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
+           + " " + gb + "\">" + swatch(q.rgba) + esc(name.c_str()) + subTag
            + (q.id == curId ? " <span class='muted'>(current)</span>" : "") + "</div>";
     }
     if (off.length()) p += "<div class='stk-h'>Not linked yet</div>" + off;
     p += "<div class='stk new' tabindex='0' data-prod='0' data-name='New product' "
          "data-q='new product'>&plus; New product&hellip; "
          "<span class='muted'>search the catalog or enter it</span></div>";
-    p += "</div></div>";
+    p += "</div>";
+    p += "<input type='hidden' name='stands_for' id='stands-for' value='0'>"
+         "<p id='sub-note' hidden class='muted' style='margin:8px 0 0'></p>"
+         "<div id='sub-box' hidden style='margin-top:10px'>"
+         "<label>Counts toward a Stock List item?</label>"
+         "<p class='muted' style='margin:2px 0 6px'>If this stands in for something we "
+           "usually stock, pick it and Reorder will count this product there. "
+           "Otherwise leave it as a one-off.</p>"
+         "<input type='search' id='sub-q' placeholder='Search the Stock List&hellip;' "
+           "autocomplete='off'>"
+         "<div id='sub-list' style='max-height:180px;overflow:auto;margin-top:8px'>"
+         "<div class='stk on' tabindex='0' data-to='0'>One-off: doesn't count toward anything</div>"
+         "</div></div></div>";
 }
 
 // The list above (#stk-list) and the pick itself. A pick sets the hidden
@@ -1939,7 +2092,8 @@ static const char STOCK_PICK_SCRIPT[] =
 "<style>.stk{padding:6px 8px;border-radius:4px;cursor:pointer}"
 ".stk:hover,.stk:focus{background:#2a3a2a;outline:none}"
 ".stk.off{cursor:default;color:#777}.stk.off:hover{background:none}"
-".stk-h{color:#9c9;font-size:13px;margin:8px 0 2px}.stk.new{color:#9c9}</style>"
+".stk-h{color:#9c9;font-size:13px;margin:8px 0 2px}.stk.new{color:#9c9}"
+".stk.on{background:#2a3a2a}.stk.on::before{content:'\\2713 '}</style>"
 "<script>(function(){"
 "var d=document.getElementById('prod');if(!d)return;"
 "var sq=document.getElementById('stk-q'),list=document.getElementById('stk-list'),"
@@ -1950,9 +2104,29 @@ static const char STOCK_PICK_SCRIPT[] =
   "if(e.classList.contains('stk-h')){if(h)h.hidden=!any;h=e;any=false;return}"
   "e.hidden=!m(e.dataset.q,f);if(!e.hidden)any=true});if(h)h.hidden=!any}"
 // Show the choice, or (null) go back to choosing.
-"function show(e){if(!e){ok.hidden=true;list.hidden=false;sq.hidden=false;np.style.display='none';return}"
+"function show(e){subShow(e);if(!e){ok.hidden=true;list.hidden=false;sq.hidden=false;np.style.display='none';return}"
   "ok.querySelector('b').textContent=e.dataset.name;ok.hidden=false;list.hidden=true;sq.hidden=true;"
   "np.style.display=e.dataset.prod=='0'?'block':'none'}"
+// "Counts toward a Stock List item?": only for a pick that isn't one already.
+// A product that already counts toward an item says so instead.
+"var sb=document.getElementById('sub-box'),sf=document.getElementById('stands-for'),"
+"sl=document.getElementById('sub-list'),sn=document.getElementById('sub-note'),"
+"sq2=document.getElementById('sub-q');"
+"function subSet(id){sf.value=id;[].forEach.call(sl.children,function(e){"
+  "e.classList.toggle('on',e.dataset.to==id)})}"
+"[].forEach.call(list.querySelectorAll('.stk[data-sid][data-prod]'),function(e){"
+  "if(e.dataset.full)return;var o=document.createElement('div');o.className='stk';o.tabIndex=0;"
+  "o.dataset.to=e.dataset.sid;o.dataset.q=e.dataset.q;o.textContent=e.dataset.name;sl.appendChild(o)});"
+"function subShow(e){var other=!!e&&!e.dataset.sid,of=other&&e.dataset.subof;subSet('0');"
+  "sq2.value='';[].forEach.call(sl.children,function(o){o.hidden=false});"
+  "sb.hidden=!other||!!of||sl.children.length<2;sn.hidden=!of;"
+  "if(of)sn.textContent='Counts toward '+of+' on Reorder.'}"
+"sl.addEventListener('click',function(ev){var e=ev.target.closest('.stk');if(e)subSet(e.dataset.to)});"
+"sl.addEventListener('keydown',function(ev){if(ev.key=='Enter'){ev.preventDefault();"
+  "var e=ev.target.closest('.stk');if(e)subSet(e.dataset.to)}});"
+"sq2.addEventListener('input',function(){[].forEach.call(sl.children,function(o){"
+  "o.hidden=o.dataset.to!='0'&&!m(o.dataset.q,sq2.value)})});"
+"sq2.addEventListener('keydown',function(ev){if(ev.key=='Enter')ev.preventDefault()});"
 "function pick(e){if(!e||e.dataset.prod===undefined)return;"
   "d.value=e.dataset.prod;d.dispatchEvent(new Event('change'));sq.value='';filt('');show(e)}"
 "sq.addEventListener('input',function(){filt(sq.value)});"
@@ -2500,6 +2674,14 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     ProductRecord q;
     const bool haveChosen = chosen && storeGetProduct(chosen, q);
 
+    // "Counts toward a Stock List item?", checked before anything is written.
+    // The product may not exist yet; a new one is checked again once it does.
+    const uint32_t standsFor = (uint32_t)arg("stands_for").toInt();
+    if (standsFor) {
+        const String why = standsForError(standsFor, haveChosen ? q.id : 0);
+        if (why.length()) { req->send(400, "text/plain", why); return; }
+    }
+
     // The manual path takes nominal weight and tare from the spool profile
     // alone, and the picker now starts on a blank "choose" option, so a
     // manual onboard with no profile would write 0 g / 0 g to the tag.
@@ -2802,6 +2984,13 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         }
     }
 
+    // 1c) "Counts toward a Stock List item?" A catalog or typed entry can only
+    //     be judged here, once it has resolved: it may have landed on a product
+    //     that already counts somewhere. The spool is saved by now, so that is
+    //     reported on the spool page rather than refused.
+    const bool subOk = standsFor && standsForError(standsFor, e.product).length() == 0
+                    && cfgStockAddSub(standsFor, e.product);
+
     // 2) If this spool is on the scale, write the full OPT Main to its tag now.
     //    (Identity + material temps/class/type + weights.) syncTask's reconcile
     //    loop is idempotent, so a redundant later write is harmless.
@@ -2872,6 +3061,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         snprintf(b, sizeof(b), "%llu", (unsigned long long)scanned);
         to += String("&scan=") + b + (learned ? "&learned=1" : "");
     }
+    if (standsFor) to += String(subOk ? "&sub=" : "&subfail=") + String((unsigned)standsFor);
     req->redirect(to);
 }
 
@@ -2966,10 +3156,13 @@ static void handleApiEraseStop(AsyncWebServerRequest* req) {
 }
 
 // ── Reorder: roll up on-hand per stock item, flag shortfalls ──────────────────
-struct OnHand { uint16_t count; float grams; uint32_t product; bool linked; };
+struct OnHand {
+    uint16_t count; float grams; uint32_t product; bool linked;
+    float sub_g;      // how much of `grams` is substitutes
+};
 
 // Sum the active spools a stock item stands for: the spools of the product it
-// is linked to (CfgStock::product), and nothing else.
+// is linked to (CfgStock::product) and of its substitutes (stockSubs()).
 //
 // Names are labels, not keys (docs/design/names-are-labels.md, 2026-10-30).
 // This used to fall back, for an unlinked row, to probing products by the
@@ -2983,18 +3176,22 @@ struct OnHand { uint16_t count; float grams; uint32_t product; bool linked; };
 // storeGetProduct() follows merges, so a row still holding a merged
 // product's id counts the survivor's spools (linked.id, not s.product).
 static OnHand rollUp(const CfgStock& s) {
-    OnHand oh{0, 0.0f, 0, false};
+    OnHand oh{0, 0.0f, 0, false, 0.0f};
     ProductRecord linked;
     if (!(s.product && storeGetProduct(s.product, linked))) return oh;
     oh.linked  = true;
     oh.product = linked.id;
+    const std::vector<uint32_t> subs = stockSubs(s);
     size_t n = storeSpoolCount();
     SpoolRecord r;
     for (size_t i = 0; i < n; i++) {
         if (!storeSpoolAt(i, r)) continue;
-        if (r.remaining_g <= 1.0f || r.product != oh.product) continue;
+        if (r.remaining_g <= 1.0f) continue;
+        const bool sub = std::find(subs.begin(), subs.end(), r.product) != subs.end();
+        if (r.product != oh.product && !sub) continue;
         oh.count++;
         oh.grams += r.remaining_g;
+        if (sub) oh.sub_g += r.remaining_g;
     }
     return oh;
 }
@@ -3037,7 +3234,16 @@ static String toOrderText(uint32_t n) {
 }
 
 static String onHandText(const CfgStock& s, const OnHand& oh) {
-    return String(oh.grams / fullSpoolG(s), 1) + " spools (" + String(oh.grams, 0) + " g)";
+    return String(oh.grams / fullSpoolG(s), 1) + " spools (" + String(oh.grams, 0) + " g"
+         + (oh.sub_g > 0 ? ", " + String(oh.sub_g, 0) + " g of it substitutes" : String()) + ")";
+}
+
+// Listed only because of substitutes? The usual product's own weight decides.
+static bool coveredBySubs(const CfgStock& s, const OnHand& oh) {
+    if (oh.sub_g <= 0 || needsReorder(s, oh)) return false;
+    OnHand own = oh;
+    own.grams -= oh.sub_g;
+    return needsReorder(s, own);
 }
 
 static void handleReorder(AsyncWebServerRequest* req) {
@@ -3046,7 +3252,8 @@ static void handleReorder(AsyncWebServerRequest* req) {
 
     if (csv) {
         String out = "vendor,material,color,diameter,gtin,"
-                     "on_hand_spools,on_hand_g,target_spools,target_grams,to_order_spools\n";
+                     "on_hand_spools,on_hand_g,target_spools,target_grams,to_order_spools,"
+                     "on_hand_substitute_g\n";
         CfgStock s;
         for (size_t i = 0; i < cfgStockCount(); i++) {
             if (!cfgStockAt(i, s)) continue;
@@ -3056,7 +3263,8 @@ static void handleReorder(AsyncWebServerRequest* req) {
                  + String(s.dia, 2) + "," + s.gtin + ","
                  + String(oh.count) + ","
                  + String(oh.grams, 0) + "," + String(s.min_spools) + ","
-                 + String(s.min_grams, 0) + "," + String(spoolsToOrder(s, oh)) + "\n";
+                 + String(s.min_grams, 0) + "," + String(spoolsToOrder(s, oh)) + ","
+                 + String(oh.sub_g, 0) + "\n";
         }
         AsyncWebServerResponse* resp = req->beginResponse(200, "text/csv", out);
         resp->addHeader("Content-Disposition", "attachment; filename=reorder.csv");
@@ -3081,10 +3289,14 @@ static void handleReorder(AsyncWebServerRequest* req) {
     CfgStock s;
     int flagged = 0;
     int unlinked = 0;
+    String covered;   // off the list only because of substitutes: say so
     for (size_t i = 0; i < cfgStockCount(); i++) {
         if (!cfgStockAt(i, s)) continue;
         OnHand oh = rollUp(s);
         if (!oh.linked) { unlinked++; continue; }   // reported below, never guessed
+        if (coveredBySubs(s, oh))
+            covered += (covered.length() ? ", " : "") + esc(stockItemName(s).c_str())
+                     + " (" + String(oh.sub_g, 0) + " g)";
         if (!needsReorder(s, oh)) continue;
         flagged++;
         p += "<tr><td>" + esc(s.vendor) + "</td><td>" + esc(s.material) + "</td><td>"
@@ -3098,6 +3310,9 @@ static void handleReorder(AsyncWebServerRequest* req) {
              "(or no stock items configured)</td></tr>";
     p += "</table>";
     p += "<p><a href='/reorder?format=csv'><button type='button'>Download CSV</button></a></p>";
+    if (covered.length())
+        p += "<p class='muted' id='reorder-covered'>Not listed because substitutes cover "
+             "them: " + covered + ". You may still want to buy the usual product.</p>";
     if (unlinked)
         p += "<p class='ob' id='reorder-unlinked'>" + String(unlinked) + " Stock List item(s) "
              "aren't linked to a product, so they can't be counted and aren't listed here. "
@@ -3149,6 +3364,65 @@ static const char ITEM_PICK_SCRIPT[] =
 "var c=d.value!='0'?list.querySelector(\".stk[data-prod='\"+d.value+\"']\"):null;show(c);"
 "})()</script>";
 
+// A stock item's substitutes, on its Edit form (an item must exist before
+// anything can count toward it). The hidden `subs` is the whole list, ids
+// comma-separated; handleApiStockUpdate() replaces the row's with it. The list
+// to add from is built in the browser from "Item is...", the form's own list
+// of every product, so the page doesn't carry the products twice.
+static void stockSubsField(String& p, const CfgStock& s) {
+    const std::vector<uint32_t> subs = stockSubs(s);
+    String ids, rows;
+    ProductRecord q;
+    for (uint32_t id : subs) {
+        if (!storeGetProduct(id, q)) continue;
+        if (ids.length()) ids += ",";
+        ids += String((unsigned)id);
+        rows += "<div data-id='" + String((unsigned)id) + "'>" + esc(q.vendor) + " "
+              + esc(q.material[0] ? q.material : "Unknown")
+              + " <a href='#' style='color:#9c9'>remove</a></div>";
+    }
+    p += "<label>Substitutes</label>"
+         "<p class='muted' style='margin:2px 0 6px'>Products that stand in for this item. "
+           "Their spools count toward it on Reorder and in its popularity. Up to "
+       + String(STOCK_MAX_SUBS) + ".</p>"
+         "<input type='hidden' name='subs' id='subs' data-max='" + String(STOCK_MAX_SUBS)
+       + "' value='" + ids + "'>"
+         "<div id='subs-now'>" + rows + "</div>"
+         "<input type='search' id='subs-q' placeholder='Search products to add&hellip;' "
+           "autocomplete='off' style='margin-top:6px'>"
+         "<div id='subs-add' style='max-height:180px;overflow:auto;margin-top:8px'></div>";
+}
+
+static const char STOCK_SUBS_SCRIPT[] =
+"<script>(function(){"
+"var h=document.getElementById('subs'),il=document.getElementById('item-list');"
+"if(!h||!il)return;"
+"var now=document.getElementById('subs-now'),add=document.getElementById('subs-add'),"
+"q=document.getElementById('subs-q'),own=document.getElementById('sprod'),max=+h.dataset.max;"
+"function has(id){return [].some.call(now.children,function(e){return e.dataset.id==id})}"
+"function m(t,f){t=t.toLowerCase();return f.toLowerCase().split(/\\s+/)"
+  ".every(function(w){return t.indexOf(w)>=0})}"
+"function sync(){h.value=[].map.call(now.children,function(e){return e.dataset.id}).join(',');"
+  "var full=now.children.length>=max;q.hidden=full;add.hidden=full;"
+  "[].forEach.call(add.children,function(e){e.hidden=has(e.dataset.prod)||"
+    "(own&&own.value==e.dataset.prod)||!m(e.dataset.q,q.value)})}"
+"[].forEach.call(il.querySelectorAll('.stk[data-prod]'),function(e){"
+  "if(e.dataset.prod=='0'||e.dataset.taken)return;var o=document.createElement('div');"
+  "o.className='stk';o.tabIndex=0;o.dataset.prod=e.dataset.prod;o.dataset.q=e.dataset.q;"
+  "o.textContent=e.dataset.name;add.appendChild(o)});"
+"function pick(e){if(!e)return;var d=document.createElement('div'),a=document.createElement('a');"
+  "d.dataset.id=e.dataset.prod;d.textContent=e.textContent+' ';a.href='#';a.textContent='remove';"
+  "a.style.color='#9c9';d.appendChild(a);now.appendChild(d);q.value='';sync()}"
+"add.addEventListener('click',function(ev){pick(ev.target.closest('.stk'))});"
+"add.addEventListener('keydown',function(ev){if(ev.key=='Enter'){ev.preventDefault();"
+  "pick(ev.target.closest('.stk'))}});"
+"now.addEventListener('click',function(ev){if(ev.target.tagName!='A')return;"
+  "ev.preventDefault();ev.target.parentNode.remove();sync()});"
+"q.addEventListener('input',sync);"
+"q.addEventListener('keydown',function(ev){if(ev.key=='Enter')ev.preventDefault()});"
+"if(own)own.addEventListener('change',sync);sync();"
+"})()</script>";
+
 static void stockFormFields(String& p, const CfgStock& s) {
     // "Pick an existing product" vs. type it in — same reasoning as Onboard's
     // "another spool of X": a stock row's vendor/material/color is free text
@@ -3165,10 +3439,13 @@ static void stockFormFields(String& p, const CfgStock& s) {
         // which shows #stocknew (catalog search, manual entry). It sets the
         // hidden #sprod the form submits (ITEM_PICK_SCRIPT). Products already
         // on the Stock List say so, since a second row for one is a duplicate.
-        std::vector<uint32_t> listed;
+        std::vector<uint32_t> listed, taken;   // `taken`: can't be a substitute here
         CfgStock r;
-        for (size_t i = 0; i < cfgStockCount(); i++)
-            if (cfgStockAt(i, r) && r.product && r.id != s.id) listed.push_back(r.product);
+        for (size_t i = 0; i < cfgStockCount(); i++) {
+            if (!cfgStockAt(i, r) || r.id == s.id) continue;
+            if (r.product) { listed.push_back(r.product); taken.push_back(r.product); }
+            for (uint32_t sub : stockSubs(r)) taken.push_back(sub);
+        }
         p += "<label>Item is&hellip;</label>"
              "<input type='search' id='item-q' placeholder='Search products&hellip;' autocomplete='off'>"
              "<p id='item-ok' hidden style='margin:8px 0'>&check; <b></b> "
@@ -3183,8 +3460,10 @@ static void stockFormFields(String& p, const CfgStock& s) {
             char gb[24] = "";
             if (q.gtin) snprintf(gb, sizeof(gb), "%llu", (unsigned long long)q.gtin);
             const bool dup = std::find(listed.begin(), listed.end(), q.id) != listed.end();
-            p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id)
-               + "' data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
+            const bool busy = std::find(taken.begin(), taken.end(), q.id) != taken.end();
+            p += "<div class='stk' tabindex='0' data-prod='" + String((unsigned)q.id) + "'"
+               + (busy ? " data-taken='1'" : "")
+               + " data-name=\"" + esc(name.c_str()) + "\" data-q=\"" + esc(name.c_str())
                + " " + gb + "\">" + swatch(q.rgba) + esc(name.c_str())
                + (dup ? " <span class='muted'>(already on the Stock List)</span>" : "") + "</div>";
             opts += "<option value='" + String((unsigned)q.id) + "'"
@@ -3877,6 +4156,20 @@ static const char STOCK_SCAN_SCRIPT[] =
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed; the barcode is filled in.')})};"
 "})()</script>";
 
+static void fillPopularityQuery(const CfgStock& s, PopularityQuery& q) {
+    q.product = s.product;   // by product when linked: a rename changes nothing
+    strlcpy(q.vendor, s.vendor, sizeof(q.vendor));
+    // Same composition Reorder's rollUp() uses: CfgStock.material is the bare
+    // type, colour rides separately, but consumption is keyed on the full
+    // display string a spool's Main section actually carries.
+    String disp = s.material;
+    if (s.color[0]) disp += String(" ") + s.color;
+    strlcpy(q.material, disp.c_str(), sizeof(q.material));
+    size_t n = 0;
+    for (uint32_t sub : stockSubs(s))
+        if (n < STOCK_MAX_SUBS) q.subs[n++] = sub;
+}
+
 static void handleStockPage(AsyncWebServerRequest* req) {
     String p = head("Stock List", "/config");   // under Administration
     p += "<p id='stock-warning' style='color:#f44;font-weight:bold'>This table is managed "
@@ -3899,14 +4192,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     std::vector<PopularityQuery> q(n);
     for (size_t i = 0; i < n; i++) {
         cfgStockAt(i, rows[i]);
-        q[i].product = rows[i].product;   // by product when linked: a rename changes nothing
-        strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
-        // Same composition Reorder's rollUp() uses: CfgStock.material is the bare
-        // type, colour rides separately, but consumption is keyed on the full
-        // display string a spool's Main section actually carries.
-        String disp = rows[i].material;
-        if (rows[i].color[0]) disp += String(" ") + rows[i].color;
-        strlcpy(q[i].material, disp.c_str(), sizeof(q[i].material));
+        fillPopularityQuery(rows[i], q[i]);
     }
     std::vector<PopularityResult> pop(n);
     char earliestTs[25] = {};
@@ -3967,6 +4253,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
            + (linked[i] ? String()
                         : (sr.color[0] ? " " + esc(sr.color) : String())
                           + " <span class='ob unlinked'>not linked</span>")
+           + (q[i].subs[0] ? " <span class='muted'>+ substitutes</span>" : "")
            + "</td><td data-v='" + String(popV, 1) + "'>"
            + popCell + "</td><td data-v='" + String(targetGrams(sr), 0) + "'>" + thr + "</td>"
            + "<td style='white-space:nowrap'>"
@@ -4011,10 +4298,12 @@ static void handleStockPage(AsyncWebServerRequest* req) {
     if (haveEdit) p += "<input type='hidden' name='id' id='stock-edit-id' value='"
                      + String((unsigned)editId) + "'>";
     stockFormFields(p, editRow);
+    if (haveEdit && storeProductCount()) stockSubsField(p, editRow);
     p += "<div><button type='submit'>" + String(haveEdit ? "Save changes" : "Add") + "</button>";
     if (haveEdit) p += " <a href='/stock' style='margin-left:14px;color:#8f8'>Cancel</a>";
     p += "</div></form></div>";
     p += STOCK_SCAN_SCRIPT;
+    p += STOCK_SUBS_SCRIPT;
 
     p += "<p class='muted'>Bulk edit on <a href='/config/tables' style='color:#8f8'>"
          "Administration &rarr; Raw tables</a>. Export or import all five Config tables "
@@ -4071,6 +4360,36 @@ static String stockGtinError(AsyncWebServerRequest* req) {
     g.trim();
     if (g.length() == 0 || gs1Parse(g)) return String();
     return "not a valid barcode: it should be 8, 12, 13 or 14 digits with a correct check digit";
+}
+
+// Reads the Stock List form's `subs` into live product ids. A separate, pure
+// check like the ones above, for the same reason. Returns an error message, or
+// an empty String when fine. No `subs` field leaves `out` empty and `present`
+// false, so a caller that doesn't send one keeps what the row has.
+static String stockSubsFromForm(AsyncWebServerRequest* req, uint32_t rowId,
+                                std::vector<uint32_t>& out, bool& present) {
+    const AsyncWebParameter* pp = req->getParam("subs", true);
+    present = pp != nullptr;
+    if (!pp) return String();
+    const String v = pp->value();
+    ProductRecord q;
+    int from = 0;
+    while (from < (int)v.length()) {
+        int to = v.indexOf(',', from);
+        if (to < 0) to = v.length();
+        const uint32_t id = (uint32_t)v.substring(from, to).toInt();
+        from = to + 1;
+        if (!id) continue;
+        if (!storeGetProduct(id, q)) return "unknown product #" + String((unsigned)id);
+        if (std::find(out.begin(), out.end(), q.id) == out.end()) out.push_back(q.id);
+    }
+    if (out.size() > STOCK_MAX_SUBS)
+        return "a stock item can have at most " + String(STOCK_MAX_SUBS) + " substitutes";
+    for (uint32_t id : out) {
+        const String why = subConflict(id, rowId, false);
+        if (why.length()) return why;
+    }
+    return String();
 }
 
 static CfgStock parseStockForm(AsyncWebServerRequest* req) {
@@ -4271,7 +4590,22 @@ static void handleApiStockUpdate(AsyncWebServerRequest* req) {
     if (gtinErr.length()) { req->send(400, "text/plain", gtinErr); return; }
     const String newErr = stockNewProductError(req);
     if (newErr.length()) { req->send(400, "text/plain", newErr); return; }
-    if (!cfgStockUpdate(id, parseStockForm(req))) {
+    std::vector<uint32_t> subs;
+    bool subsSent = false;
+    const String subsErr = stockSubsFromForm(req, id, subs, subsSent);
+    if (subsErr.length()) { req->send(400, "text/plain", subsErr); return; }
+    // parseStockForm() builds the row from the form alone, so substitutes
+    // are carried over here. If the item's usual product is now one of its
+    // substitutes, that one is dropped: a product can't stand in for itself.
+    CfgStock updated = parseStockForm(req);
+    memcpy(updated.subs, existing.subs, sizeof(updated.subs));
+    if (subsSent) {
+        memset(updated.subs, 0, sizeof(updated.subs));
+        size_t n = 0;
+        for (uint32_t sub : subs)
+            if (sub != updated.product) updated.subs[n++] = sub;
+    }
+    if (!cfgStockUpdate(id, updated)) {
         req->send(500, "text/plain", "stock item vanished mid-update");
         return;
     }
@@ -4359,11 +4693,7 @@ static void handleApiStock(AsyncWebServerRequest* req) {
     std::vector<PopularityQuery> q(n);
     for (size_t i = 0; i < n; i++) {
         cfgStockAt(i, rows[i]);
-        q[i].product = rows[i].product;   // by product when linked: a rename changes nothing
-        strlcpy(q[i].vendor, rows[i].vendor, sizeof(q[i].vendor));
-        String disp = rows[i].material;
-        if (rows[i].color[0]) disp += String(" ") + rows[i].color;
-        strlcpy(q[i].material, disp.c_str(), sizeof(q[i].material));
+        fillPopularityQuery(rows[i], q[i]);
     }
     std::vector<PopularityResult> pop(n);
     char earliestTs[25] = {};
@@ -4386,6 +4716,15 @@ static void handleApiStock(AsyncWebServerRequest* req) {
            + ",\"min_grams\":" + String(s.min_grams, 1)
            + ",\"gtin\":\"" + esc(s.gtin) + "\""
            + ",\"pack_qty\":" + String(s.pack_qty)
+           + ",\"substitutes\":[";
+        bool firstSub = true;
+        for (uint32_t sub : q[i].subs) {
+            if (!sub) continue;
+            if (!firstSub) j += ",";
+            j += String((unsigned)sub);
+            firstSub = false;
+        }
+        j += String("]")
            + ",\"has_data\":" + (pop[i].has_data ? "true" : "false")
            + ",\"grams_in_window\":" + String(pop[i].grams, 1)
            + ",\"available_days\":" + String(pop[i].available_days, 5)

@@ -164,6 +164,13 @@ static void parseStock(JsonArrayConst arr) {
         // as "free-typed, no product linked" -- exactly right, not a
         // fabricated link to product #0.
         s.product = o["product"] | 0;
+        // Absent on rows with no substitutes, and on every row written before
+        // they existed. Extra ids past the array (a raw-JSON edit) are ignored.
+        size_t nSubs = 0;
+        for (JsonVariantConst v : o["subs"].as<JsonArrayConst>()) {
+            const uint32_t sub = v | 0;
+            if (sub && nSubs < STOCK_MAX_SUBS) s.subs[nSubs++] = sub;
+        }
         sStock.push_back(s);
     }
 }
@@ -177,6 +184,12 @@ static String serStock() {
         o["min_spools"] = s.min_spools; o["min_grams"] = s.min_grams;
         o["sku"] = s.sku; o["gtin"] = s.gtin; o["pack_qty"] = s.pack_qty;
         o["product"] = s.product;
+        JsonArray subs;
+        for (uint32_t sub : s.subs) {
+            if (!sub) continue;
+            if (subs.isNull()) subs = o["subs"].to<JsonArray>();
+            subs.add(sub);
+        }
     }
     String s; serializeJson(d, s); return s;
 }
@@ -478,6 +491,21 @@ bool cfgStockRemove(uint32_t id) {
     for (size_t i = 0; i < sStock.size(); i++) {
         if (sStock[i].id != id) continue;
         sStock.erase(sStock.begin() + i);
+        return cfgSave("stock-items");
+    }
+    return false;
+}
+
+bool cfgStockAddSub(uint32_t id, uint32_t product) {
+    for (auto& r : sStock) {
+        if (r.id != id) continue;
+        uint32_t* slot = nullptr;
+        for (uint32_t& sub : r.subs) {
+            if (sub == product) return true;
+            if (!sub && !slot) slot = &sub;
+        }
+        if (!slot) return false;
+        *slot = product;
         return cfgSave("stock-items");
     }
     return false;

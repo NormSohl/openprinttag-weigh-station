@@ -1466,6 +1466,24 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
     for (size_t i = 0; i < n; i++)
         qIndex[popKeyFor_(queries[i].product, queries[i].vendor, queries[i].material)].push_back(i);
 
+    // A substitute's spools take their row's key, so everything below (on-hand
+    // totals, stockout gaps, grams) treats them as that row's own spools.
+    std::unordered_map<std::string, std::string> subKey;
+    for (size_t i = 0; i < n; i++) {
+        for (uint32_t sub : queries[i].subs) {
+            if (!sub) continue;
+            const int j = resolveProduct_(productIndex_(sub));
+            if (j < 0) continue;
+            subKey.emplace("p" + std::to_string(sProducts[j].id),
+                           popKeyFor_(queries[i].product, queries[i].vendor, queries[i].material));
+        }
+    }
+    auto spoolKey = [&](uint32_t product, const char* vendor, const char* material) {
+        std::string k = popKeyFor_(product, vendor, material);
+        auto it = subKey.find(k);
+        return it == subKey.end() ? k : it->second;
+    };
+
     struct SpoolState { std::string key; float remaining = 0; bool has = false; };
     std::unordered_map<uint32_t, SpoolState> spools;
     std::unordered_map<std::string, float>   groupTotal;   // current on-hand, tracked keys only
@@ -1521,7 +1539,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
                                e.ev == StoreEv::Checkpoint);
         if (identEv && e.material[0]) {
             SpoolState& sp = spools[e.spool];
-            std::string newKey = popKeyFor_(e.product, e.vendor, e.material);
+            std::string newKey = spoolKey(e.product, e.vendor, e.material);
             if (sp.has && sp.key != newKey) {
                 const std::string oldKey = sp.key;
                 if (qIndex.count(oldKey)) {
@@ -1545,7 +1563,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
         // "is this still in stock" and "how popular is it".
         if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
             SpoolState& sp = spools[e.spool];
-            if (!sp.has) { sp.has = true; sp.key = popKeyFor_(e.product, e.vendor, e.material); }
+            if (!sp.has) { sp.has = true; sp.key = spoolKey(e.product, e.vendor, e.material); }
             const float oldRem = sp.remaining;
             const float newRem = e.remaining_g;
             if (qIndex.count(sp.key)) groupTotal[sp.key] += (newRem - oldRem);
