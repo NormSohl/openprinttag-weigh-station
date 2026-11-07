@@ -5,8 +5,8 @@ spreadsheet (Products, Merges, Stock List, How to read).
 
   build_decisions.py config.json [previous.xlsx]
 
-DATE defaults to today. Decisions carry over: if the output file (or previous.xlsx)
-already exists, each product keeps its Decision and Your note as long as its
+DATE defaults to today. Decisions carry over from previous.xlsx, else the output file
+if it exists, else the newest earlier product-reconciliation-*.xlsx: each product keeps its Decision and Your note as long as its
 proposal (new vendor, new name, what changes, duplicate) is unchanged; anything new
 or changed gets the default ("Apply" wherever something changes) and is listed.
 """
@@ -24,7 +24,10 @@ R=json.load(open(os.path.join(RWORK,"recon.json"))); rows=R["rows"]; byid={r["pi
 cfg=json.load(open(sys.argv[1])); STOCK=cfg["stock-items"]
 OVR=json.load(open(os.path.join(HERE,"overrides.json")))
 # ---- decisions carried over from an earlier copy of this spreadsheet
-prev_path=sys.argv[2] if len(sys.argv)>2 else OUT
+import glob
+_earlier=sorted(f for f in glob.glob(os.path.join(os.path.dirname(OUT),"product-reconciliation-*.xlsx")) if f!=OUT and not os.path.basename(f).startswith("~$"))
+prev_path=sys.argv[2] if len(sys.argv)>2 else (OUT if os.path.exists(OUT) else (_earlier[-1] if _earlier else OUT))
+print("decisions from:",os.path.basename(prev_path) if os.path.exists(prev_path) else "none (first run)")
 PREV={}; PREVM={}
 if os.path.exists(prev_path):
     pw=load_workbook(prev_path)

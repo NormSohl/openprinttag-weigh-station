@@ -18,8 +18,9 @@ product's name is only a label: renaming is safe, and Usage relabels itself.
 2. Flash the firmware as usual. Check out the branch it was built from.
 3. `tools/reconcile/rehearse.sh events.ndjson config.json`
    builds `docs/reference/product-reconciliation-DATE.xlsx` and dry-runs it.
-   Decisions carry over from an existing copy of that file where the proposal is
-   unchanged; anything new or changed is listed and defaults to *Apply*.
+   Decisions carry over from the newest earlier `product-reconciliation-*.xlsx`
+   where the proposal is unchanged; anything new or changed is listed at the end of
+   the run and defaults to *Apply*.
    Read it; change Decision to *Skip* or *Change* where needed.
 4. `tools/reconcile/rehearse.sh events.ndjson config.json --apply`
    applies the decisions in the simulator, re-runs them (must change nothing),
