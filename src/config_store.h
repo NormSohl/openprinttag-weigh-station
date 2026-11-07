@@ -48,8 +48,8 @@ struct CfgStock {       // a standard-stock SKU to keep + reorder threshold
     // pre-filled) — the row meant to be edited was untouched, and a near-
     // duplicate row was created instead.
     uint32_t id;
-    char     vendor[48];
-    char     material[48];
+    char     vendor[64];    // same size as ProductRecord's: a linked row holds its product's names,
+    char     material[64];  // and a shorter buffer cut them, so the label never matched again
     char     color[32];
     float    dia;
     float    spool_g;       // nominal full weight of one spool

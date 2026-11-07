@@ -133,6 +133,9 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
   coarser rollup `/api/usage` reports, and the two numbers for the same
   material will not match.
 
+All JSON string values are plain text, escaped for JSON only (a `&` is `&`,
+not `&amp;`; before 2026-11-07 they were HTML-escaped).
+
 ### `GET /api/status`
 
 ```json

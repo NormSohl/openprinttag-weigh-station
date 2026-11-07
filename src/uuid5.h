@@ -53,8 +53,8 @@ inline void sha1(const uint8_t* msg, size_t len, uint8_t out[20]) {
 
 // namespace: 16 bytes; name: any bytes. out: 16 bytes.
 inline void uuid5(const uint8_t ns[16], const uint8_t* name, size_t nameLen, uint8_t out[16]) {
-    uint8_t buf[16 + 64];
-    if (nameLen > 64) nameLen = 64;
+    uint8_t buf[16 + 80];
+    if (nameLen > 80) nameLen = 80;
     memcpy(buf, ns, 16);
     memcpy(buf + 16, name, nameLen);
     uint8_t d[20];
@@ -67,6 +67,29 @@ inline void uuid5(const uint8_t ns[16], const uint8_t* name, size_t nameLen, uin
 // OpenPrintTag's instance namespace, 31062f81-b5bd-4f86-a5f8-46367e841508.
 static const uint8_t OPT_NS_INSTANCE[16] = {0x31, 0x06, 0x2f, 0x81, 0xb5, 0xbd, 0x4f, 0x86,
                                             0xa5, 0xf8, 0x46, 0x36, 0x7e, 0x84, 0x15, 0x08};
+
+// The other three namespaces (nfc_data_format.md 3.2.1), for a tag that leaves
+// its brand / material / package UUID out: brand = UUIDv5(NS_BRAND, brand
+// name), material = UUIDv5(NS_MATERIAL, brand_uuid bytes + material name),
+// package = UUIDv5(NS_PACKAGE, brand_uuid bytes + GTIN as decimal text).
+// tools/esun-catalogue/station_catalogue.py derives the same way, so a tag and
+// a catalogue pick of the same item meet on the same IDs.
+static const uint8_t OPT_NS_BRAND[16]    = {0x52, 0x69, 0xdf, 0xb7, 0x15, 0x59, 0x44, 0x0a,
+                                            0x85, 0xbe, 0xab, 0xa5, 0xf3, 0xef, 0xf2, 0xd2};
+static const uint8_t OPT_NS_MATERIAL[16] = {0x61, 0x6f, 0xc8, 0x6d, 0x7d, 0x99, 0x49, 0x53,
+                                            0x96, 0xc7, 0x46, 0xd2, 0x83, 0x6b, 0x9b, 0xe9};
+static const uint8_t OPT_NS_PACKAGE[16]  = {0x6f, 0x7d, 0x48, 0x5e, 0xdb, 0x8d, 0x49, 0x79,
+                                            0x90, 0x4e, 0xa2, 0x31, 0xcd, 0x66, 0x02, 0xb2};
+
+// brand_uuid bytes followed by `text`, for the material and package UUIDs.
+inline void uuid5After(const uint8_t ns[16], const uint8_t brand[16], const char* text, uint8_t out[16]) {
+    uint8_t name[16 + 64];
+    size_t n = strlen(text);
+    if (n > 64) n = 64;
+    memcpy(name, brand, 16);
+    memcpy(name + 16, text, n);
+    uuid5(ns, name, 16 + n, out);
+}
 
 // The derived instance_uuid for a chip. `uid` as the reader returns it: the
 // PN5180 library hands it over least significant byte first (uid[7] == 0xE0,

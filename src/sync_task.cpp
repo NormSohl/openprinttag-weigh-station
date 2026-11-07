@@ -7,6 +7,7 @@
 #include <esp_random.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include "config.h"
 #include "display_tz.h"
 #include "device_state.h"
@@ -27,6 +28,7 @@ extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
 extern volatile bool        gTagJustFormatted;
+extern volatile uint32_t    gWifiResetAtMs;
 extern volatile bool        gWriteAuxPending;
 extern volatile bool        gEraseModeActive;
 extern volatile uint32_t    gEraseModeActivityMs;
@@ -164,9 +166,25 @@ static void overlayRecordOntoAux(const SpoolRecord& r, OptAuxiliary& a) {
 // than 32 zeroes, or every tag that carries no package_uuid would match every
 // other one on rung 1.
 static void productFromMain(const OptMain& m, ProductRecord& p) {
-    if (!optUuidIsNil(m.package_uuid))  uuidToHex32(m.package_uuid,  p.pkg_uuid);
-    if (!optUuidIsNil(m.material_uuid)) uuidToHex32(m.material_uuid, p.mat_uuid);
-    if (!optUuidIsNil(m.brand_uuid))    uuidToHex32(m.brand_uuid,    p.brand_uuid);
+    // A UUID the tag leaves out is derived as the spec says (3.2.1; see
+    // uuid5.h), from the names and barcode it does carry, so the matcher meets
+    // a station catalogue pick of the same item, or the same vendor's other
+    // tags, on the same IDs. For matching and the product only; never written
+    // onto the tag.
+    uint8_t brand[16], mat[16], pkg[16];
+    memcpy(brand, m.brand_uuid, 16); memcpy(mat, m.material_uuid, 16); memcpy(pkg, m.package_uuid, 16);
+    if (optUuidIsNil(brand) && m.brand_name[0])
+        uuid5(OPT_NS_BRAND, (const uint8_t*)m.brand_name, strlen(m.brand_name), brand);
+    if (!optUuidIsNil(brand)) {
+        if (optUuidIsNil(mat) && m.material_name[0]) uuid5After(OPT_NS_MATERIAL, brand, m.material_name, mat);
+        if (optUuidIsNil(pkg) && m.gtin) {
+            char g[24]; snprintf(g, sizeof(g), "%llu", (unsigned long long)m.gtin);
+            uuid5After(OPT_NS_PACKAGE, brand, g, pkg);
+        }
+    }
+    if (!optUuidIsNil(pkg))   uuidToHex32(pkg,   p.pkg_uuid);
+    if (!optUuidIsNil(mat))   uuidToHex32(mat,   p.mat_uuid);
+    if (!optUuidIsNil(brand)) uuidToHex32(brand, p.brand_uuid);
     p.gtin = m.gtin;
     strlcpy(p.vendor,   m.brand_name[0]    ? m.brand_name    : "Unknown", sizeof(p.vendor));
     strlcpy(p.material, m.material_name[0] ? m.material_name : "Unknown", sizeof(p.material));
@@ -178,15 +196,19 @@ static void productFromMain(const OptMain& m, ProductRecord& p) {
     p.nom_g   = m.nominal_netto_full_weight;
 }
 
-// Fill an Onboard/Reconcile event's identity fields from a tag's Main section.
+// Fill an Onboard/Reconcile event's identity fields from a tag's Main section:
+// the same mapping as productFromMain() (one place decides "Unknown" and which
+// weight is which), copied into the event.
 static void identityFromMain(const OptMain& m, StoreEvent& e) {
-    strlcpy(e.vendor,   m.brand_name[0]    ? m.brand_name    : "Unknown", sizeof(e.vendor));
-    strlcpy(e.material, m.material_name[0] ? m.material_name : "Unknown", sizeof(e.material));
-    strlcpy(e.abbr,     m.material_abbreviation, sizeof(e.abbr));
-    memcpy(e.rgba, m.primary_color_rgba, 4);
-    e.dia     = m.filament_diameter;
-    e.empty_g = m.empty_container_weight;
-    e.nom_g   = m.nominal_netto_full_weight;   // label weight; actual stays on the tag
+    ProductRecord p;
+    productFromMain(m, p);
+    strlcpy(e.vendor,   p.vendor,   sizeof(e.vendor));
+    strlcpy(e.material, p.material, sizeof(e.material));
+    strlcpy(e.abbr,     p.abbr,     sizeof(e.abbr));
+    memcpy(e.rgba, p.rgba, 4);
+    e.dia     = p.dia;
+    e.empty_g = p.empty_g;
+    e.nom_g   = p.nom_g;   // label weight; actual stays on the tag
 }
 
 // ── Captive portal ────────────────────────────────────────────────────────────
@@ -463,6 +485,16 @@ void syncTask(void* param) {
 
     for (;;) {
         DeviceState state = getState();
+
+        // POST /reset: erase the stored WiFi credentials (equivalent to
+        // WiFiManager::resetSettings, without WebServer.h, whose HTTP_* enum
+        // clashes with the async server's) and restart into the portal.
+        if (gWifiResetAtMs && (int32_t)(millis() - gWifiResetAtMs) >= 0) {
+            Serial.println("[wifi] /reset: clearing credentials, restarting");
+            WiFi.disconnect(true, true);   // wifioff=true, eraseap=true
+            delay(200);
+            ESP.restart();
+        }
 
         // Say when the clock lands. SNTP is asynchronous and silent, and the
         // difference between "no usage data yet" and "usage data filed under
@@ -879,9 +911,36 @@ void syncTask(void* param) {
             OptMain main = gTagMain;
             xSemaphoreGive(gTagMutex);
 
-            xSemaphoreTake(gWeightMutex, portMAX_DELAY);
-            float weight = gWeightGrams;
-            xSemaphoreGive(gWeightMutex);
+            // Wait for the reading to settle (WEIGH_SETTLE_*). Lifted off
+            // meanwhile: no weigh at all, rather than one of an empty scale.
+            float weight = 0;
+            bool lifted = false;
+            {
+                float r[3] = {0, 0, 0};
+                int got = 0;
+                const uint32_t t0 = millis();
+                for (;;) {
+                    xSemaphoreTake(gWeightMutex, portMAX_DELAY);
+                    const float w = gWeightGrams;
+                    xSemaphoreGive(gWeightMutex);
+                    r[got % 3] = w; got++;
+                    weight = w;
+                    if (got >= 3) {
+                        const float lo = fminf(r[0], fminf(r[1], r[2])), hi = fmaxf(r[0], fmaxf(r[1], r[2]));
+                        if (hi - lo <= WEIGH_SETTLE_BAND_G) break;
+                    }
+                    if (millis() - t0 >= WEIGH_SETTLE_MAX_MS) {
+                        Serial.printf("[sync] weight did not settle within %u ms; using %.1f g\n",
+                                      (unsigned)WEIGH_SETTLE_MAX_MS, w);
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(WEIGH_SETTLE_STEP_MS));
+                    const DeviceState now = getState();
+                    if (now == DeviceState::Idle || now == DeviceState::IdleNoWiFi ||
+                        now == DeviceState::TagDetecting) { lifted = true; break; }
+                }
+            }
+            if (lifted) { sphase = SyncPhase::Idle; continue; }
 
             // The store's tare, not the tag's, whenever the record has one. Tare
             // is per spool and the record is where a person sets it; the tag

@@ -108,6 +108,11 @@ struct StoreEvent {
     // silently un-retires a spool; never set or cleared by Onboard/Reconcile.
     bool     retired = false;
 
+    // Checkpoint only: written by a tare change (rebaseTareChange_), not by
+    // compaction. Like a Reconcile it is not evidence the spool was handled,
+    // so it leaves last_ts alone. Logged as "rb", only when true.
+    bool     rebase = false;
+
     // Usage rollup (Usage). `ts` holds the period as "YYYY-MM" rather than a
     // timestamp; vendor + material are the grouping key.
     float    usage_g       = 0;   // grams consumed in this period + category

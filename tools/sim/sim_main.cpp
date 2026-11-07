@@ -40,6 +40,7 @@ OptMain              gTagMain     = {};
 SemaphoreHandle_t    gTagMutex    = nullptr;
 volatile bool        gWriteMainPending = false;
 volatile bool        gEraseModeActive     = false;
+volatile uint32_t    gWifiResetAtMs       = 0;   // the sim never restarts
 volatile uint32_t    gEraseModeActivityMs = 0;
 volatile int         gSpoolId              = -1;
 volatile bool        gSpoolNeedsOnboarding = false;

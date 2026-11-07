@@ -54,6 +54,9 @@ volatile bool gTagForceFormat = false;
 // with no instance_uuid is a vendor's (OPT lets bulk writers leave it out),
 // and gets the derived identity instead of being treated as our blank.
 volatile bool gTagJustFormatted = false;
+// Set by POST /reset: when (millis) syncTask erases the WiFi credentials and
+// restarts. 0 = not requested.
+volatile uint32_t gWifiResetAtMs = 0;
 
 // Set by the web /erase page's Start/Stop buttons. While true, nfcTask
 // erases any freshly placed tag immediately -- no countdown, same as a
@@ -239,10 +242,11 @@ void setup() {
     // one canary panic for exactly this kind of hidden depth.
     xTaskCreatePinnedToCore(displayTask, "display", 6144, nullptr, 1, &gDisplayTask, 0);
     // Single owner of the WiFi/idle gState group. Priority 2 (above display/sync)
-    // so an event turns into a state change promptly. No store or SPI — a small
-    // stack is enough for setState + the optional trace printf.
+    // so an event turns into a state change promptly. No SPI, but setState()
+    // builds the live-update (SSE) message, whose audit summary walks the
+    // store's spool records -- 4096, not 3072, for that.
     bootMark("starting controllerTask (owns WiFi/idle state)");
-    xTaskCreatePinnedToCore(controllerTask, "ctrl", 3072, nullptr, 2, &gControllerTask, 0);
+    xTaskCreatePinnedToCore(controllerTask, "ctrl", 4096, nullptr, 2, &gControllerTask, 0);
     bootMark("starting syncTask (WiFi + web)");
     xTaskCreatePinnedToCore(syncTask,    "sync",    8192, nullptr, 1, &gSyncTask, 0);
 

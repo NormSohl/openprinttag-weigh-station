@@ -9,7 +9,7 @@
 # Layout (offsets/sizes in bytes):
 #   nvs        20 KB   config/counters (Preferences: "store", "scale", …)
 #   (gap)       8 KB   0xE000-0xFFFF — DO NOT ALLOCATE. See below.
-#   factory  1.875 MB  firmware (build is ~1.17 MB — ~60% headroom)
+#   factory  1.875 MB  firmware (build is ~1.41 MB in 2026-11, ~25% headroom; `pio run` prints it)
 #   spiffs      2 MB   LittleFS: /log, /index, /config
 #   coredump   64 KB   crash dumps
 #   -------------------------------------------------------------

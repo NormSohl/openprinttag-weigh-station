@@ -1471,3 +1471,50 @@ def test_substitutes_follow_a_merge(sim, page):
     _save_subs(sim, item, usual, str(other))
     sim._post("/api/repair/merge", a=other, b=third, into=third)
     assert sim.get_json("/api/stock")["items"][-1]["substitutes"] == [third]
+
+
+# ── Review fixes (2026-11-07) ─────────────────────────────────────────────────
+
+def test_names_with_quotes_and_ampersands_round_trip(sim, page):
+    """An apostrophe used to cut a name short on the product page (single-quoted
+    attribute), and the JSON APIs returned '&' as '&amp;'."""
+    _upload_catalogue(sim)
+    sim.blank(gross=1220)
+    spool = sim.get_json("/_sim/state")["spool"]
+    name = "PLA \"Bob's\" Red & <Blue>"
+    sim._post("/api/onboard", id=spool, source="catalog", profile="", empty_g=200,
+              cat_vendor="Bambu's & Co", cat_material=name, cat_abbr="PLA", cat_type=0,
+              cat_dia=1.75, cat_nom_g=1000, cat_brand_uuid=_BRAND,
+              cat_mat_uuid="c0c1c2c3c4c5c6c7c8c9cacbcccdcecf", cat_pkg_uuid="d0d1d2d3d4d5d6d7d8d9dadbdcdddedf")
+    p = next(p for p in sim.get_json("/api/products") if p["vendor"] == "Bambu's & Co")
+    assert p["material"] == name                                     # JSON: the text itself
+    page.goto(sim.url(f"/product?id={p['id']}"))
+    assert page.input_value("input[name=vendor]") == "Bambu's & Co"  # not cut at the apostrophe
+    assert page.input_value("input[name=material]") == name
+    page.click("button[type=submit]")
+    page.wait_for_url(f"**/product?id={p['id']}")
+    q = next(q for q in sim.get_json("/api/products") if q["id"] == p["id"])
+    assert (q["vendor"], q["material"]) == ("Bambu's & Co", name)   # saved back unchanged
+    assert page.js_errors == []
+
+
+def test_a_restored_config_moves_the_stock_list_id_counter(sim, page):
+    """Item ids from a restored config must never be reissued to a new item."""
+    pid = _linked_stock_row(sim, page)
+    cfg = sim.get_json("/config/export")
+    for i, s in enumerate(cfg["stock-items"]):
+        s["id"] = 500 + i
+    cfg["stock-items"].append(dict(cfg["stock-items"][0], id=500))   # a duplicate, too
+    sim.upload("/config/import", json.dumps(cfg).encode(), filename="config.json")
+    sim._post("/api/stock/add", product=pid, min_spools=1, pack_qty=1)
+    ids = [s["id"] for s in sim.get_json("/config/export")["stock-items"]]
+    assert len(ids) == len(set(ids)), ids
+    assert max(ids) > 500 + len(cfg["stock-items"]) - 1
+
+
+def test_status_reports_the_audit_phase(sim, page):
+    assert sim.get_json("/api/status")["audit"] == "idle"
+    sim._post("/api/audit/start")
+    assert sim.get_json("/api/status")["audit"] == "scanning"
+    sim._post("/api/audit/abandon")
+    assert sim.get_json("/api/status")["audit"] == "idle"

@@ -991,6 +991,50 @@ static void usageLabelsTest() {
 }
 
 
+
+// A desk change -- a rename propagating to every spool, a merge, a tare change
+// rebasing remaining -- is not evidence a spool is on the shelf. It used to
+// move last_ts, so renaming a product mid-audit marked all its spools found.
+static void auditDeskTest() {
+    run("WIPE ALL");
+    ProductRecord p = tag("eSUN", "PLA Basic Black", "PLA", 1000, 170, "abab00000000000000000000000000ab");
+    p.provisional = false;
+    CHECK(storeUpsertProduct(p), "upsert");
+    const char* X = "f0f00000000000000000000000000001";
+    const char* Y = "f0f00000000000000000000000000002";
+    spoolFor(X, p.id, p);
+    spoolFor(Y, p.id, p);
+    rawEvent(StoreEv::Weigh, X, 0, "2026-08-10T12:05:00Z", "eSUN", "PLA Basic Black", 900);
+    CHECK(storeAuditStart(), "audit starts");
+    char start[25]; storeAuditStartTs(start, sizeof(start));
+    strlcpy(p.material, "PLA+ Black", sizeof(p.material));
+    CHECK(storeUpsertProduct(p), "rename");
+    storePropagateProduct(p.id);
+    SpoolRecord rx, ry;
+    storeFindByUuid(X, rx);
+    {   // a tare change on the weighed spool X: written as a rebase Checkpoint
+        StoreEvent e; e.ev = StoreEv::Reconcile;
+        strlcpy(e.uuid, X, sizeof(e.uuid));
+        strlcpy(e.vendor, rx.vendor, sizeof(e.vendor)); strlcpy(e.material, rx.material, sizeof(e.material));
+        strlcpy(e.abbr, rx.abbr, sizeof(e.abbr)); memcpy(e.rgba, rx.rgba, 4);
+        e.dia = rx.dia; e.nom_g = rx.nom_g; e.empty_g = rx.empty_g + 25; e.product = rx.product;
+        CHECK(storeAppendEvent(e), "tare change");
+    }
+    storeFindByUuid(X, rx); storeFindByUuid(Y, ry);
+    CHECK(fabsf(rx.remaining_g - (900 - 195)) < 0.2f, "X rebased to the new tare (remaining %.1f)", rx.remaining_g);
+    CHECK(!strcmp(rx.material, "PLA+ Black"), "rename reached the spool");
+    CHECK(strcmp(rx.last_ts, start) < 0 && strcmp(ry.last_ts, start) < 0,
+          "a rename (and X's tare rebase) must not mark spools found: %s %s vs %s", rx.last_ts, ry.last_ts, start);
+    storeRebuildIndices();                        // same after a replay
+    storeFindByUuid(X, rx);
+    CHECK(strcmp(rx.last_ts, start) < 0, "still not found after replay (rb flag read back)");
+    CHECK(storeAuditFound(ry.spool), "Found marks Y");
+    storeFindByUuid(Y, ry);
+    CHECK(strcmp(ry.last_ts, start) >= 0, "an explicit Found is evidence");
+    storeAuditAbandon();
+    if (!fails) printf("PASS: desk changes during an audit do not mark spools found\n");
+}
+
 // Control characters in names (a tag's brand_name, an import, a form) must
 // survive a replay: before jsonEsc() escaped them, a raw newline split the log
 // line, so the event applied live and was gone after the next boot.
@@ -1030,6 +1074,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--substitutes"))   { substitutesTest(); return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--merge"))         { mergeTest();      return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--audit-desk"))    { auditDeskTest();  return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--names"))         { namesTest();      return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--usage-labels"))  { usageLabelsTest(); return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);

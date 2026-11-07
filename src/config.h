@@ -167,6 +167,14 @@
 #define ERASE_MODE_IDLE_TIMEOUT_SEC 600  // 10 minutes
 #define NFC_DEBOUNCE_READS        3  // consecutive consistent reads required
 #define SCALE_SAMPLES            10  // load cell samples averaged per weighing
+// The one weigh per placement waits for the reading to settle: three readings
+// WEIGH_SETTLE_STEP_MS apart within WEIGH_SETTLE_BAND_G of each other, or
+// WEIGH_SETTLE_MAX_MS, whichever first. A spool still swinging, or a hand on
+// it, would otherwise be booked permanently (usage counts the drop to the next
+// weigh as filament used).
+#define WEIGH_SETTLE_BAND_G     3.0f
+#define WEIGH_SETTLE_STEP_MS     250
+#define WEIGH_SETTLE_MAX_MS     3000
 // Calibration factor for NAU7802 → grams conversion (raw counts per gram).
 // Determine empirically: place a known weight on the scale, read the raw
 // average with zero subtracted, divide by the known mass in grams.

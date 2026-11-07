@@ -97,6 +97,10 @@ echo "    current name, across compaction and replay ---"
 STORE_TEST_ROOT="$OUT/fs9" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --usage-labels | tail -1
 
 echo
+echo "--- desk changes during an audit do not mark spools found (review A6) ---"
+STORE_TEST_ROOT="$OUT/fs11" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --audit-desk | tail -1
+
+echo
 echo "--- names with control characters survive replay (review A2) ---"
 STORE_TEST_ROOT="$OUT/fs10" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --names | tail -1
 

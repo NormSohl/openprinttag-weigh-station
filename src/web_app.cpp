@@ -32,6 +32,7 @@ extern OptMain              gTagMain;
 extern SemaphoreHandle_t    gTagMutex;
 // Set here (Start/Stop on /erase), consumed by nfcTask/syncTask — see main.cpp.
 extern volatile bool        gEraseModeActive;
+extern volatile uint32_t gWifiResetAtMs;
 extern volatile uint32_t    gEraseModeActivityMs;
 extern volatile bool        gWriteMainPending;
 extern volatile int         gSpoolId;
@@ -142,6 +143,51 @@ static bool hex32ToBytes(const String& hex, uint8_t out[16]) {
         out[i] = (uint8_t)v;
     }
     return true;
+}
+
+// A POSTed form field, "" when absent. Every write handler reads its fields
+// through this (usually as a local `arg` lambda over its own req).
+static String formArg(AsyncWebServerRequest* req, const char* k) {
+    const AsyncWebParameter* pp = req->getParam(k, true);
+    return pp ? pp->value() : String();
+}
+
+// Point a Stock List row at a product: its id, its names (the product name
+// already carries the colour, so the row's own colour is cleared), diameter
+// and spool weight where the product states them. Every place that links a
+// row (the Stock List form, Repair's link and merge) goes through here.
+static void linkStockRow(CfgStock& s, const ProductRecord& q) {
+    s.product = q.id;   // q.id, not the id asked for: a merged product answers as its survivor
+    strlcpy(s.vendor,   q.vendor,   sizeof(s.vendor));
+    strlcpy(s.material, q.material, sizeof(s.material));
+    s.color[0] = 0;
+    s.dia = q.dia > 0 ? q.dia : (s.dia > 0 ? s.dia : 1.75f);
+    if (q.nom_g > 0) s.spool_g = q.nom_g;
+}
+
+// The product a catalog pick describes (Restock and the Stock List, CATALOG_SCRIPT's
+// cat_* fields): vendor, name, short code, colour, diameter, nominal weight,
+// tare (a typed empty_g wins over the catalog's), the three UUIDs and barcode.
+static ProductRecord catalogPickProduct(AsyncWebServerRequest* req) {
+    auto arg = [&](const char* k) { return formArg(req, k); };
+    ProductRecord prod;
+    strlcpy(prod.vendor,   arg("cat_vendor").c_str(),   sizeof(prod.vendor));
+    strlcpy(prod.material, arg("cat_material").c_str(), sizeof(prod.material));
+    strlcpy(prod.abbr,     arg("cat_abbr").c_str(),     sizeof(prod.abbr));
+    const String rgbaHex = arg("cat_rgba");
+    if (rgbaHex.length() == 8)
+        for (int i = 0; i < 4; i++)
+            prod.rgba[i] = (uint8_t)strtol(rgbaHex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
+    prod.dia = arg("cat_dia").toFloat();
+    if (prod.dia <= 0.0f) prod.dia = 1.75f;
+    prod.nom_g = arg("cat_nom_g").toFloat();
+    const float tareOvr = arg("empty_g").toFloat();   // 0 -> the catalog's own tare
+    prod.empty_g = (tareOvr > 0.0f) ? tareOvr : arg("cat_empty_g").toFloat();
+    strlcpy(prod.pkg_uuid,   arg("cat_pkg_uuid").c_str(),   sizeof(prod.pkg_uuid));
+    strlcpy(prod.mat_uuid,   arg("cat_mat_uuid").c_str(),   sizeof(prod.mat_uuid));
+    strlcpy(prod.brand_uuid, arg("cat_brand_uuid").c_str(), sizeof(prod.brand_uuid));
+    prod.gtin = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
+    return prod;
 }
 
 // For JSON string values (the /api/* endpoints): quote, backslash and control
@@ -1519,10 +1565,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
 
 static void handleApiProduct(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    auto arg = [&](const char* k) -> String {
-        const AsyncWebParameter* pp = req->getParam(k, true);
-        return pp ? pp->value() : String();
-    };
+    auto arg = [&](const char* k) { return formArg(req, k); };
     uint32_t id = (uint32_t)arg("id").toInt();
     ProductRecord q;
     if (!id || !storeGetProduct(id, q)) { req->send(404, "text/plain", "unknown product"); return; }
@@ -2648,10 +2691,7 @@ static uint32_t findOrCreateProduct(ProductRecord& probe) {
 // ── POST /api/onboard — apply the form, write the tag, log a reconcile ────────
 static void handleApiOnboard(AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    auto arg = [&](const char* k) -> String {
-        const AsyncWebParameter* pp = req->getParam(k, true);
-        return pp ? pp->value() : String();
-    };
+    auto arg = [&](const char* k) { return formArg(req, k); };
 
     uint32_t id = (uint32_t)arg("id").toInt();
     if (id == 0) { req->send(400, "text/plain", "missing id"); return; }
@@ -2796,25 +2836,12 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         // against the live DB, so these are the vendor's own published values,
         // not a local guess. No cfgMaterialByName/cfgColorByName lookup needed;
         // the catalog gave us the real numbers directly.
-        float tareOvr = arg("empty_g").toFloat();   // 0 → use catalog's own tare
-
-        vendor  = arg("cat_vendor");
-        display = arg("cat_material");
-        abbr    = arg("cat_abbr");
-        String rgbaHex = arg("cat_rgba");
-        if (rgbaHex.length() == 8)
-            for (int i = 0; i < 4; i++)
-                rgba[i] = (uint8_t)strtol(rgbaHex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
-
-        dia     = arg("cat_dia").toFloat();
-        if (dia <= 0.0f) dia = 1.75f;
-        nominal = arg("cat_nom_g").toFloat();
-        empty   = (tareOvr > 0.0f) ? tareOvr : arg("cat_empty_g").toFloat();
-
-        pkgUuid   = arg("cat_pkg_uuid");
-        matUuid   = arg("cat_mat_uuid");
-        brandUuid = arg("cat_brand_uuid");
-        gtin      = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
+        ProductRecord prod = catalogPickProduct(req);
+        vendor  = prod.vendor;  display = prod.material;  abbr = prod.abbr;
+        memcpy(rgba, prod.rgba, 4);
+        dia = prod.dia;  nominal = prod.nom_g;  empty = prod.empty_g;
+        pkgUuid = prod.pkg_uuid;  matUuid = prod.mat_uuid;  brandUuid = prod.brand_uuid;
+        gtin = prod.gtin;
 
         haveCatTemps = arg("cat_print_min").length() > 0;
         if (haveCatTemps) {
@@ -2830,16 +2857,6 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         haveMat = cfgMaterialByAbbr(abbr.c_str(), m);
         if (arg("cat_type").length()) catType = arg("cat_type").toInt();
 
-        ProductRecord prod;
-        strlcpy(prod.vendor,     vendor.c_str(),    sizeof(prod.vendor));
-        strlcpy(prod.material,   display.c_str(),   sizeof(prod.material));
-        strlcpy(prod.abbr,       abbr.c_str(),       sizeof(prod.abbr));
-        strlcpy(prod.pkg_uuid,   pkgUuid.c_str(),    sizeof(prod.pkg_uuid));
-        strlcpy(prod.mat_uuid,   matUuid.c_str(),    sizeof(prod.mat_uuid));
-        strlcpy(prod.brand_uuid, brandUuid.c_str(),  sizeof(prod.brand_uuid));
-        prod.gtin = gtin;
-        memcpy(prod.rgba, rgba, 4);
-        prod.dia = dia; prod.empty_g = empty; prod.nom_g = nominal;
         pid = findOrCreateProduct(prod);
 
         // So the next onboarding's catalog search starts on this pick (see
@@ -4085,10 +4102,7 @@ static void handleApiRepairMerge(AsyncWebServerRequest* req) {
     for (size_t i = 0; i < rows.size(); i++) cfgStockAt(i, rows[i]);
     for (CfgStock& s : rows) {
         if (s.product != from) continue;
-        s.product = keep.id;
-        strlcpy(s.vendor,   keep.vendor,   sizeof(s.vendor));
-        strlcpy(s.material, keep.material, sizeof(s.material));
-        s.color[0] = 0;
+        linkStockRow(s, keep);
         if (cfgStockUpdate(s.id, s)) rowsMoved++;
     }
     req->redirect("/repair?merged=" + String((unsigned)from) + "&into=" + String((unsigned)into)
@@ -4130,12 +4144,7 @@ static void handleApiRepairLink(AsyncWebServerRequest* req) {
         // As parseStockForm() links a row: the product's own identity, colour
         // left blank (the product's name already carries it).
         CfgStock& r = pk.row;
-        r.product = pk.prod.id;
-        strlcpy(r.vendor,   pk.prod.vendor,   sizeof(r.vendor));
-        strlcpy(r.material, pk.prod.material, sizeof(r.material));
-        r.color[0] = 0;
-        if (pk.prod.dia > 0)   r.dia = pk.prod.dia;
-        if (pk.prod.nom_g > 0) r.spool_g = pk.prod.nom_g;
+        linkStockRow(r, pk.prod);
         if (cfgStockUpdate(r.id, r)) n++;
     }
     req->redirect("/repair?linked=" + String((unsigned)n));
@@ -4340,10 +4349,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
 // (products, catalog rows, last-used memory), and a request that answers 400
 // must not have changed anything — see handleApiStockUpdate()'s comment.
 static String stockTareError(AsyncWebServerRequest* req) {
-    auto arg = [&](const char* k) -> String {
-        const AsyncWebParameter* pp = req->getParam(k, true);
-        return pp ? pp->value() : String();
-    };
+    auto arg = [&](const char* k) { return formArg(req, k); };
     if (arg("product").toInt() != 0) return String();
     float tare = arg("empty_g").toFloat();
     const bool catalog = arg("source") == "catalog" && arg("cat_vendor").length();
@@ -4358,10 +4364,7 @@ static String stockTareError(AsyncWebServerRequest* req) {
 // (findOrCreateProduct() matches by identifiers only), so it must say so --
 // the same rule as Restock's. Pure, like stockTareError().
 static String stockNewProductError(AsyncWebServerRequest* req) {
-    auto arg = [&](const char* k) -> String {
-        const AsyncWebParameter* pp = req->getParam(k, true);
-        return pp ? pp->value() : String();
-    };
+    auto arg = [&](const char* k) { return formArg(req, k); };
     if (arg("product").toInt() != 0) return String();
     if (arg("source") == "catalog" && arg("cat_vendor").length()) return String();
     if (arg("confirm_new") == "1") return String();
@@ -4412,10 +4415,7 @@ static String stockSubsFromForm(AsyncWebServerRequest* req, uint32_t rowId,
 }
 
 static CfgStock parseStockForm(AsyncWebServerRequest* req) {
-    auto arg = [&](const char* k) -> String {
-        const AsyncWebParameter* pp = req->getParam(k, true);
-        return pp ? pp->value() : String();
-    };
+    auto arg = [&](const char* k) { return formArg(req, k); };
     CfgStock s{};
     uint32_t pid = (uint32_t)arg("product").toInt();
 
@@ -4425,23 +4425,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
     // catalog path uses, so the same real filament picked from either page
     // converges on one product instead of two near-identical ones.
     if (!pid && arg("source") == "catalog" && arg("cat_vendor").length()) {
-        ProductRecord prod;
-        strlcpy(prod.vendor,   arg("cat_vendor").c_str(),   sizeof(prod.vendor));
-        strlcpy(prod.material, arg("cat_material").c_str(), sizeof(prod.material));
-        strlcpy(prod.abbr,     arg("cat_abbr").c_str(),     sizeof(prod.abbr));
-        String rgbaHex = arg("cat_rgba");
-        if (rgbaHex.length() == 8)
-            for (int i = 0; i < 4; i++)
-                prod.rgba[i] = (uint8_t)strtol(rgbaHex.substring(i * 2, i * 2 + 2).c_str(), nullptr, 16);
-        prod.dia = arg("cat_dia").toFloat();
-        if (prod.dia <= 0.0f) prod.dia = 1.75f;
-        prod.nom_g   = arg("cat_nom_g").toFloat();
-        const float tareOvr = arg("empty_g").toFloat();
-        prod.empty_g = (tareOvr > 0.0f) ? tareOvr : arg("cat_empty_g").toFloat();
-        strlcpy(prod.pkg_uuid,   arg("cat_pkg_uuid").c_str(),   sizeof(prod.pkg_uuid));
-        strlcpy(prod.mat_uuid,   arg("cat_mat_uuid").c_str(),   sizeof(prod.mat_uuid));
-        strlcpy(prod.brand_uuid, arg("cat_brand_uuid").c_str(), sizeof(prod.brand_uuid));
-        prod.gtin = strtoull(arg("cat_gtin").c_str(), nullptr, 10);
+        ProductRecord prod = catalogPickProduct(req);
         pid = findOrCreateProduct(prod);
         // So the next Add starts the catalog search on this pick. Only reached
         // past the handlers' 4xx checks, like lastStockSet() below.
@@ -4458,11 +4442,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
         // the full display string ("PLA Basic Fire Engine Red"), and
         // rollUp() above matches by product id directly, so there is
         // nothing left to recompose a name probe from.
-        s.product = q.id;   // not pid: a merged product's id resolves to its survivor
-        strlcpy(s.vendor,   q.vendor,   sizeof(s.vendor));
-        strlcpy(s.material, q.material, sizeof(s.material));
-        s.dia     = q.dia > 0 ? q.dia : 1.75f;
-        s.spool_g = q.nom_g;
+        linkStockRow(s, q);
     } else {
         // "+ Add new ..." sentinel from the manual picklists (see
         // vendorPickerField()/materialPickerField()/colorPickerField()) —
@@ -4542,11 +4522,7 @@ static CfgStock parseStockForm(AsyncWebServerRequest* req) {
 
         ProductRecord np;
         if (pid && storeGetProduct(pid, np)) {
-            s.product = np.id;
-            strlcpy(s.vendor,   np.vendor,   sizeof(s.vendor));
-            strlcpy(s.material, np.material, sizeof(s.material));
-            s.dia     = np.dia > 0 ? np.dia : 1.75f;
-            s.spool_g = np.nom_g;
+            linkStockRow(s, np);
         } else {
             // Should not happen (findOrCreateProduct() only fails if the
             // store write itself fails) -- fall back to the raw typed
@@ -5081,18 +5057,34 @@ static void handleConfigExport(AsyncWebServerRequest* req) {
 }
 
 static bool sConfigImportAuthed = false;
+// A full filesystem writes fewer bytes without failing; an upload that didn't
+// land whole is refused rather than validated in its truncated form.
+static bool sConfigImportShort = false;
+
+// One chunk of an upload onto its staging file; false if it didn't all land.
+static bool appendChunk(const char* path, size_t index, const uint8_t* data, size_t len) {
+    File f = LittleFS.open(path, index == 0 ? "w" : "a");
+    if (!f) return false;
+    const size_t n = f.write(data, len);
+    f.close();
+    return n == len;
+}
 
 static void handleConfigImportUpload(AsyncWebServerRequest* req, const String& filename,
                                       size_t index, uint8_t* data, size_t len, bool final) {
-    if (index == 0) sConfigImportAuthed = !apiKeyIsSet() || authOk(req);
+    if (index == 0) { sConfigImportAuthed = !apiKeyIsSet() || authOk(req); sConfigImportShort = false; }
     if (!sConfigImportAuthed) return;
-    File f = LittleFS.open(CONFIG_IMPORT_STAGING, index == 0 ? "w" : "a");
-    if (f) { f.write(data, len); f.close(); }
+    if (!appendChunk(CONFIG_IMPORT_STAGING, index, data, len)) sConfigImportShort = true;
 }
 
 static void handleConfigImportDone(AsyncWebServerRequest* req) {
     if (!sConfigImportAuthed) { LittleFS.remove(CONFIG_IMPORT_STAGING); return; }
     if (!authOk(req)) return;
+    if (sConfigImportShort) {
+        LittleFS.remove(CONFIG_IMPORT_STAGING);
+        req->send(507, "text/plain", "Restore refused: the station ran out of space storing the upload; nothing was changed");
+        return;
+    }
     // Buffered read, not File::readString() -- that reads one byte per VFS
     // call (Stream::timedRead() in a loop), the same trap CLAUDE.md's log-
     // reading gotcha warns about. This file is small, but there is no reason
@@ -5178,14 +5170,14 @@ static void handleCatalogueGet(AsyncWebServerRequest* req) {
 
 static bool sCatalogueImportAuthed = false;
 static bool sCatalogueTooBig = false;
+static bool sCatalogueShort = false;
 
 static void handleCatalogueImportUpload(AsyncWebServerRequest* req, const String& filename,
                                          size_t index, uint8_t* data, size_t len, bool final) {
-    if (index == 0) { sCatalogueImportAuthed = !apiKeyIsSet() || authOk(req); sCatalogueTooBig = false; }
+    if (index == 0) { sCatalogueImportAuthed = !apiKeyIsSet() || authOk(req); sCatalogueTooBig = sCatalogueShort = false; }
     if (!sCatalogueImportAuthed) return;
     if (index + len > CATALOGUE_MAX_BYTES) { sCatalogueTooBig = true; return; }   // Done refuses it
-    File f = LittleFS.open(CATALOGUE_STAGING, index == 0 ? "w" : "a");
-    if (f) { f.write(data, len); f.close(); }
+    if (!appendChunk(CATALOGUE_STAGING, index, data, len)) sCatalogueShort = true;
 }
 
 static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
@@ -5196,10 +5188,11 @@ static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
     char hd[257] = {};
     File f = LittleFS.open(CATALOGUE_STAGING, "r");
     if (f) { size = f.size(); hd[f.read((uint8_t*)hd, sizeof(hd) - 1)] = 0; f.close(); }
-    const bool ok = !sCatalogueTooBig && size > 0 && hd[0] == '{'
+    const bool ok = !sCatalogueTooBig && !sCatalogueShort && size > 0 && hd[0] == '{'
                  && strstr(hd, "\"count\"") && strstr(hd, "\"fields\"");
     if (!ok) {
         LittleFS.remove(CATALOGUE_STAGING);
+        if (sCatalogueShort) { req->send(507, "text/plain", "Catalogue refused: the station ran out of space storing it"); return; }
         req->send(400, "text/plain", sCatalogueTooBig
             ? "Catalogue refused: larger than " + String((unsigned)(CATALOGUE_MAX_BYTES / 1024)) + " KB"
             : String("Catalogue refused: not a station catalogue (build it with tools/esun-catalogue/make.sh)"));
@@ -5592,19 +5585,27 @@ static void handleExport(AsyncWebServerRequest* req) {
 // authOk() sends a 401 when it fails, and re-running it per chunk would emit a
 // response for every chunk of the body.
 static bool sImportAuthed = false;
+static bool sImportShort = false;   // a chunk didn't land whole (full filesystem)
 
 static void handleImportUpload(AsyncWebServerRequest* req, const String& filename,
                                size_t index, uint8_t* data, size_t len, bool final) {
-    if (index == 0) sImportAuthed = !apiKeyIsSet() || authOk(req);
+    if (index == 0) { sImportAuthed = !apiKeyIsSet() || authOk(req); sImportShort = false; }
     if (!sImportAuthed) return;      // discard the body; Done finishes the refusal
-    File f = LittleFS.open(IMPORT_STAGING, index == 0 ? "w" : "a");
-    if (f) { f.write(data, len); f.close(); }
+    if (!appendChunk(IMPORT_STAGING, index, data, len)) sImportShort = true;
 }
 
 // Called after the upload completes: validate + promote, or reject.
 static void handleImportDone(AsyncWebServerRequest* req) {
     if (!sImportAuthed) { LittleFS.remove(IMPORT_STAGING); return; }  // 401 already sent
     if (!authOk(req)) return;
+    // A truncated staging file would still validate (it has good lines) and
+    // replace the whole log with its first part: refuse it, change nothing.
+    if (sImportShort) {
+        LittleFS.remove(IMPORT_STAGING);
+        req->send(507, "text/plain", "Restore refused: the station ran out of space storing the upload; "
+                                      "the log was not changed");
+        return;
+    }
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
@@ -5797,12 +5798,12 @@ void webAppBegin() {
             "<!DOCTYPE html><body><h2>Resetting WiFi&hellip;</h2>"
             "<p>Credentials cleared; the device is restarting.</p>"
             "<p>Connect to <b>WeighStation-Setup</b> to reconfigure.</p></body>");
-        // Erase stored WiFi credentials (equivalent to WiFiManager::resetSettings)
-        // without pulling in WebServer.h, whose HTTP_* enum clashes with the async
-        // server's. syncTask's autoConnect reopens the portal on the next boot.
-        WiFi.disconnect(true, true);   // wifioff=true, eraseap=true
-        delay(400);                    // let the response flush before reboot
-        ESP.restart();
+        // syncTask erases the credentials and restarts a moment later. Not
+        // here: this runs on the async_tcp task, which is the one that would
+        // send the reply, so blocking it and restarting meant the page above
+        // was never delivered.
+        gWifiResetAtMs = millis() + 800;
+        if (gWifiResetAtMs == 0) gWifiResetAtMs = 1;
     });
     // GET still lands somewhere useful instead of 404ing, but only offers the
     // button — it changes nothing by itself.

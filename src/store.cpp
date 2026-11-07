@@ -50,6 +50,11 @@ static std::vector<UsageRow>     sUsage;   // permanent consumption rollup
 static std::vector<ProductRecord> sProducts; // permanent definitions
 static bool               sInvDirty = true;   // rebuild sInv lazily on next query
 static bool               sLogEndsNL = true;  // does the log end with a newline?
+// Lines in the log, or -1 when not known: counted once, then kept current by
+// each append, and forgotten whenever the file is replaced or a write is torn
+// (import, compaction, wipe). /api/storage asks on every request, and a full
+// count reads the whole log under the store lock.
+static long               sLogLines = -1;
 static bool               sWriteFailed = false; // last append was short/failed
 static uint32_t           sNextId  = 1;
 static uint32_t           sNextProdId = 1;
@@ -157,6 +162,7 @@ static String encodeBody(const StoreEvent& e) {
     if (e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
         b += "\"retired\":"; b += (e.retired ? "true" : "false"); b += ",";
     }
+    if (e.ev == StoreEv::Checkpoint && e.rebase) b += "\"rb\":1,";
     if (e.ev == StoreEv::Usage) {
         b += "\"vendor\":\""; b += jsonEsc(e.vendor);   b += "\",";
         b += "\"mat\":\"";    b += jsonEsc(e.material); b += "\",";
@@ -251,6 +257,7 @@ static bool decodeLine(const String& line, StoreEvent& e) {
     }
     if (e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire)
         e.retired = doc["retired"] | false;
+    if (e.ev == StoreEv::Checkpoint) e.rebase = (doc["rb"] | 0) != 0;
     if (e.ev == StoreEv::Usage) {
         strlcpy(e.vendor,   doc["vendor"] | "", sizeof(e.vendor));
         strlcpy(e.material, doc["mat"]    | "", sizeof(e.material));
@@ -492,7 +499,13 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
     }
 
     if (e.spool) r.spool = e.spool;
-    strlcpy(r.last_ts, e.ts, sizeof(r.last_ts));
+    // last_ts is when the spool was last physically handled (placed, weighed,
+    // found, retired): the audit's "found" test and the spool page's "Last
+    // weighed" both read it. A Reconcile (a rename, a merge, a product edit
+    // reaching every spool of it) or a tare rebase is a desk change, and used
+    // to mark every spool of a renamed product found mid-audit.
+    if (!(e.ev == StoreEv::Reconcile || (e.ev == StoreEv::Checkpoint && e.rebase)))
+        strlcpy(r.last_ts, e.ts, sizeof(r.last_ts));
     switch (e.ev) {
         // A checkpoint is the folded state of everything that came before it,
         // so it sets both halves of the record.
@@ -707,6 +720,7 @@ static void rebaseTareChange_(StoreEvent& e) {
     if (used > 0.0f) { used += r.remaining_g - rem; if (used < 0.0f) used = 0.0f; }
 
     e.ev          = StoreEv::Checkpoint;
+    e.rebase      = true;
     e.gross_g     = r.gross_g;
     e.remaining_g = rem;
     e.used_g      = used;
@@ -750,12 +764,21 @@ bool storeAppendEvent(const StoreEvent& in) {
         // itself after the next reboot.
         sWriteFailed = true;
         sLogEndsNL   = false;
+        sLogLines    = -1;   // a partial line may be on disk
         return false;
     }
 
     sWriteFailed = false;
     sLogEndsNL   = true;
-    applyEvent_(e);   // only once the bytes are durably on disk
+    if (sLogLines >= 0) sLogLines++;
+    // Only once the bytes are durably on disk, and as the log will replay
+    // them: the line rounds weights and prices (%.1f / %.2f), so applying the
+    // unrounded event made the live index differ from the one rebuilt at boot
+    // (a 170.25 g tare read 170.3 afterwards, and a tag then differed from its
+    // own record once). Static, not a local: the lock is held, and a second
+    // StoreEvent is ~400 B of stack on every caller.
+    static StoreEvent replayed;
+    applyEvent_(decodeLine(line, replayed) ? replayed : e);
     return true;
 }
 
@@ -849,6 +872,7 @@ size_t storeLogBytes() {
 
 size_t storeLogLineCount() {
     Lock lk;
+    if (sLogLines >= 0) return (size_t)sLogLines;
     if (!LittleFS.exists(LOG_PATH)) return 0;
     File f = LittleFS.open(LOG_PATH, "r");
     if (!f) return 0;
@@ -857,6 +881,7 @@ size_t storeLogLineCount() {
     String l;
     while (rd.next(l)) { l.trim(); if (l.length()) n++; }
     f.close();
+    sLogLines = (long)n;
     return n;
 }
 
@@ -952,8 +977,6 @@ bool storeUsageAt(size_t idx, UsageRow& out) {
 }
 
 // Defined with the matcher below (they are part of what it tests).
-static int productIndex_(uint32_t id);
-static int resolveProduct_(int i);
 
 // Listing skips merged products; at lab scale (tens of products) the linear
 // skip in storeProductAt() costs nothing worth an index.
@@ -1093,9 +1116,10 @@ bool storeFindProductByIds(const ProductRecord& probe, ProductRecord& out) {
     return true;
 }
 
-bool storeUpsertProduct(ProductRecord& p) {
-    if (p.id == 0) p.id = storeNextProductId();   // takes the lock itself
-    StoreEvent e;
+// The Product event for a record: one mapping for both writers, an upsert and
+// compaction's re-emission, so a new product field can't reach one and not the
+// other (merged_into once had to be added to both by hand).
+static void productEvent_(const ProductRecord& p, StoreEvent& e) {
     e.ev      = StoreEv::Product;
     e.product = p.id;
     strlcpy(e.pkg_uuid,   p.pkg_uuid,   sizeof(e.pkg_uuid));
@@ -1111,6 +1135,12 @@ bool storeUpsertProduct(ProductRecord& p) {
     e.dia = p.dia; e.empty_g = p.empty_g; e.nom_g = p.nom_g;
     e.provisional = p.provisional;
     e.merged_into = p.merged_into;
+}
+
+bool storeUpsertProduct(ProductRecord& p) {
+    if (p.id == 0) p.id = storeNextProductId();   // takes the lock itself
+    StoreEvent e;
+    productEvent_(p, e);
     return storeAppendEvent(e);            // takes the lock itself
 }
 
@@ -1630,7 +1660,7 @@ bool storeImportLogFile(const char* stagingPath) {
     // 2) Promote staging → live log (rename is cheap; byte-copy fallback).
     {
         Lock lk;
-        LittleFS.remove(LOG_PATH);
+        LittleFS.remove(LOG_PATH); sLogLines = -1;
         if (!LittleFS.rename(stagingPath, LOG_PATH)) {
             File in  = LittleFS.open(stagingPath, "r");
             File out = LittleFS.open(LOG_PATH, "w");
@@ -1787,22 +1817,8 @@ bool storeCompact() {
     for (const auto& p : sProducts) {
         if (!p.valid || !p.id) continue;
         StoreEvent x;
-        x.ev      = StoreEv::Product;
-        x.product = p.id;
+        productEvent_(p, x);   // merged_into included: a merge must survive the fold
         strlcpy(x.ts, p.last_ts[0] ? p.last_ts : "1970-01-01T00:00:00Z", sizeof(x.ts));
-        strlcpy(x.pkg_uuid,   p.pkg_uuid,   sizeof(x.pkg_uuid));
-        strlcpy(x.mat_uuid,   p.mat_uuid,   sizeof(x.mat_uuid));
-        strlcpy(x.brand_uuid, p.brand_uuid, sizeof(x.brand_uuid));
-        x.gtin = p.gtin;
-        strlcpy(x.vendor,   p.vendor,   sizeof(x.vendor));
-        strlcpy(x.material, p.material, sizeof(x.material));
-        strlcpy(x.abbr,     p.abbr,     sizeof(x.abbr));
-        memcpy(x.rgba, p.rgba, 4);
-        memcpy(x.lab, p.lab, sizeof(x.lab));
-        x.has_lab     = p.has_lab;
-        x.dia = p.dia; x.empty_g = p.empty_g; x.nom_g = p.nom_g;
-        x.provisional = p.provisional;
-        x.merged_into = p.merged_into;   // a merge must survive the fold
         if (!emit(encodeLine(x))) { ok = false; break; }
     }
 
@@ -1896,8 +1912,9 @@ bool storeCompact() {
 
     // 4) Promote. Try an atomic replace first; only fall back to
     //    remove-then-rename if the filesystem refuses to overwrite.
+    sLogLines = -1;
     if (!LittleFS.rename(COMPACT_TMP, LOG_PATH)) {
-        LittleFS.remove(LOG_PATH);
+        LittleFS.remove(LOG_PATH); sLogLines = -1;
         if (!LittleFS.rename(COMPACT_TMP, LOG_PATH)) {
             LittleFS.remove(COMPACT_TMP);
             rebuildIndices_();       // resync to whatever is actually on disk
@@ -2067,12 +2084,13 @@ bool storeSerialCommand(const String& lineIn) {
             f.close();
         }
         sLogEndsNL = false;   // next append will heal it with a leading newline
+        sLogLines  = -1;
         Serial.println("[store] appended a torn (crc-less, newline-less) tail line");
         return true;
     }
     if (cmd == "WIPE") {
         String sub = tok(line, pos); sub.toUpperCase();
-        LittleFS.remove(LOG_PATH);
+        LittleFS.remove(LOG_PATH); sLogLines = -1;
         // Put the empty file straight back. Without this, WIPE leaves the log
         // missing and every later read-open logs an ESP_LOGE — including the
         // rebuild on the next line and the compaction check a minute later.
