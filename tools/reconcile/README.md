@@ -29,6 +29,25 @@ product's name is only a label: renaming is safe, and Usage relabels itself.
 5. Restore `tools/reconcile/work/out/events.ndjson` and `config.json` to the
    station (Administration → Backup → Restore, log and config).
 
+## At the makerspace without the Mac: the station kit
+
+`build_station_kit.py decisions.xlsx [--commit main]` builds a folder for a thumb
+drive: `firmware.bin` (from a clean checkout of the commit), `reconcile.js`,
+`INSTRUCTIONS.html` and `SHA256.txt`. Any Windows PC with Chrome does the rest:
+Espressif's web flasher writes the firmware at `0x10000`, and `reconcile.js`,
+pasted into Chrome's console on a station page, applies the decisions in that
+page through the station's own API. It is the same logic as `apply.py` plus
+`remove_vendor.py` (test vendors are removed by fetching the log, dropping their
+lines and loading it back through Restore), with the same starting-point checks,
+a check-only pass first, backups downloaded before and after, and a final check.
+It refuses to run unless the station reports the kit's firmware build.
+
+Tested 2026-11-06 in the simulator: on the Nov 4 backup it reaches a state
+identical to `rehearse.sh --apply`; with weighs, a new spool and a hand-renamed
+product added afterwards, it keeps the weighs and the new spool, skips the renamed
+product, and applies the rest. `window.RECONCILE_NO_DOWNLOAD = true` before
+pasting suppresses the downloads (for tests).
+
 ## The rules
 
 0. **Lab corrections** in `overrides.json` win (e.g. #21's PLA+HS barcode, really

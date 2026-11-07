@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Weigh station: flash and reconcile</title>
+<style>
+body{font:15px/1.5 Arial,sans-serif;max-width:52em;margin:2em auto;padding:0 1em;color:#222}
+h1{font-size:1.5em}h2{font-size:1.2em;margin-top:1.8em;border-bottom:1px solid #ccc}
+code,kbd{background:#f2f2f2;padding:1px 5px;border-radius:3px;font-family:Consolas,monospace}
+.warn{background:#fff3cd;border-left:4px solid #e0a800;padding:.6em 1em}
+.stop{background:#fde2e2;border-left:4px solid #c00;padding:.6em 1em}
+li{margin:.35em 0}table{border-collapse:collapse}td{padding:2px 10px 2px 0;vertical-align:top}
+</style></head><body>
+<h1>Weigh station: flash and reconcile</h1>
+<p>Everything here runs in <b>Chrome</b> on the studio PC (or any Windows PC). Nothing to install.
+This kit:</p>
+<table>
+<tr><td>Firmware</td><td><code>{{BUILD}}</code> (commit {{COMMIT}}), {{SIZE}} bytes</td></tr>
+<tr><td>Decisions</td><td>{{DECISIONS}}: {{MERGES}} merges, {{RENAMES}} renames, remove test vendor(s) {{VENDORS}}</td></tr>
+</table>
+<p>Copy the whole kit folder from the thumb drive to the PC's Desktop first.</p>
+
+<h2>0. Check the firmware file (optional, 1 minute)</h2>
+<ol>
+<li>Open the kit folder, click the address bar, type <code>cmd</code>, press Enter.</li>
+<li>Type <code>certutil -hashfile firmware.bin SHA256</code> and press Enter.</li>
+<li>It must print <code>{{SHA256}}</code> (also in <code>SHA256.txt</code>). If not, copy the kit again.</li>
+</ol>
+
+<h2>1. Back up the station</h2>
+<ol>
+<li>In Chrome open the station (its address, or <code>http://weighstation.local</code>).</li>
+<li>Administration → Backup → <b>Download</b> both the log and the config. Keep them.</li>
+<li>Note: number of spools on Inventory ____, products on Administration → Products ____,
+    this month's Usage total ____ g, and one spool you can weigh (# ____, ____ g).</li>
+</ol>
+
+<h2>2. Flash the firmware</h2>
+<div class="warn">Nobody weighing. The station is down for a couple of minutes.</div>
+<ol>
+<li>Connect the PC to the station's panel <b>USB-C</b> port with a data cable.</li>
+<li>In Chrome open <code>https://espressif.github.io/esptool-js/</code> (Espressif's own web flasher).</li>
+<li>Under <b>Program</b>, leave Baudrate as it is and click <b>Connect</b>. Chrome lists serial ports:
+    pick the one named like <i>USB JTAG/serial debug unit</i> (or the new COM port), click <b>Connect</b>.
+    The page shows the chip: it should say <b>ESP32-S3</b>.</li>
+<li>In the flash table: <b>Flash Address</b> = <code>0x10000</code>, and choose <code>firmware.bin</code> from the kit folder.
+    One row only.</li>
+<li>Click <b>Program</b>. Wait for it to finish (about a minute or two).</li>
+<li>Click <b>Disconnect</b>, then restart the station: unplug its power for five seconds and plug it back in.</li>
+</ol>
+<div class="stop"><b>Never</b> click <i>Erase Flash</i>, and never write anything at any address but <code>0x10000</code>:
+the station's data (log, Stock List, settings) lives in the rest of the chip.</div>
+<p>The display comes back green: "Seattle Makers / Place spool to begin". (Orange "Join WiFi" means it
+didn't rejoin the network; see the manual.)</p>
+<p><b>Check:</b> the counts from step 1 match; the menu reads Inventory · Reorder · Restock · Usage ·
+Administration; weigh the noted spool, remaining is the same within a few grams; Restock → Or enter
+manually refuses to save until <b>This is a new product</b> is ticked. Reorder now lists an item once
+it's below half its target. Download another backup (Administration → Backup).</p>
+
+<h2>3. Reconcile</h2>
+<div class="warn">Nobody at the scale for the few minutes this takes.</div>
+<ol>
+<li>In Chrome, on any page of the <b>station</b> (not the flasher), press <kbd>F12</kbd> and click the <b>Console</b> tab.</li>
+<li>Open <code>reconcile.js</code> from the kit folder in Notepad (right-click → Open with → Notepad),
+    <kbd>Ctrl</kbd>+<kbd>A</kbd>, <kbd>Ctrl</kbd>+<kbd>C</kbd>.</li>
+<li>Click in the console, <kbd>Ctrl</kbd>+<kbd>V</kbd>, Enter. The first time, Chrome refuses and asks you to
+    type <code>allow pasting</code>: type it, press Enter, then paste again and press Enter.</li>
+<li>It <b>checks only</b> and prints what it would do. It must end in green
+    <i>Checks passed</i>. Red <i>SKIP</i> lines name anything that changed since the decisions were made;
+    those are left alone. If it says the firmware doesn't match, do step 2 first.</li>
+<li>Type <code>reconcile.apply()</code> and press Enter. When Chrome asks whether the station may download
+    multiple files, click <b>Allow</b>.</li>
+<li>It must end in green <i>Result checks out</i> and <i>Done</i>. Your Downloads folder now has
+    four new files: the backup before and the backup after.</li>
+</ol>
+<p>Then: on Administration → Products the names read like <i>PLA Basic Black</i>, <i>PETG Black</i>,
+<i>PLA Silk Mystic …</i>; no {{VENDORS}} products; Reorder has no "not linked" items.
+Erase the test spools' tags (Administration → Erase Tag) or bin them, or the station adopts them back
+when they're placed. Each spool's tag picks up its new name by itself the next time it's placed.</p>
+
+<h2>If something goes wrong</h2>
+<ul>
+<li><b>The flasher can't connect / no port listed:</b> try another cable (some only charge) or port.
+    The station keeps its old firmware until a flash completes.</li>
+<li><b>The reconcile prints red FAIL or PROBLEMS:</b> stop. Restore the <i>before-reconcile</i> files from
+    Downloads (Administration → Backup → Restore, log then config) and bring them to Claude.</li>
+<li><b>Something looks wrong after the flash:</b> prefer fixing forward with Claude. To go back, the old
+    firmware has to be built on the Mac (commit d99c83b), then restore the backup from step 1.</li>
+<li><b>Reboot loop or blank screen:</b> lift the spool off the scale and power-cycle.</li>
+</ul>
+</body></html>
