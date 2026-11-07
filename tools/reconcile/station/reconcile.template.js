@@ -58,11 +58,12 @@
                 pack_qty: s.pack_qty || 1, subs: subs.join(",") };
     return post("/api/stock/update", Object.assign(f, extra));
   }
-  // What step 5 would do now. After the renames, so names are the final ones;
-  // in the check, a name a rename is about to set counts as present.
-  function stockPlan(P, rows, renamedTo) {
+  // What step 5 would do, given the products as they will be by then (P with
+  // the merges and renames applied: before them, a Basic product and its PLA+
+  // look-alike can share a name).
+  function stockPlan(P, rows) {
     const todo = { relink: [], subs: [], skip: [] };
-    const named = (n) => byName(P, n) || (renamedTo[n] ? P[renamedTo[n]] : null);
+    const named = (n) => byName(P, n);
     const itemFor = (n) => { const p = named(n); const h = rows.filter((s) => p && s.product === p.id); return h.length === 1 ? h[0] : null; };
     const relinked = {};
     for (const r of SK.relink) {
@@ -142,8 +143,10 @@
       if (p.vendor !== r.vendorNow || p.material !== r.nameNow) { plan.skip.push(`${what}: station has "${p.vendor} ${p.material}"`); continue; }
       plan.renames.push(r);
     }
-    const renamedTo = Object.fromEntries(plan.renames.map((r) => [r.name, r.id]));
-    const sp = stockPlan(P, (await getJ("/config/export"))["stock-items"], renamedTo);
+    const Pn = {};
+    for (const [id, p] of Object.entries(P)) if (!losers.has(+id)) Pn[id] = Object.assign({}, p);
+    for (const r of plan.renames) if (Pn[r.id]) { Pn[r.id].vendor = r.vendor; Pn[r.id].material = r.name; }
+    const sp = stockPlan(Pn, (await getJ("/config/export"))["stock-items"]);
     plan.stock = sp; plan.skip.push(...sp.skip);
     out(`merges to do: ${plan.merges.length}   renames to do: ${plan.renames.length}   Stock List items to repoint: ${sp.relink.length}   substitute changes: ${sp.subs.length}   already done: ${plan.done.length}   skipped: ${plan.skip.length}`);
     if (plan.merges.length) console.table(plan.merges.map((m) => ({ merge: `#${m.from} ${m.fromName}`, into: `#${m.into}` })));
