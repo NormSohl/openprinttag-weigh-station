@@ -95,7 +95,75 @@ for r in P:
     if st in (200, 302, 303): done(what + (f' (abbr {p["abbr"]} -> {abbr})' if abbr != p["abbr"] else ""))
     else: skip(what, f"HTTP {st} {body}")
 
-# ---- 3. Stock List labels follow their linked product
+# ---- 3. Stock List: items that point at a different product, and substitutes
+# (stockplan.py, from overrides.json). Through the Stock List's own update, so
+# the station checks the substitute rules; each item's target and other fields
+# are sent back unchanged.
+import stockplan
+SP = stockplan.build()
+
+
+def by_name(prods, name):
+    hit = [p for p in prods.values() if p["vendor"] == SP["vendor"] and p["material"] == name]
+    return hit[0] if len(hit) == 1 else None
+
+
+def item_of(rows, prods, name):
+    p = by_name(prods, name)
+    hit = [s for s in rows if p and s.get("product") == p["id"]]
+    return (hit[0] if len(hit) == 1 else None), p
+
+
+def stock_update(s, extra, subs):
+    f = {"id": s["id"], "min_spools": s.get("min_spools", 0), "min_grams": s.get("min_grams", 0),
+         "gtin": s.get("gtin", ""), "pack_qty": s.get("pack_qty", 1), "subs": ",".join(map(str, subs))}
+    f.update(extra)
+    return post("/api/stock/update", f)
+
+
+prods = products()
+rows = get("/config/export")["stock-items"]
+for r in SP["relink"]:
+    what = f'Stock List "{r["old"]}" -> "{r["new"]}"'
+    s, old = item_of(rows, prods, r["old"])
+    if not s:
+        if item_of(rows, prods, r["new"])[0]: print("DONE ", what, "(already)")
+        else: skip(what, f'no single Stock List item linked to "{r["old"]}"')
+        continue
+    new = by_name(prods, r["new"])
+    if new: extra = {"product": new["id"]}
+    else:   # a new product from the catalogue row, with the old product's tare
+        extra = dict(r["cat"], source="catalog", product=0,
+                     empty_g=old["empty_g"] if old["empty_g"] > 0 else SP["defaultTare"])
+    extra["gtin"] = ""   # the item's own barcode was the old product's: the product carries one now
+    subs = [x for x in s.get("subs", []) if x] + [old["id"]]
+    if DRY: done(what + (f' (product #{new["id"]})' if new else " (new product from the catalogue)") + " (dry run)"); continue
+    st, body = stock_update(s, extra, subs)
+    if st in (200, 302, 303): done(what)
+    else: skip(what, f"HTTP {st} {body}")
+
+prods = products()
+rows = get("/config/export")["stock-items"]
+for sub in SP["subs"]:
+    s, _ = item_of(rows, prods, sub["item"])
+    if not s and DRY:
+        s = next((s for s in rows for r in SP["relink"] if r["new"] == sub["item"]
+                  and s.get("product") == (by_name(prods, r["old"]) or {}).get("id")), None)
+    what = f'substitutes for "{sub["item"]}": {", ".join(sub["products"])}'
+    if not s: skip(what, "no single Stock List item for it"); continue
+    have = [x for x in s.get("subs", []) if x]
+    want = list(have)
+    for n in sub["products"]:
+        p = by_name(prods, n)
+        if not p: skip(f'"{n}" counts toward "{sub["item"]}"', "no such product"); continue
+        if p["id"] not in want and p["id"] != s.get("product"): want.append(p["id"])
+    if want == have: print("DONE ", what, "(already)"); continue
+    if DRY: done(what + " (dry run)"); continue
+    st, body = stock_update(s, {"product": s["product"]}, want)
+    if st in (200, 302, 303): done(what)
+    else: skip(what, f"HTTP {st} {body}")
+
+# ---- 4. Stock List labels follow their linked product
 prods = products()
 cfg = get("/config/export")
 rows = cfg["stock-items"]

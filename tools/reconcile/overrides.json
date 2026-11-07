@@ -6,5 +6,55 @@
       "note": "lab correction 2026-11-06: the HS is wrong, this is PLA+ Magenta (its barcode is eSUN's PLA+HS Magenta)"
     }
   },
-  "remove_vendors": ["Cabbage"]
+  "remove_vendors": [
+    "Cabbage"
+  ],
+  "stock": {
+    "_comment": "Lab decisions 2026-11-06, by product name (eSUN, after the renames). relink: the Stock List item now linked to the first product is pointed at the second instead (the lab orders PLA+, not PLA Basic), created from the eSUN US catalogue if the station has no such product; the old product then counts toward it as a substitute. substitutes: products that count toward the item linked to the named product.",
+    "relink": {
+      "PLA Basic Black": "PLA+ Black",
+      "PLA Basic Beige": "PLA+ Beige",
+      "PLA Basic Blue": "PLA+ Blue",
+      "PLA Basic Grey": "PLA+ Grey",
+      "PLA Basic Light Blue": "PLA+ Light Blue",
+      "PLA Basic Orange": "PLA+ Orange",
+      "PLA Basic Pink": "PLA+ Pink",
+      "PLA Basic Purple": "PLA+ Purple",
+      "PLA Basic White": "PLA+ White",
+      "PLA Basic Yellow": "PLA+ Yellow",
+      "PETG Basic White": "PETG White"
+    },
+    "substitutes": {
+      "PETG Black": [
+        "PETG Basic Black"
+      ],
+      "PETG Blue": [
+        "PETG Basic Blue"
+      ],
+      "PETG Grey": [
+        "PETG Basic Grey"
+      ],
+      "PETG Red": [
+        "PETG Basic Red"
+      ],
+      "PETG Natural": [
+        "PETG Basic Clear"
+      ],
+      "PLA+ Fire Engine Red": [
+        "PLA Basic Fire Engine Red"
+      ],
+      "PLA+ Yellow": [
+        "PLA+ Yellow Refill"
+      ],
+      "PLA+ Light Brown": [
+        "PLA+ Brown"
+      ],
+      "PLA+ Grass Green": [
+        "PLA+ Peak Green"
+      ],
+      "PLA Silk Silver": [
+        "PLA Basic Silver"
+      ]
+    }
+  }
 }
