@@ -1,0 +1,10 @@
+{
+  "_comment": "Lab corrections that override the barcode rule, and vendors whose products are test data. Edit here, not in the scripts.",
+  "products": {
+    "21": {
+      "pn": "PLA+175O-PP1P1",
+      "note": "lab correction 2026-11-06: the HS is wrong, this is PLA+ Magenta (its barcode is eSUN's PLA+HS Magenta)"
+    }
+  },
+  "remove_vendors": ["Cabbage"]
+}
