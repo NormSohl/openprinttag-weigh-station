@@ -39,6 +39,29 @@ for s in g("/config/export")["stock-items"]:
         bad.append(f"Stock List #{s['id']} still links merged #{s['product']}")
     elif s.get("product") in pn and (s["vendor"], s["material"]) != tuple(pn[s["product"]][:2]):
         bad.append(f"Stock List #{s['id']} reads {s['vendor']} {s['material']}")
+# The Stock List step (stockplan.py): items repointed, substitutes counted.
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stockplan
+SP = stockplan.build()
+live = {p["id"]: p for p in g("/api/products")}
+rows = g("/config/export")["stock-items"]
+def item(name):
+    ids = [p["id"] for p in live.values() if p["vendor"] == SP["vendor"] and p["material"] == name]
+    hit = [s for s in rows if len(ids) == 1 and s.get("product") == ids[0]]
+    return hit[0] if len(hit) == 1 else None
+for r in SP["relink"]:
+    if item(r["old"]): bad.append(f'Stock List item "{r["old"]}" still points at it, not "{r["new"]}"')
+    elif not item(r["new"]): bad.append(f'no Stock List item points at "{r["new"]}"')
+for x in SP["subs"]:
+    s = item(x["item"])
+    if not s: bad.append(f'no Stock List item for "{x["item"]}"'); continue
+    for n in x["products"]:
+        ids = [p["id"] for p in live.values() if p["vendor"] == SP["vendor"] and p["material"] == n]
+        if len(ids) != 1 or ids[0] not in s.get("subs", []): bad.append(f'"{n}" does not count toward "{x["item"]}"')
+stock_rows = g("/api/stock")["items"]
+n_subs = sum(len(s.get("substitutes", [])) for s in stock_rows)
+print(f"Stock List: {len(SP['relink'])} items repointed, {n_subs} substitute links counting")
 for k in ("spools", "active", "stock", "usage_by_month", "usage_total"):
     if B[k] != A[k]:
         bad.append(f"{k} changed: {B[k]} -> {A[k]}")

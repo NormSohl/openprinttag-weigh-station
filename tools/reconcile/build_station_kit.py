@@ -46,6 +46,9 @@ for r in wb["Products"].iter_rows(min_row=2, values_only=True):
     if r[17] == "Apply" and changes & {"name", "vendor"}:
         renames.append(dict(id=r[0], vendorNow=r[1], nameNow=r[2], vendor=r[11], name=r[12]))
 ovr = json.load(open(os.path.join(HERE, "overrides.json")))
+sys.path.insert(0, HERE)
+import stockplan
+stock = stockplan.build(ovr)
 
 # ---- firmware from a clean checkout
 commit = git("rev-parse", a.commit)
@@ -77,18 +80,19 @@ shutil.copyfile(cat_src, os.path.join(out, "station-catalogue.json"))
 
 kit = dict(build="g" + short, buildVersion=build, commit=commit, decisions=os.path.basename(a.decisions),
            removeVendors=ovr.get("remove_vendors", []), abbrBack={"PLA Basic": "PLA", "PETG Basic": "PETG"},
-           merges=merges, renames=renames, catalogue=dict(date=cat_head["date"], count=cat_head["count"]))
+           merges=merges, renames=renames, stock=stock, catalogue=dict(date=cat_head["date"], count=cat_head["count"]))
 tpl = open(os.path.join(HERE, "station", "reconcile.template.js")).read()
 js = tpl.replace("/*KIT*/null/*END*/", json.dumps(kit, ensure_ascii=False, indent=1))
 open(os.path.join(out, "reconcile.js"), "w", encoding="utf-8").write(js)
 
 ins = open(os.path.join(HERE, "station", "INSTRUCTIONS.template.html"), encoding="utf-8").read()
 for k, v in {"BUILD": build, "COMMIT": short, "SHA256": sha, "SIZE": f"{len(fw):,}",
-             "MERGES": str(len(merges)), "RENAMES": str(len(renames)),
+             "MERGES": str(len(merges)), "RENAMES": str(len(renames)), "RELINKS": str(len(stock["relink"])),
              "VENDORS": ", ".join(ovr.get("remove_vendors", [])) or "none",
              "DECISIONS": html.escape(os.path.basename(a.decisions)),
              "CATDATE": cat_head["date"], "CATCOUNT": str(cat_head["count"])}.items():
     ins = ins.replace("{{" + k + "}}", v)
 open(os.path.join(out, "INSTRUCTIONS.html"), "w", encoding="utf-8").write(ins)
 print(f"kit: {out}\n  firmware {build} ({len(fw):,} bytes, sha256 {sha[:16]}…)\n"
-      f"  decisions: {len(merges)} merges, {len(renames)} renames, remove {kit['removeVendors']}")
+      f"  decisions: {len(merges)} merges, {len(renames)} renames, {len(stock['relink'])} Stock List relinks, "
+      f"{sum(len(x['products']) for x in stock['subs'])} substitute links, remove {kit['removeVendors']}")
