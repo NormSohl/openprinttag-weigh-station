@@ -108,3 +108,10 @@ stand-ins to an item, and `not_stocked` records what was deliberately left
 unlinked (a note only). `stockplan.py` turns them into the plan that
 `apply.py` and the kit's `reconcile.js` both apply through `/api/stock/update`,
 and `verify.py` checks.
+
+## Testing a kit
+
+`tools/sim/.deps/venv/bin/python tools/reconcile/test_kit.py KIT_DIR LOG CONFIG --after after.json`
+runs the kit's `reconcile.js` in a fresh simulator loaded with that backup and
+the kit's catalogue, applies it, and checks a second run plans nothing. Compare
+`after.json` with `rehearse.sh`'s `work/after.json`: they must be identical.
