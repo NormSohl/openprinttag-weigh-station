@@ -14,7 +14,9 @@ Orderable variants only. Each row carries what a product and a tag need:
   pkg/mat   OpenPrintTag package and material UUIDs: the database's own where it
             has the item, else derived exactly as the spec does (UUIDv5 of brand +
             gtin for a package, brand + material name for a material), so a later
-            database entry for the same item carries the same IDs
+            database entry for the same item carries the same IDs. An item with no
+            barcode gets brand + eSUN part number for its package, so every item
+            has one: that is what keeps a refill and its spool two products
 Every row carries its final values: the station copies them and computes nothing.
 Short code, material type and print/bed temperatures come per material (PLA+,
 PETG Basic, ...) from the database's records for that material, else from the
@@ -57,6 +59,9 @@ def yaml_scalar(text, key):
 # ---- OpenPrintTag records
 _, pk = opt_packages()
 pkg_by_slug = {p["slug"]: p for p in pk}
+# A database package ID is trusted only when no other package carries it (the
+# database has one ID on two colours of PETG Matte); otherwise it is derived.
+PKG_ID_COUNT = collections.Counter(p["uuid"] for p in pk if p["uuid"])
 OM = {}   # material slug -> record
 for f in os.listdir(os.path.join(OPT_DIR, "materials", "esun")):
     t = open(os.path.join(OPT_DIR, "materials", "esun", f)).read()
@@ -138,7 +143,13 @@ for c in sorted(CAT, key=lambda c: (c["material"], c["colour"], c["size"] or 0, 
     gtin = c["barcode"] if c["barcode"] and "," not in c["barcode"] else ""
     base_name = label(dict(c, size=1, packaging="Paper spool"))   # the material, without packaging
     mat_uuid = m["uuid"] if m else uuid5(NS_MATERIAL, BRAND.bytes, base_name.encode()).hex
-    pkg_uuid = p["uuid"] if p else (uuid5(NS_PACKAGE, BRAND.bytes, gtin.encode()).hex if gtin else "")
+    # No barcode: the spec gives no derivation, so name the package by eSUN's
+    # part number instead (same namespace, and a part number is never all
+    # digits, so it cannot collide with a barcode's). Without one, a refill and
+    # its spool of the same weight would share every identifier and become one
+    # product.
+    own = p["uuid"] if p and PKG_ID_COUNT[p["uuid"]] == 1 else ""
+    pkg_uuid = own or uuid5(NS_PACKAGE, BRAND.bytes, (gtin or c["pn"]).encode()).hex
     tare = None
     if p:
         t = open(os.path.join(OPT_DIR, "material-packages", "esun", p["slug"] + ".yaml")).read()

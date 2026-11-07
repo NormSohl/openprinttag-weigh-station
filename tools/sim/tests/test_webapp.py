@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Norm Sohl
 """End-to-end tests of the real web app (src/web_app.cpp) in the simulator."""
+import collections
 import json
 import time
 
@@ -1055,7 +1056,16 @@ _CAT_ITEMS = [
      "PLA+ Black Refill · 6922572208148", "PLA Pro", 0, "6922572208148", "000000ff", None, _BRAND,
      "7f73a76f429f5054827b94d2dbeff33c", "b1e17cfb4cc85181b88076343255214b", [210, 230, 45, 60]],
     ["PETG+175H1P1", "PETG+175H", "PETG+", "Grey", 1000, 1.75, "Paper spool", "PETG+ Grey",
-     "PETG+ Grey", "PETG", 1, "", "", None, _BRAND, "", "5d0aa0e2a8b25b6e9d5c2bf8c2a8f9f1", [230, 250, 75, 90]],
+     "PETG+ Grey", "PETG", 1, "", "", None, _BRAND, "93a4a0ad1bf25c13a7c1f7c2c1d6e0aa",
+     "5d0aa0e2a8b25b6e9d5c2bf8c2a8f9f1", [230, 250, 75, 90]],
+    # A spool with a barcode and its refill without one, as eSUN US sells
+    # 16 PLA+ colours: same filament, same weight, two products.
+    ["PLA+175U1P1", "PLA+175U", "PLA+", "Aqua", 1000, 1.75, "Paper spool", "PLA+ Aqua",
+     "PLA+ Aqua · 6922572218796", "PLA Pro", 0, "6922572218796", "00b0c0ff", None, _BRAND,
+     "4c1d2e3f405162738495a6b7c8d9eaf0", "a1a2a3a4a5a6a7a8a9aaabacadaeafb0", [210, 230, 45, 60]],
+    ["PLA+175U1R1", "PLA+175U", "PLA+", "Aqua", 1000, 1.75, "Refill", "PLA+ Aqua Refill",
+     "PLA+ Aqua Refill", "PLA Pro", 0, "", "00b0c0ff", None, _BRAND,
+     "5d2e3f40516273849506a7b8c9daebf1", "a1a2a3a4a5a6a7a8a9aaabacadaeafb0", [210, 230, 45, 60]],
 ]
 
 
@@ -1082,13 +1092,13 @@ def _pick(page, field, text):
 def test_catalogue_upload_is_checked_and_shown_on_administration(sim, page):
     page.goto(sim.url("/config"))
     assert "None loaded" in page.inner_text("#catalogue-status")
-    assert _upload_catalogue(sim) == {"count": 3, "date": "2026-11-06"}
+    assert _upload_catalogue(sim) == {"count": len(_CAT_ITEMS), "date": "2026-11-06"}
     import urllib.error
     with pytest.raises(urllib.error.HTTPError):   # not a catalogue: refused ...
         sim.upload("/catalogue/import?json=1", b"{\"vendors\":[]}", filename="x.json")
-    assert sim.get_json("/catalogue.json")["count"] == 3   # ... and the loaded one kept
+    assert sim.get_json("/catalogue.json")["count"] == len(_CAT_ITEMS)   # ... and the loaded one kept
     page.goto(sim.url("/config"))
-    assert "3 items" in page.inner_text("#catalogue-status")
+    assert "%d items" % len(_CAT_ITEMS) in page.inner_text("#catalogue-status")
 
 
 def test_restock_searches_the_catalogue_offline_and_copies_its_values(sim, page):
@@ -1120,18 +1130,39 @@ def test_restock_searches_the_catalogue_offline_and_copies_its_values(sim, page)
     assert page.js_errors == []
 
 
+def _restock_catalogue_item(sim, pn):
+    """Save the spool on the scale as catalogue item `pn`, posting exactly the
+    fields a pick fills."""
+    it = dict(zip(_CAT_FIELDS, next(i for i in _CAT_ITEMS if i[0] == pn)))
+    sim.blank(gross=1220)
+    spool = sim.get_json("/_sim/state")["spool"]
+    sim._post("/api/onboard", id=spool, source="catalog", profile="", empty_g=200,
+              cat_vendor="eSUN", cat_material=it["name"], cat_abbr=it["abbr"], cat_type=it["type"],
+              cat_dia=1.75, cat_nom_g=it["size_g"], cat_brand_uuid=_BRAND, cat_gtin=it["gtin"],
+              cat_pkg_uuid=it["pkg_uuid"], cat_mat_uuid=it["mat_uuid"])
+    sim.remove()
+
+
 def test_the_same_catalogue_item_twice_is_one_product(sim, page):
-    """Even without a barcode: the material ID + weight finds it again."""
+    """Even without a barcode: the item's package ID finds it again."""
     _upload_catalogue(sim)
     for _ in range(2):
-        sim.blank(gross=1220)
-        spool = sim.get_json("/_sim/state")["spool"]
-        sim._post("/api/onboard", id=spool, source="catalog", profile="", empty_g=200,
-                  cat_vendor="eSUN", cat_material="PETG+ Grey", cat_abbr="PETG", cat_type=1, cat_dia=1.75,
-                  cat_nom_g=1000, cat_brand_uuid=_BRAND, cat_mat_uuid="5d0aa0e2a8b25b6e9d5c2bf8c2a8f9f1")
-        sim.remove()
+        _restock_catalogue_item(sim, "PETG+175H1P1")
     prods = [p for p in sim.get_json("/api/products") if p["material"] == "PETG+ Grey"]
     assert len(prods) == 1
+
+
+@pytest.mark.parametrize("order", [("PLA+175U1P1", "PLA+175U1R1"), ("PLA+175U1R1", "PLA+175U1P1")])
+def test_a_spool_and_its_refill_are_two_products(sim, page, order):
+    """Same filament, same 1 kg: only the package tells them apart, and it must,
+    whichever arrives first. Then a second box of each finds its own."""
+    _upload_catalogue(sim)
+    for pn in order + order:
+        _restock_catalogue_item(sim, pn)
+    prods = {p["material"]: p["id"] for p in sim.get_json("/api/products") if "Aqua" in p["material"]}
+    assert sorted(prods) == ["PLA+ Aqua", "PLA+ Aqua Refill"]
+    per = collections.Counter(s["product"] for s in sim.get_json("/api/spools"))
+    assert per[prods["PLA+ Aqua"]] == 2 and per[prods["PLA+ Aqua Refill"]] == 2
 
 
 def test_manual_entry_with_esun_lists_esun_materials(sim, page):

@@ -44,7 +44,7 @@ any spreadsheet be rebuilt exactly.
 | `optmatch.py` | Is each variant in the OpenPrintTag database: this package, the colour only, or not at all. |
 | `build_catalogue.py` | The master spreadsheet, and `work/catalogue_full.json` for `tools/reconcile`. |
 | `build_comparison.py` | The Lieske comparison spreadsheet. |
-| `station_catalogue.py` | `work/station-catalogue.json`: the station's own copy (orderable items only), loaded on Administration → eSUN US catalogue. Every row carries its final values (name, list label, short code, material type, temperatures, colour, barcode, OpenPrintTag IDs); the station copies them and computes nothing. IDs are the database's where it has the item, else derived as the spec does (UUIDv5 from brand + barcode / brand + material name), so a later database entry for the same item carries the same IDs. |
+| `station_catalogue.py` | `work/station-catalogue.json`: the station's own copy (orderable items only), loaded on Administration → eSUN US catalogue. Every row carries its final values (name, list label, short code, material type, temperatures, colour, barcode, OpenPrintTag IDs); the station copies them and computes nothing. IDs are the database's where it has the item, else derived as the spec does (UUIDv5 from brand + barcode / brand + material name), so a later database entry for the same item carries the same IDs. An item without a barcode gets its package ID from brand + eSUN part number, so every item has its own (a spool and its refill must stay two products); a database package ID shared by two packages is not used. |
 
 `esunlib.py` holds what they share.
 

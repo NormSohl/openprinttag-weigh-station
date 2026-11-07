@@ -64,6 +64,23 @@ int main() {
     CHECK(i<0,                          "unknown product creates rather than matches");
     (void)p3;
 
+    // A 1 kg spool and a 1 kg refill of the same filament: same material_uuid,
+    // same weight, different packages. Neither may land on the other.
+    const char* MAT_Y = "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy";
+    const char* PKG_SPOOL  = "11111111111111111111111111111111";
+    const char* PKG_REFILL = "22222222222222222222222222222222";
+    uint32_t sp = add("eSUN","PLA+ Aqua","PLA+",1000, PKG_SPOOL, MAT_Y, 6922572218796ULL);
+    i = findProduct_(probe("eSUN","PLA+ Aqua Refill",1000,PKG_REFILL,MAT_Y), false);
+    CHECK(i<0, "3) a refill (own package id, no barcode) is not its spool");
+    i = findProduct_(probe("eSUN","PLA+ Aqua Refill",1000,"",MAT_Y,6922572299999ULL), false);
+    CHECK(i<0, "3) a refill with its own barcode is not its spool");
+    uint32_t rf = add("eSUN","PLA+ Aqua Refill","PLA+",1000, "", MAT_Y, 6922572299999ULL);
+    i = findProduct_(probe("eSUN","PLA+ Aqua",1000,PKG_SPOOL,MAT_Y), false);
+    CHECK(i>=0 && sProducts[i].id==sp, "1) the spool still finds itself by package id");
+    i = findProduct_(probe("eSUN","",1000,"",MAT_Y), false);
+    CHECK(i>=0, "3) a probe naming no package still matches on material + weight");
+    (void)rf;
+
     // A tag with a package_uuid we have never seen must NOT fall through to a
     // name match on a different SKU that happens to share the name.
     i = findProduct_(probe("Prusament","PETG Orange",1000,"ffffffffffffffffffffffffffffffff"));

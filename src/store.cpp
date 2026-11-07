@@ -1050,11 +1050,18 @@ static int findProductRaw_(const ProductRecord& q, bool byName) {
             if (sProducts[i].gtin == q.gtin) return (int)i;
     // 3) material_uuid is one level too COARSE on its own — it is shared by
     //    every size of the same filament — so it only identifies a product
-    //    together with the nominal weight.
+    //    together with the nominal weight. Weight is not always enough: a 1 kg
+    //    spool and a 1 kg refill of one filament share both. So when the probe
+    //    AND the candidate each name their package (package_uuid or GTIN),
+    //    rungs 1 and 2 have already shown those packages differ, and this rung
+    //    must not join them; it only fills in for a side that names none.
+    const bool qPkg = q.pkg_uuid[0] || q.gtin;
     if (q.mat_uuid[0])
-        for (size_t i = 0; i < sProducts.size(); i++)
-            if (!strcasecmp(sProducts[i].mat_uuid, q.mat_uuid) &&
-                nomEq_(sProducts[i].nom_g, q.nom_g)) return (int)i;
+        for (size_t i = 0; i < sProducts.size(); i++) {
+            const ProductRecord& c = sProducts[i];
+            if (qPkg && (c.pkg_uuid[0] || c.gtin)) continue;
+            if (!strcasecmp(c.mat_uuid, q.mat_uuid) && nomEq_(c.nom_g, q.nom_g)) return (int)i;
+        }
     // 4) Names. What makes the second Prusament PETG Orange find the first
     //    instead of creating a product and listing the filament twice. Only
     //    for tags (adoption), whose products start provisional.
