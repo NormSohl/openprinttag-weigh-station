@@ -19,6 +19,7 @@ extern SemaphoreHandle_t    gWeightMutex;
 extern uint8_t              gTagUid[8];
 extern OptMeta              gTagMeta;
 extern OptMain              gTagMain;
+extern volatile bool        gTagJustFormatted;
 extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
@@ -522,6 +523,9 @@ void nfcTask(void* param) {
                     gTagMeta = meta;
                     gTagMain = main;
                     gTagAux  = aux;
+                    gTagJustFormatted = false;
+                    gWriteMainPending = false;   // anything queued was for the previous tag
+                    gWriteAuxPending  = false;
                     xSemaphoreGive(gTagMutex);
                     // syncTask resolves instance_uuid against the local store and
                     // transitions to WeighingAndSync (known) or ForeignTagFound (new)
@@ -679,6 +683,9 @@ void nfcTask(void* param) {
             gTagMeta = initMeta;
             gTagMain = {};   // nil UUID — syncTask creates a stub Spool with needs_onboarding=true
             gTagAux  = {};
+            gTagJustFormatted = true;
+            gWriteMainPending = false;   // anything queued was for the previous tag
+            gWriteAuxPending  = false;
             xSemaphoreGive(gTagMutex);
 
             // syncTask sees the nil UUID, mints a local stub record, and
@@ -711,16 +718,23 @@ void nfcTask(void* param) {
             continue;
         }
 
-        if (!tagPresent) {
-            if (++missCount >= 2) {
+        // A different chip answering is a removal of this one, at once: a
+        // spool swapped in under ~0.4 s used to keep this phase Held for the
+        // old UID, so the new spool was never classified or weighed. Writes
+        // queued for the old tag are dropped, never aimed at the new one.
+        const bool otherChip = tagPresent && memcmp(detectedUid, uid, 8) != 0;
+        if (!tagPresent || otherChip) {
+            if (otherChip || ++missCount >= 2) {
                 missCount = 0;
                 sRawLen = 0;
                 sPayloadOffset = SIZE_MAX;
                 sPayloadLen    = 0;
+                gWriteMainPending = false;
+                gWriteAuxPending  = false;
                 ctrlPost(CtrlEvent::ReturnToIdle);
                 phase = NfcPhase::Waiting;
             }
-            vTaskDelay(pdMS_TO_TICKS(200));
+            vTaskDelay(pdMS_TO_TICKS(otherChip ? 10 : 200));
             continue;
         }
         missCount = 0;

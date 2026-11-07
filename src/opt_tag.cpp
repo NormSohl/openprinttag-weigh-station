@@ -324,6 +324,29 @@ bool optIsBlank(const uint8_t* tagBytes, size_t len) {
     return (payload[0] == 0xBF && payloadLen >= 2 && payload[1] == 0xFF);
 }
 
+// Whether a modelled Main key's value has the type and size this firmware can
+// hold. One that doesn't (an int stored as a float, a name longer than our
+// buffer, a 5-byte colour) is treated as unknown and kept verbatim with the
+// other unmodelled keys: taking it would either drop it or, since the key
+// would read as present, write it back as 0. The encoder skips any modelled
+// key kept that way, so the map never carries one key twice.
+static bool mainValueFits(int key, const CborValue* v, const OptMain& m) {
+    size_t n = 0;
+    switch (key) {
+        case 1: case 2: case 3:   // package / material / brand UUID
+            return cbor_value_is_byte_string(v) && cbor_value_calculate_string_length(v, &n) == CborNoError && n <= 16;
+        case 19:                  // primary_color_rgba: 3 or 4 bytes
+            return cbor_value_is_byte_string(v) && cbor_value_calculate_string_length(v, &n) == CborNoError && n >= 3 && n <= 4;
+        case 11: return cbor_value_is_text_string(v) && cbor_value_calculate_string_length(v, &n) == CborNoError && n < sizeof(m.brand_name);
+        case 10: return cbor_value_is_text_string(v) && cbor_value_calculate_string_length(v, &n) == CborNoError && n < sizeof(m.material_name);
+        case 52: return cbor_value_is_text_string(v) && cbor_value_calculate_string_length(v, &n) == CborNoError && n < sizeof(m.material_abbreviation);
+        case 59: return cbor_value_is_array(v);                                   // primary_color_lab
+        case 16: case 17: case 18: case 30:                                       // weights, diameter
+            return cbor_value_is_integer(v) || cbor_value_is_float(v) || cbor_value_is_double(v) || cbor_value_is_half_float(v);
+        default: return cbor_value_is_integer(v);                                 // gtin, temps, class, type, write_protection
+    }
+}
+
 bool optDecode(const uint8_t* tagBytes, size_t len,
                OptMeta* meta, OptMain* main, OptAuxiliary* aux) {
     const uint8_t* payload;
@@ -398,7 +421,12 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                 // too, so an unexpected value is skipped rather than fatal.
                 bool consumed = false;
                 int64_t v;
-                switch (key) {
+                // A known key whose value we can't hold goes to the passthrough
+                // (mainValueFits). instance_uuid is the exception: a malformed
+                // one is no identity at all, and is replaced like a missing one.
+                const bool fits = key == MAIN_KEY_INSTANCE_UUID || mainValueFits((int)key, &mm, *main);
+                if (!fits) { known = false; optMarkOpaque(*main, (int)key); }
+                else switch (key) {
                     case MAIN_KEY_INSTANCE_UUID:
                         consumed = cborTakeBytes(&mm, main->instance_uuid, 16); break;
                     // NOTE: every case added here MUST have a matching encode
@@ -521,10 +549,16 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
                         cborGetFloat(&am, &aux->consumed_weight); break;
                     case AUX_KEY_PURCHASE_PRICE:
                         if (cborGetFloat(&am, &aux->purchase_price)) aux->has_purchase = true;
+                        else { known = false; aux->price_opaque = true; }
                         break;
-                    case AUX_KEY_PURCHASE_CURRENCY:
-                        consumed = cborTakeText(&am, aux->purchase_currency, sizeof(aux->purchase_currency));
+                    case AUX_KEY_PURCHASE_CURRENCY: {
+                        size_t n = 0;
+                        if (cbor_value_is_text_string(&am) && cbor_value_calculate_string_length(&am, &n) == CborNoError
+                            && n < sizeof(aux->purchase_currency))
+                            consumed = cborTakeText(&am, aux->purchase_currency, sizeof(aux->purchase_currency));
+                        else { known = false; aux->currency_opaque = true; }
                         break;
+                    }
                     default: known = false; break;
                 }
                 if (!consumed && !cborStep(&am)) break;
@@ -551,19 +585,19 @@ bool optDecode(const uint8_t* tagBytes, size_t len,
 
 // Text key, omitted when empty, cut to maxBytes without splitting a UTF-8
 // sequence (backing up over continuation bytes 10xxxxxx).
-static void encodeTextMax(CborEncoder* map, int key, const char* s, size_t maxBytes) {
+static void encodeTextMax(CborEncoder* map, int key, const char* s, size_t maxBytes, const OptMain& m) {
     const size_t n = optClampedLen(s, maxBytes);
-    if (n == 0) return;
+    if (n == 0 || optIsOpaque(m, key)) return;
     cbor_encode_int(map, key);
     cbor_encode_text_string(map, s, n);
 }
 static void encodeFloatIf(CborEncoder* map, int key, float v, const OptMain& m) {
-    if (v == 0.0f && !optIsPresent(m, key)) return;
+    if ((v == 0.0f && !optIsPresent(m, key)) || optIsOpaque(m, key)) return;
     cbor_encode_int(map, key);
     cbor_encode_float(map, v);
 }
 static void encodeIntIf(CborEncoder* map, int key, int64_t v, const OptMain& m) {
-    if (v == 0 && !optIsPresent(m, key)) return;
+    if ((v == 0 && !optIsPresent(m, key)) || optIsOpaque(m, key)) return;
     cbor_encode_int(map, key);
     cbor_encode_int(map, v);
 }
@@ -573,24 +607,26 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     cbor_encoder_init(&enc, buf, maxLen, 0);
     cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
 
-    cbor_encode_int(&map, MAIN_KEY_INSTANCE_UUID);
-    cbor_encode_byte_string(&map, m.instance_uuid, 16);
+    if (!m.instance_derived) {
+        cbor_encode_int(&map, MAIN_KEY_INSTANCE_UUID);
+        cbor_encode_byte_string(&map, m.instance_uuid, 16);
+    }
 
     // Identity, only what the tag actually carried. Writing a nil UUID would
     // assert an identity the vendor never claimed.
-    if (!optUuidIsNil(m.package_uuid)) {
+    if (!optUuidIsNil(m.package_uuid) && !optIsOpaque(m, MAIN_KEY_PACKAGE_UUID)) {
         cbor_encode_int(&map, MAIN_KEY_PACKAGE_UUID);
         cbor_encode_byte_string(&map, m.package_uuid, 16);
     }
-    if (!optUuidIsNil(m.material_uuid)) {
+    if (!optUuidIsNil(m.material_uuid) && !optIsOpaque(m, MAIN_KEY_MATERIAL_UUID)) {
         cbor_encode_int(&map, MAIN_KEY_MATERIAL_UUID);
         cbor_encode_byte_string(&map, m.material_uuid, 16);
     }
-    if (!optUuidIsNil(m.brand_uuid)) {
+    if (!optUuidIsNil(m.brand_uuid) && !optIsOpaque(m, MAIN_KEY_BRAND_UUID)) {
         cbor_encode_int(&map, MAIN_KEY_BRAND_UUID);
         cbor_encode_byte_string(&map, m.brand_uuid, 16);
     }
-    if (m.gtin) {
+    if (m.gtin && !optIsOpaque(m, MAIN_KEY_GTIN)) {
         cbor_encode_int(&map, MAIN_KEY_GTIN);
         cbor_encode_uint(&map, m.gtin);
     }
@@ -601,15 +637,15 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     // vendor name typed on the web form would otherwise produce a tag other
     // OPT readers are entitled to reject. An empty string is not a value:
     // OPT says a missing abbreviation inherits the material type's.
-    encodeTextMax(&map, MAIN_KEY_BRAND_NAME,            m.brand_name,            OPT_MAX_BRAND_NAME);
-    encodeTextMax(&map, MAIN_KEY_MATERIAL_NAME,         m.material_name,         OPT_MAX_MATERIAL_NAME);
-    encodeTextMax(&map, MAIN_KEY_MATERIAL_ABBREVIATION, m.material_abbreviation, OPT_MAX_MATERIAL_ABBREVIATION);
+    encodeTextMax(&map, MAIN_KEY_BRAND_NAME,            m.brand_name,            OPT_MAX_BRAND_NAME, m);
+    encodeTextMax(&map, MAIN_KEY_MATERIAL_NAME,         m.material_name,         OPT_MAX_MATERIAL_NAME, m);
+    encodeTextMax(&map, MAIN_KEY_MATERIAL_ABBREVIATION, m.material_abbreviation, OPT_MAX_MATERIAL_ABBREVIATION, m);
 
     // Only when a colour is actually assigned. OPT says primary_color "can be
     // null" when a material has no single colour, and an absent key is the
     // honest way to say "unknown" — writing 00 00 00 00 would tell every other
     // reader this spool is transparent black.
-    if (m.primary_color_rgba[3] != 0) {
+    if (m.primary_color_rgba[3] != 0 && !optIsOpaque(m, MAIN_KEY_PRIMARY_COLOR_RGBA)) {
         cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_RGBA);
         cbor_encode_byte_string(&map, m.primary_color_rgba, 4);
     }
@@ -617,7 +653,7 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
     // Measured colour, only if something actually measured it. Absent means
     // unmeasured; the spec forbids approximating this from RGB, so there is no
     // fallback to invent here.
-    if (m.has_lab) {
+    if (m.has_lab && !optIsOpaque(m, MAIN_KEY_PRIMARY_COLOR_LAB)) {
         cbor_encode_int(&map, MAIN_KEY_PRIMARY_COLOR_LAB);
         CborEncoder lab;
         cbor_encoder_create_array(&map, &lab, 3);
@@ -639,13 +675,15 @@ size_t optEncodeMain(const OptMain& m, uint8_t* buf, size_t maxLen) {
 
     // material_class is REQUIRED by OPT, so always written; 0 is FFF, which
     // is every spool this station handles.
-    cbor_encode_int(&map, MAIN_KEY_MATERIAL_CLASS);
-    cbor_encode_int(&map, m.material_class);
+    if (!optIsOpaque(m, MAIN_KEY_MATERIAL_CLASS)) {
+        cbor_encode_int(&map, MAIN_KEY_MATERIAL_CLASS);
+        cbor_encode_int(&map, m.material_class);
+    }
 
     // material_type 0 is PLA, so zero cannot mean unset here: written only
     // if the tag carried it or a writer set it (optSetMaterialType). OPT says
     // it "can be left unspecified" when no type fits.
-    if (optIsPresent(m, MAIN_KEY_MATERIAL_TYPE)) {
+    if (optIsPresent(m, MAIN_KEY_MATERIAL_TYPE) && !optIsOpaque(m, MAIN_KEY_MATERIAL_TYPE)) {
         cbor_encode_int(&map, MAIN_KEY_MATERIAL_TYPE);
         cbor_encode_int(&map, m.material_type);
     }
@@ -676,9 +714,11 @@ size_t optEncodeAux(const OptAuxiliary& aux, uint8_t* buf, size_t maxLen) {
     // Omitted entirely when unset, not written as 0/"" -- same reasoning as
     // Main's primary_color_lab: a real $0 purchase is implausible, and OPT
     // readers should see "not recorded" as absence, not as a free spool.
-    if (aux.has_purchase) {
+    if (aux.has_purchase && !aux.price_opaque) {
         cbor_encode_int(&map, AUX_KEY_PURCHASE_PRICE);
         cbor_encode_float(&map, aux.purchase_price);
+    }
+    if (aux.has_purchase && !aux.currency_opaque && aux.purchase_currency[0]) {
         cbor_encode_int(&map, AUX_KEY_PURCHASE_CURRENCY);
         cbor_encode_text_string(&map, aux.purchase_currency, strlen(aux.purchase_currency));
     }

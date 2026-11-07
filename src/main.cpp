@@ -49,6 +49,11 @@ volatile bool gWriteAuxPending  = false;
 // half-written by a format that failed partway — those stop reading as blank
 // and stop decoding, so nothing else can get them back.
 volatile bool gTagForceFormat = false;
+// True when the tag nfcTask just handed over is one it formatted itself (its
+// nil instance_uuid is ours to mint); false for a tag it decoded. A decoded tag
+// with no instance_uuid is a vendor's (OPT lets bulk writers leave it out),
+// and gets the derived identity instead of being treated as our blank.
+volatile bool gTagJustFormatted = false;
 
 // Set by the web /erase page's Start/Stop buttons. While true, nfcTask
 // erases any freshly placed tag immediately -- no countdown, same as a

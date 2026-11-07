@@ -73,10 +73,10 @@ for r in P:
         continue
     what = f'#{pid} "{vnow} {nnow}" -> "{newv} {newn}"'
     p = prods.get(pid)
-    if pid in losers and (not p or p["id"] != pid):
-        print("DONE ", what, "(merged away)"); continue
-    if not p: skip(what, "product missing (merged?)"); continue
-    if p["id"] != pid: skip(what, f"now merged into #{p['id']}"); continue
+    if not p:   # /api/products lists live products only, keyed by their own id
+        if pid in losers: print("DONE ", what, "(merged away)")
+        else: skip(what, "product missing (merged?)")
+        continue
     if (p["vendor"], p["material"]) == (newv, newn):
         print("DONE ", what, "(already)"); continue
     if p["vendor"] != vnow or p["material"] != nnow:

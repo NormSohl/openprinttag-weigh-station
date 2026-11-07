@@ -142,6 +142,7 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
   "state": "present",
   "uptime_s": 84213,
   "heap_free": 142360,
+  "audit": "idle",
   "scale":   { "weight_g": 1243.5, "calibrated": true },
   "spool":   { "id": 42, "uuid": "e0040108660759df", "vendor": "eSun",
                "material": "PLA+ Summer Grass", "color": "1b1b1b",
@@ -154,6 +155,8 @@ spool of it), not by the calendar window. A material that sold out on day 2 of
   "auth":    { "required": true }
 }
 ```
+
+`audit` is `idle`, `scanning` or `resolving` (see *Physical inventory audits*).
 
 `spool` is `null` when nothing is on the scale.
 

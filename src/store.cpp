@@ -121,11 +121,15 @@ void storeNowIso(char* buf, size_t buflen) {
 }
 
 // ── Line codec ────────────────────────────────────────────────────────────────
+// Control characters too: a raw newline would split the line on replay (and a
+// raw \r fail its CRC), so an event that applied live would vanish at the next
+// boot. A name from a tag, an import or a form can carry one.
 static String jsonEsc(const char* s) {
     String o;
-    for (const char* p = s; *p; ++p) {
-        if (*p == '"' || *p == '\\') o += '\\';
-        o += *p;
+    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+        if (*p == '"' || *p == '\\') { o += '\\'; o += (char)*p; }
+        else if (*p < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", *p); o += b; }
+        else o += (char)*p;
     }
     return o;
 }

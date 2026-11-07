@@ -990,6 +990,35 @@ static void usageLabelsTest() {
                                       "under the current name, across compaction and replay)");
 }
 
+
+// Control characters in names (a tag's brand_name, an import, a form) must
+// survive a replay: before jsonEsc() escaped them, a raw newline split the log
+// line, so the event applied live and was gone after the next boot.
+static void namesTest() {
+    run("WIPE ALL");
+    StoreEvent e; e.ev = StoreEv::Onboard;
+    strcpy(e.uuid, "0123456789abcdef0123456789abcdef");
+    strcpy(e.vendor, "Acme\nLabs");
+    strcpy(e.material, "PLA Red\r\t\"x\"\\");
+    e.empty_g = 170; e.nom_g = 1000; e.dia = 1.75f;
+    e.spool = storeNextSpoolId();
+    CHECK(storeAppendEvent(e), "append");
+    ProductRecord p = tag("Bad\nVendor", "PLA\x01Odd", "PLA", 1000, 200, "dddd00000000000000000000000000dd");
+    p.provisional = false;
+    CHECK(storeUpsertProduct(p), "upsert product");
+    storeRebuildIndices();   // == the next boot
+    SpoolRecord r;
+    CHECK(storeFindByUuid(e.uuid, r), "spool survives replay");
+    CHECK(!strcmp(r.vendor, "Acme\nLabs") && !strcmp(r.material, "PLA Red\r\t\"x\"\\"), "names exact after replay");
+    ProductRecord q;
+    CHECK(storeGetProduct(p.id, q) && !strcmp(q.vendor, "Bad\nVendor") && !strcmp(q.material, "PLA\x01Odd"),
+          "product survives replay with its name");
+    run("COMPACT");
+    storeRebuildIndices();
+    CHECK(storeFindByUuid(e.uuid, r) && storeGetProduct(p.id, q), "both survive compaction");
+    if (!fails) printf("PASS: names with control characters survive replay and compaction\n");
+}
+
 int main(int argc, char** argv) {
     if (!storeBegin()) { printf("storeBegin FAILED\n"); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--products"))      { products();       return fails != 0; }
@@ -1001,6 +1030,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--substitutes"))   { substitutesTest(); return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--tare"))          { tareTest();       return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--merge"))         { mergeTest();      return fails != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--names"))         { namesTest();      return fails != 0; }
     if (argc > 1 && !strcmp(argv[1], "--usage-labels"))  { usageLabelsTest(); return fails != 0; }
     for (int i = 1; i < argc; i++) run(argv[i]);
     return 0;

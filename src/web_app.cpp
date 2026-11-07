@@ -144,6 +144,19 @@ static bool hex32ToBytes(const String& hex, uint8_t out[16]) {
     return true;
 }
 
+// For JSON string values (the /api/* endpoints): quote, backslash and control
+// characters escaped, nothing else. Not esc(): a JSON client gets the text
+// itself, and the station's own pages escape what they put into HTML.
+static String jsonStr(const char* s) {
+    String o;
+    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+        if (*p == '"' || *p == '\\') { o += '\\'; o += (char)*p; }
+        else if (*p < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", *p); o += b; }
+        else o += (char)*p;
+    }
+    return o;
+}
+
 static String esc(const char* s) {
     String o;
     for (const char* p = s; *p; ++p) {
@@ -152,6 +165,7 @@ static String esc(const char* s) {
             case '<': o += "&lt;";   break;
             case '>': o += "&gt;";   break;
             case '"': o += "&quot;"; break;
+            case '\'': o += "&#39;"; break;   // single-quoted attributes (value='...')
             default:  o += *p;       break;
         }
     }
@@ -1240,8 +1254,8 @@ static void handleApiSpools(AsyncWebServerRequest* req) {
         if (j.length() > 1) j += ",";
         j += "{\"spool\":" + String((unsigned)r.spool)
            + ",\"uuid\":\"" + r.uuid + "\""
-           + ",\"vendor\":\"" + esc(r.vendor) + "\""
-           + ",\"material\":\"" + esc(r.material) + "\""
+           + ",\"vendor\":\"" + jsonStr(r.vendor) + "\""
+           + ",\"material\":\"" + jsonStr(r.material) + "\""
            + ",\"color\":" + colorJson(r.rgba)
            + ",\"remaining_g\":" + String(r.remaining_g, 1)
            + ",\"used_g\":" + String(r.used_g, 1)
@@ -1576,9 +1590,9 @@ static void handleApiProducts(AsyncWebServerRequest* req) {
         if (!storeProductAt(i, q)) continue;
         if (j.length() > 1) j += ",";
         j += "{\"id\":" + String((unsigned)q.id)
-           + ",\"vendor\":\"" + esc(q.vendor) + "\""
-           + ",\"material\":\"" + esc(q.material) + "\""
-           + ",\"abbr\":\"" + esc(q.abbr) + "\""
+           + ",\"vendor\":\"" + jsonStr(q.vendor) + "\""
+           + ",\"material\":\"" + jsonStr(q.material) + "\""
+           + ",\"abbr\":\"" + jsonStr(q.abbr) + "\""
            + ",\"color\":" + colorJson(q.rgba)
            + ",\"diameter_mm\":" + String(q.dia, 2)
            + ",\"empty_g\":" + String(q.empty_g, 1)
@@ -2195,6 +2209,7 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 "if(dd)dd.addEventListener('change',upd);"
 "document.getElementById('scan-clear').onclick=function(e){e.preventDefault();"
   "sf.value='';window.scanPicked=null;upd()};"
+"function H(t){return String(t).replace(/[&<>\"']/g,function(c){return '&#'+c.charCodeAt(0)+';'})}"
 "window.onScanCode=function(c){"
   "var w=document.getElementById('obwrap');"
   "if(w&&w.style.display=='none'){msg('Scanned '+c+'. This spool is already onboarded; "
@@ -2206,22 +2221,22 @@ static const char ONBOARD_SCAN_SCRIPT[] =
         "U=j.stock.filter(function(s){return !s.product}),seen={};"
     "L.forEach(function(s){seen[s.product]=1});"
     "var nl=Object.keys(seen).length,P=j.products;"
-    "if(nl==1&&window.stkPick){stkPick(L[0].id);window.scanPicked=dd.value;upd();msg('Scanned '+c+' &rarr; <b>'+L[0].name+'</b>');return}"
+    "if(nl==1&&window.stkPick){stkPick(L[0].id);window.scanPicked=dd.value;upd();msg('Scanned '+c+' &rarr; <b>'+H(L[0].name)+'</b>');return}"
     "if(nl>1&&window.stkOnly){stkOnly(L.map(function(s){return s.id}));"
       "msg('Scanned '+c+': several Stock List items have this barcode &mdash; pick one.');return}"
     "if(P.length==1&&window.prodPick&&prodPick(P[0].id)){window.scanPicked=dd.value;upd();"
-      "msg('Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b> "
+      "msg('Scanned '+c+' &rarr; <b>'+H(P[0].vendor+' '+P[0].material)+'</b> "
       "&mdash; not on the Stock List.');return}"
     "if(P.length>1){msg('Scanned '+c+': matches several products ('+P.map(function(p){"
-      "return p.vendor+' '+p.material}).join(', ')+') &mdash; pick one below.');return}"
+      "return H(p.vendor+' '+p.material)}).join(', ')+') &mdash; pick one below.');return}"
     "if(U.length){if(window.stkOnly)stkOnly(U.map(function(s){return s.id}));"
-      "msg('Scanned '+c+' &rarr; <b>'+U[0].name+'</b> on the Stock List, but that row "
+      "msg('Scanned '+c+' &rarr; <b>'+H(U[0].name)+'</b> on the Stock List, but that row "
       "is not linked to a product &mdash; fix it on the Stock List.');return}"
     // Not a product yet, but in the station's eSUN catalogue: a new product,
     // picked from it (CATALOG_SCRIPT's catLocalPick).
     "var K=window.catLocalByGtin?catLocalByGtin(c):[];"
     "if(K.length==1&&(!window.prodPick||prodPick(0))&&window.catLocalPick&&catLocalPick(K[0].pn)){upd();"
-      "msg('Scanned '+c+' &rarr; <b>eSUN '+K[0].name.replace(/</g,'&lt;')+'</b> from the eSUN US catalogue "
+      "msg('Scanned '+c+' &rarr; <b>eSUN '+H(K[0].name)+'</b> from the eSUN US catalogue "
       "&mdash; a new product.');return}"
     "msg('Unknown barcode '+c+' &mdash; pick the stock item below.');"
     "var q=document.getElementById('stk-q');if(q)q.focus()"
@@ -3002,7 +3017,10 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
         memcpy(gTagMain.primary_color_rgba, rgba, 4);
         gTagMain.filament_diameter         = dia;
         gTagMain.nominal_netto_full_weight = nominal;
-        gTagMain.actual_netto_full_weight  = nominal;   // new spool assumed full
+        // Only when the tag has none (a new spool, assumed full): a measured
+        // factory figure, or one a printer counts down from, is the tag's own,
+        // and re-saving this form (to add a price, say) must not reset it.
+        if (gTagMain.actual_netto_full_weight <= 0.0f) gTagMain.actual_netto_full_weight = nominal;
         gTagMain.empty_container_weight    = empty;
         // Catalog-sourced temps are the vendor's own published numbers, more
         // specific than the config catalog's per-type defaults, so they win
@@ -4132,6 +4150,7 @@ static const char STOCK_SCAN_SCRIPT[] =
 "<script>(function(){"
 "var box=document.getElementById('scan-msg');"
 "function msg(h){box.innerHTML=h;box.hidden=!h}"
+"function H(t){return String(t).replace(/[&<>\"']/g,function(c){return '&#'+c.charCodeAt(0)+';'})}"
 "window.onScanCode=function(c){"
   "document.getElementById('sgtin').value=c;"
   "document.getElementById('stockform').scrollIntoView();"
@@ -4141,16 +4160,16 @@ static const char STOCK_SCAN_SCRIPT[] =
         "dup=j.stock.filter(function(s){return s.id!=eid}),t='',"
         "d=document.getElementById('sprod'),P=j.products;"
     "if(dup.length)t='Already on the Stock List: '+dup.map(function(s){"
-      "return '<a href=\"/stock?edit='+s.id+'#stockform\" style=\"color:#9c9\">'+s.name+'</a>'"
+      "return '<a href=\"/stock?edit='+s.id+'#stockform\" style=\"color:#9c9\">'+H(s.name)+'</a>'"
       "}).join(', ')+'. ';"
     "if(P.length==1&&d&&window.itemPick&&itemPick(P[0].id)){"
-        "msg(t+'Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b>');return}"
+        "msg(t+'Scanned '+c+' &rarr; <b>'+H(P[0].vendor+' '+P[0].material)+'</b>');return}"
     "if(P.length>1)msg(t+'Scanned '+c+': several products have this barcode &mdash; pick one "
       "under <i>Item is&hellip;</i>.');"
     "else{if(window.itemPick)itemPick(0);"
       "var K=window.catLocalByGtin?catLocalByGtin(c):[];"
       "if(K.length==1&&window.catLocalPick&&catLocalPick(K[0].pn))msg(t+'Scanned '+c+' &rarr; <b>eSUN '"
-        "+K[0].name.replace(/</g,'&lt;')+'</b> from the eSUN US catalogue &mdash; a new product.');"
+        "+H(K[0].name)+'</b> from the eSUN US catalogue &mdash; a new product.');"
       "else msg(t+'Scanned '+c+': no product has this barcode yet "
       "&mdash; search the catalog or enter it; the barcode is filled in.')}"
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed; the barcode is filled in.')})};"
@@ -4650,8 +4669,8 @@ static void handleApiLookup(AsyncWebServerRequest* req) {
         if (!first) j += ",";
         first = false;
         j += "{\"id\":" + String((unsigned)q.id)
-           + ",\"vendor\":\"" + esc(q.vendor) + "\""
-           + ",\"material\":\"" + esc(q.material) + "\""
+           + ",\"vendor\":\"" + jsonStr(q.vendor) + "\""
+           + ",\"material\":\"" + jsonStr(q.material) + "\""
            + ",\"nom_g\":" + String(q.nom_g, 0) + "}";
     }
     // A merged product's barcode is an alias of its survivor's: list the
@@ -4664,8 +4683,8 @@ static void handleApiLookup(AsyncWebServerRequest* req) {
         if (!first) j += ",";
         first = false;
         j += "{\"id\":" + String((unsigned)q.id)
-           + ",\"vendor\":\"" + esc(q.vendor) + "\""
-           + ",\"material\":\"" + esc(q.material) + "\""
+           + ",\"vendor\":\"" + jsonStr(q.vendor) + "\""
+           + ",\"material\":\"" + jsonStr(q.material) + "\""
            + ",\"nom_g\":" + String(q.nom_g, 0) + "}";
     }
     j += "],\"stock\":[";
@@ -4680,7 +4699,7 @@ static void handleApiLookup(AsyncWebServerRequest* req) {
         if (!first) j += ",";
         first = false;
         j += "{\"id\":" + String((unsigned)s.id)
-           + ",\"name\":\"" + esc((String(s.vendor) + " " + s.material).c_str()) + "\""
+           + ",\"name\":\"" + jsonStr((String(s.vendor) + " " + s.material).c_str()) + "\""
            + ",\"product\":" + String(linked ? (unsigned)q.id : 0u) + "}";
     }
     j += "]}";
@@ -4707,14 +4726,14 @@ static void handleApiStock(AsyncWebServerRequest* req) {
         if (i) j += ",";
         const CfgStock& s = rows[i];
         j += "{\"id\":" + String((unsigned)s.id)
-           + ",\"vendor\":\"" + esc(s.vendor) + "\""
-           + ",\"material\":\"" + esc(s.material) + "\""
-           + ",\"color\":\"" + esc(s.color) + "\""
+           + ",\"vendor\":\"" + jsonStr(s.vendor) + "\""
+           + ",\"material\":\"" + jsonStr(s.material) + "\""
+           + ",\"color\":\"" + jsonStr(s.color) + "\""
            + ",\"dia\":" + String(s.dia, 2)
            + ",\"spool_g\":" + String(s.spool_g, 1)
            + ",\"min_spools\":" + String(s.min_spools)
            + ",\"min_grams\":" + String(s.min_grams, 1)
-           + ",\"gtin\":\"" + esc(s.gtin) + "\""
+           + ",\"gtin\":\"" + jsonStr(s.gtin) + "\""
            + ",\"pack_qty\":" + String(s.pack_qty)
            + ",\"substitutes\":[";
         bool firstSub = true;
@@ -5193,7 +5212,7 @@ static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
     }
     const CatalogueInfo ci = catalogueInfo();
     if (req->hasParam("json") || req->hasParam("json", true)) {
-        req->send(200, "application/json", "{\"count\":" + String(ci.count) + ",\"date\":\"" + esc(ci.date.c_str()) + "\"}");
+        req->send(200, "application/json", "{\"count\":" + String(ci.count) + ",\"date\":\"" + jsonStr(ci.date.c_str()) + "\"}");
         return;
     }
     String p = head("eSUN catalogue", "/config");
@@ -5233,6 +5252,12 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
     j += "\",\"state\":\"";   j += deviceStateName(st);
     j += "\",\"uptime_s\":";  j += String((unsigned)(millis() / 1000));
     j += ",\"heap_free\":";   j += String((unsigned)ESP.getFreeHeap());
+    {   // so a script (the reconcile kit) can refuse to edit products mid-audit
+        const AuditPhase ap = storeAuditPhase();
+        j += ",\"audit\":\"";
+        j += ap == AuditPhase::Scanning ? "scanning" : ap == AuditPhase::Resolving ? "resolving" : "idle";
+        j += "\"";
+    }
 
     j += ",\"scale\":{\"weight_g\":"; j += String(w, 1);
     j += ",\"calibrated\":";           j += gScaleCalibrated ? "true" : "false";
@@ -5246,8 +5271,8 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
         if (storeGetSpool((uint32_t)cur, r)) {
             j += "{\"id\":";             j += String((unsigned)r.spool);
             j += ",\"uuid\":\"";          j += r.uuid;
-            j += "\",\"vendor\":\"";      j += esc(r.vendor);
-            j += "\",\"material\":\"";    j += esc(r.material);
+            j += "\",\"vendor\":\"";      j += jsonStr(r.vendor);
+            j += "\",\"material\":\"";    j += jsonStr(r.material);
             // colorJson() supplies its own quotes (or bare null), so unlike the
             // lines above this one must NOT open or close a string of its own.
             j += "\",\"color\":";        j += colorJson(r.rgba);
@@ -5258,7 +5283,7 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
     } else j += "null";
 
     j += ",\"wifi\":{\"mode\":\"";  j += sta ? "station" : (gApSsid[0] ? "ap" : "none");
-    j += "\",\"ssid\":\"";          j += sta ? esc(WiFi.SSID().c_str()) : esc(gApSsid);
+    j += "\",\"ssid\":\"";          j += sta ? jsonStr(WiFi.SSID().c_str()) : jsonStr(gApSsid);
     j += "\",\"ip\":\"";            j += sta ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
     j += "\",\"rssi\":";            j += String(sta ? WiFi.RSSI() : 0);
     j += "}";
@@ -5442,9 +5467,9 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
     for (size_t i = 0; i < n; i++) {
         if (!storeUsageAt(i, u)) continue;
         if (j.length() > 1) j += ",";
-        j += "{\"period\":\"";  j += esc(u.period);
-        j += "\",\"vendor\":\"";  j += esc(u.vendor);
-        j += "\",\"material\":\""; j += esc(u.material);
+        j += "{\"period\":\"";  j += jsonStr(u.period);
+        j += "\",\"vendor\":\"";  j += jsonStr(u.vendor);
+        j += "\",\"material\":\""; j += jsonStr(u.material);
         j += "\",\"grams\":";     j += String(u.grams, 1);
         j += ",\"dollars\":";     j += String(u.dollars, 2);
         j += ",\"weighs\":";      j += String((unsigned)u.weighs);

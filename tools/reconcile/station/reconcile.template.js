@@ -75,7 +75,7 @@
     for (const x of SK.subs) {
       const s = itemFor(x.item) || relinked[x.item];
       if (!s) { todo.skip.push(`substitutes for "${x.item}": no single Stock List item for it`); continue; }
-      const want = x.products.map((n) => named(n)).filter(Boolean).map((p) => p.id);
+      const want = x.products.map((n) => named(n)).filter(Boolean).map((p) => p.id).filter((id) => id !== s.product);
       const missing = x.products.filter((n) => !named(n));
       for (const n of missing) todo.skip.push(`"${n}" counts toward "${x.item}": no such product`);
       const have = (s.subs || []).filter(Boolean);
@@ -85,16 +85,25 @@
   }
 
   // ---- the test vendors' lines in the log (same rule as remove_vendor.py)
-  function testVendorLines(logText) {
+  // A line that isn't JSON (a torn write) is kept as it is: the station
+  // skips such lines on replay, and it can't belong to a test vendor.
+  function testVendorLines(logText, cfg) {
     const lines = logText.split("\n").filter((l) => l.trim());
-    const ev = lines.map((l) => JSON.parse(l));
+    const ev = lines.map((l) => { try { return JSON.parse(l); } catch (e) { return {}; } });
     const vendors = new Set(KIT.removeVendors.map((v) => v.toLowerCase()));
     const prods = new Set(ev.filter((e) => e.ev === "product" && vendors.has((e.vendor || "").toLowerCase())).map((e) => e.prod));
     const uuids = new Set(ev.filter((e) => e.uuid && prods.has(e.prod)).map((e) => e.uuid));
-    const other = ev.filter((e) => uuids.has(e.uuid) && e.prod && !prods.has(e.prod));
+    const other = ev.filter((e) => uuids.has(e.uuid) && e.prod && !prods.has(e.prod))
+                    .map((e) => `spool ${e.spool} is also product #${e.prod}`);
+    // Same refusals as remove_vendor.py: a Stock List item (or substitute)
+    // pointing at a test product means it isn't only test data.
+    for (const s of (cfg && cfg["stock-items"]) || []) {
+      if (prods.has(s.product)) other.push(`Stock List item #${s.id} links test product #${s.product}`);
+      for (const x of s.subs || []) if (prods.has(x)) other.push(`Stock List item #${s.id} counts test product #${x} as a substitute`);
+    }
     const drop = ev.map((e) => (e.ev === "product" && prods.has(e.prod)) || uuids.has(e.uuid));
     return { lines, prods: [...prods].sort((a, b) => a - b), spools: [...new Set(ev.filter((e, i) => drop[i] && e.spool).map((e) => e.spool))].sort((a, b) => a - b),
-             drop, other: other.map((e) => `spool ${e.spool} is also product #${e.prod}`) };
+             drop, other };
   }
 
   async function plan() {
@@ -117,9 +126,13 @@
       else out(`eSUN US catalogue: loaded, ${cj.count} items from ${cj.date}`);
     } catch (e) { bad("eSUN US catalogue: couldn't check (" + e.message + ")"); }
     // test vendors
-    const tv = testVendorLines(await getT("/export"));
+    if (st.audit && st.audit !== "idle") {
+      bad(`An inventory audit is in progress (${st.audit}). Finish or abandon it on the Inventory page first: product edits during an audit would mark spools as found.`);
+      plan.ok = false; return plan;
+    }
+    const tv = testVendorLines(await getT("/export"), await getJ("/config/export"));
     plan.test = tv;
-    if (tv.other.length) { bad("Test vendor spools are linked to real products, not removing: " + tv.other.join("; ")); plan.ok = false; }
+    if (tv.other.length) { bad("Test vendor data is linked to real data, not removing: " + tv.other.join("; ")); plan.ok = false; }
     else if (tv.prods.length) out(`test vendors ${KIT.removeVendors.join(", ")}: remove products #${tv.prods.join(", #")}, spools #${tv.spools.join(", #")} (${tv.drop.filter(Boolean).length} log lines)`);
     else out(`test vendors ${KIT.removeVendors.join(", ")}: nothing left to remove`);
     // merges
@@ -207,8 +220,8 @@
     save(`weighstation-${t0}-before-reconcile-config.json`, await getT("/config/export"));
     out("backup downloaded (check your Downloads folder: two files)");
     // 2. test vendors: re-read the log now, so nothing weighed since the check is lost
-    const tv = testVendorLines(await getT("/export"));
-    if (tv.other.length) { bad("Test vendor spools linked to real products; stopping."); return; }
+    const tv = testVendorLines(await getT("/export"), await getJ("/config/export"));
+    if (tv.other.length) { bad("Test vendor data linked to real data; stopping: " + tv.other.join("; ")); return; }
     if (tv.prods.length) {
       const kept = tv.lines.filter((l, i) => !tv.drop[i]).join("\n") + "\n";
       const r = await upload("/import", "events.ndjson", kept);

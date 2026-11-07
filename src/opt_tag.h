@@ -91,6 +91,15 @@ struct OptMain {
     // or a writer set it, so a rewrite never adds values nobody stated (0 °C
     // temperatures, "PLA" for a material of unknown type) to someone's tag.
     uint64_t present;
+    // Modelled keys the tag carried with a value this firmware can't hold
+    // (wrong type, too long). Kept verbatim in extra[] instead, and never
+    // written by optEncodeMain(), so a rewrite neither drops them nor writes
+    // them twice.
+    uint64_t opaque;
+    // instance_uuid was derived by the reader (OPT 3.2.0.2: the tag carried
+    // none), not read from the tag. optEncodeMain() then leaves key 0 out, so
+    // a rewrite keeps the tag as its maker wrote it.
+    bool     instance_derived;
     uint8_t  extra[192];
     uint16_t extra_len;
     bool     extra_overflow;
@@ -137,6 +146,11 @@ struct OptAuxiliary {
     float    purchase_price;
     char     purchase_currency[4];  // ISO 4217, e.g. "USD" (3 chars + NUL)
     bool     has_purchase;
+    // A purchase key the tag carried with a value we can't hold (a price
+    // that isn't a number, a currency longer than 3): kept verbatim in extra[]
+    // and not written by optEncodeAux(), so it is neither lost nor doubled.
+    bool     price_opaque;
+    bool     currency_opaque;
 
     // Verbatim passthrough of Aux keys this firmware does not model — same
     // reasoning as OptMain::extra, at a much smaller scale: optEncodeAux()
@@ -208,6 +222,12 @@ inline void optClampText(char* s, size_t maxBytes) { s[optClampedLen(s, maxBytes
 // (see OptMain::present). key is the MAIN_KEY_* number.
 inline void optMarkPresent(OptMain& m, int key) {
     if (key >= 0 && key < 64) m.present |= (uint64_t)1 << key;
+}
+inline void optMarkOpaque(OptMain& m, int key) {
+    if (key >= 0 && key < 64) m.opaque |= (uint64_t)1 << key;
+}
+inline bool optIsOpaque(const OptMain& m, int key) {
+    return key >= 0 && key < 64 && (m.opaque >> key) & 1;
 }
 inline bool optIsPresent(const OptMain& m, int key) {
     return key >= 0 && key < 64 && (m.present >> key) & 1;

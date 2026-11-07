@@ -16,9 +16,12 @@ import json, os, sys
 
 vendor, ev_path, cfg_path, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 lines = [l for l in open(ev_path) if l.strip()]
-E = [json.loads(l) for l in lines]
+def parse(l):   # a torn line is kept as it is; the station skips it on replay
+    try: return json.loads(l)
+    except ValueError: return {}
+E = [parse(l) for l in lines]
 
-prods = {e["prod"] for e in E if e["ev"] == "product" and e.get("vendor", "").lower() == vendor.lower()}
+prods = {e["prod"] for e in E if e.get("ev") == "product" and e.get("vendor", "").lower() == vendor.lower()}
 uuids = {e["uuid"] for e in E if e.get("uuid") and e.get("prod") in prods}
 # a spool that was ever another product is not purely test data: stop
 other = {e["uuid"]: e["prod"] for e in E if e.get("uuid") in uuids and e.get("prod") and e["prod"] not in prods}
@@ -28,10 +31,13 @@ cfg = json.load(open(cfg_path))
 linked = [s["id"] for s in cfg["stock-items"] if s.get("product") in prods]
 if linked:
     sys.exit(f"refusing: Stock List items link to these products: {linked}")
+subbed = [s["id"] for s in cfg["stock-items"] if set(s.get("subs", [])) & prods]
+if subbed:
+    sys.exit(f"refusing: Stock List items count these products as substitutes: {subbed}")
 
 keep, drop = [], []
 for l, e in zip(lines, E):
-    (drop if (e["ev"] == "product" and e["prod"] in prods) or e.get("uuid") in uuids else keep).append((l, e))
+    (drop if (e.get("ev") == "product" and e["prod"] in prods) or e.get("uuid") in uuids else keep).append((l, e))
 
 os.makedirs(out, exist_ok=True)
 with open(os.path.join(out, "events.ndjson"), "w") as f:

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Norm Sohl
 
 #include "config_store.h"
+#include <algorithm>
+#include <vector>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -47,12 +49,19 @@ static bool readDoc(const char* path, JsonDocument& doc) {
     f.close();
     return !err;
 }
+// A full LittleFS writes fewer bytes without failing, and a table cut short is
+// invalid JSON, which cfgBegin() answers by re-seeding the defaults -- the
+// Stock List gone at the next boot. So write a staging file, check every byte
+// landed, and only then swap it in; a short write leaves the old table.
 static bool writeStr(const char* path, const String& s) {
-    File f = LittleFS.open(path, "w");
+    const String tmp = String(path) + ".tmp";
+    File f = LittleFS.open(tmp.c_str(), "w");
     if (!f) return false;
-    f.print(s);
+    const size_t n = f.print(s);
     f.close();
-    return true;
+    if (n != s.length()) { LittleFS.remove(tmp.c_str()); return false; }
+    LittleFS.remove(path);
+    return LittleFS.rename(tmp.c_str(), path);
 }
 
 // ── Per-table parse / serialize ───────────────────────────────────────────────
@@ -379,11 +388,27 @@ static void saveStockIdCounter_() {
 // counter cfgStockAdd() uses, never derived from "max id currently in the
 // table": that would let a deleted row's old id get reissued to a
 // different row the moment the highest-numbered one was removed.
+// Run after any load or import. Gives a real id to rows that have none (written
+// before ids existed) or that repeat an earlier row's (a hand-edited table),
+// and moves the counter past every id present -- a config restored onto
+// another station, or after an NVS erase, carries ids the local counter has not
+// reached yet, and the next Add would otherwise reissue one of them. True if
+// any row's id changed (the table then needs saving).
 static bool migrateStockIds_() {
     bool changed = false;
-    for (auto& s : sStock)
-        if (s.id == 0) { s.id = sNextStockId++; changed = true; }
-    if (changed) saveStockIdCounter_();
+    uint32_t maxId = 0;
+    for (const auto& s : sStock) maxId = s.id > maxId ? s.id : maxId;
+    const uint32_t before = sNextStockId;
+    if (sNextStockId <= maxId) sNextStockId = maxId + 1;
+    std::vector<uint32_t> seen;
+    for (auto& s : sStock) {
+        if (s.id == 0 || std::find(seen.begin(), seen.end(), s.id) != seen.end()) {
+            s.id = sNextStockId++;
+            changed = true;
+        }
+        seen.push_back(s.id);
+    }
+    if (sNextStockId != before) saveStockIdCounter_();
     return changed;
 }
 
@@ -576,12 +601,13 @@ bool cfgImportAll(const String& json) {
     static const char* kKeys[] = { "vendors", "materials", "spool-profiles", "colors", "stock-items" };
     for (const char* k : kKeys)
         if (!d[k].is<JsonArrayConst>()) return false;
+    bool ok = true;
     for (const char* k : kKeys) {
         String sub;
         serializeJson(d[k], sub);
-        cfgReplaceTable(k, sub);   // shape already checked above; cannot fail here
+        ok = cfgReplaceTable(k, sub) && ok;   // shape checked above; false only on a failed write
     }
-    return true;
+    return ok;
 }
 
 // ── Serial harness ────────────────────────────────────────────────────────────

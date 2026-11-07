@@ -11,6 +11,7 @@
 #include "display_tz.h"
 #include "device_state.h"
 #include "opt_tag.h"
+#include "uuid5.h"
 #include "store.h"
 #include "web_app.h"
 #include "controller.h"   // WiFi/idle state is now owned by controllerTask
@@ -25,6 +26,7 @@ extern OptMain              gTagMain;
 extern OptAuxiliary         gTagAux;
 extern SemaphoreHandle_t    gTagMutex;
 extern volatile bool        gWriteMainPending;
+extern volatile bool        gTagJustFormatted;
 extern volatile bool        gWriteAuxPending;
 extern volatile bool        gEraseModeActive;
 extern volatile uint32_t    gEraseModeActivityMs;
@@ -139,11 +141,13 @@ static bool mainWriteBackAllowed(const SpoolRecord& r) {
 }
 
 // Same idea as the pair above, for the one Aux field the store tracks:
-// what a spool cost. Currency is always "USD" here (see StoreEvent::cost),
-// so it never needs to be part of the comparison.
+// what a spool cost. Currency is always "USD" here (see StoreEvent::cost).
+// At placement only a price the record HAS goes onto the tag: a record with
+// none says "not recorded here", not "free", and must not erase a price the
+// Prusa app or another station put on the tag. Clearing one is an explicit
+// edit, which Holding writes (it compares against the cost at placement).
 static bool recordDiffersFromAux(const SpoolRecord& r, const OptAuxiliary& a) {
-    return (r.cost > 0) != a.has_purchase
-        || (r.cost > 0 && r.cost != a.purchase_price);
+    return r.cost > 0 && (!a.has_purchase || r.cost != a.purchase_price);
 }
 
 static void overlayRecordOntoAux(const SpoolRecord& r, OptAuxiliary& a) {
@@ -500,11 +504,25 @@ void syncTask(void* param) {
         switch (state) {
             case DeviceState::Boot:
             case DeviceState::WiFiSetupMode:
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+
+            // A tag is being detected, read or formatted: whatever spool this
+            // task was holding is gone, even if it never saw Idle. Holding and
+            // Idle both sleep a second, and a spool swapped in faster than that
+            // used to leave sphase at Holding -- the new spool was never
+            // resolved or weighed, and the pages kept naming the old one.
             case DeviceState::TagDetecting:
             case DeviceState::TagReadError:
             case DeviceState::BlankTagFound:
             case DeviceState::AwaitingFormatConfirm:
             case DeviceState::FormattingAndRegistering:
+                if (sphase != SyncPhase::Idle || sSpoolId != -1) {
+                    sSpoolId = -1; sSnapshot = {}; sCostSnapshot = 0;
+                    gSpoolId = -1; gSpoolNeedsOnboarding = false;
+                    sphase = SyncPhase::Idle;
+                    sForeign = false;
+                }
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
 
@@ -578,8 +596,25 @@ void syncTask(void* param) {
             xSemaphoreTake(gTagMutex, portMAX_DELAY);
             OptMain main = gTagMain;
             uint8_t physUid[8]; memcpy(physUid, gTagUid, 8);
+            const bool justFormatted = gTagJustFormatted;
             xSemaphoreGive(gTagMutex);
             char physHex[17]; uidToHex16(physUid, physHex);
+
+            // A decoded tag with no instance_uuid is not our blank: OPT tells a
+            // writer putting the same data on many tags to leave it out, and a
+            // reader to derive it from the chip (3.2.0.2). Treating it as a blank
+            // used to mint a stub and overwrite the vendor's brand, material,
+            // colour and weights. Derive it, mark it derived (so key 0 is never
+            // written onto the tag), and carry on as a real identity: known if
+            // we've adopted this chip before, else adoption.
+            if (isNilUUID(main.instance_uuid) && !justFormatted) {
+                optDeriveInstanceUuid(physUid, main.instance_uuid);
+                main.instance_derived = true;
+                xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
+                gTagMain.instance_derived = true;
+                xSemaphoreGive(gTagMutex);
+            }
 
             // "Foreign" (adopted) is a PROVENANCE fact, decided when the record
             // was created and carried on the record — NOT inferred from tag bytes.
@@ -590,7 +625,7 @@ void syncTask(void* param) {
             // true for a freshly adopted foreign tag (set in Registering).
             sForeign = false;
 
-            if (isNilUUID(main.instance_uuid)) {
+            if (isNilUUID(main.instance_uuid)) {   // only a tag nfcTask just formatted
                 // A blank we are about to format and mint — ours to write.
                 sForeign = false;
                 // Blank tag just formatted by nfcTask — mint an identity and a
@@ -646,16 +681,15 @@ void syncTask(void* param) {
                 gSpoolId = sSpoolId;
                 gSpoolNeedsOnboarding = true;
 
-                // Stamp the new UUID (and the stub identity) onto the tag — but
-                // only if it is ours to write (our layout). A nil-UUID tag with a
-                // foreign layout is left untouched.
+                // Stamp the new UUID (and the stub identity) onto the tag: nfcTask
+                // just formatted it, so it is ours to write.
                 SpoolRecord r;
                 storeFindByUuid(hex, r);
                 overlayRecordOntoMain(r, main);
                 xSemaphoreTake(gTagMutex, portMAX_DELAY);
                 gTagMain = main;
                 xSemaphoreGive(gTagMutex);
-                if (!sForeign) gWriteMainPending = true;
+                gWriteMainPending = true;
 
                 // A brand-new stub still needs its FIRST weigh, same as any
                 // other placement — skipping straight to Present/Holding here
@@ -741,14 +775,13 @@ void syncTask(void* param) {
             xSemaphoreGive(gTagMutex);
             char physHex[17]; uidToHex16(physUid, physHex);
 
-            const bool wasNil = isNilUUID(main.instance_uuid);
-            if (wasNil) generateUUIDv4(main.instance_uuid);
             char hex[33]; uuidToHex32(main.instance_uuid, hex);
 
-            // A tag reaching adoption with a real UUID is a genuine foreign spool,
+            // Every tag reaching adoption carries an identity (its own, or the
+            // one Resolving derived from the chip): a genuine foreign spool,
             // recorded as such (provenance; it is written like any other tag).
-            // The nil-UUID case — one of ours after a store wipe — is not.
-            sForeign = !wasNil;
+            // Our own blanks never get here -- Resolving mints those.
+            sForeign = true;
 
             // A chip belongs to the spool that most recently claimed it. Tags are
             // erased to be reused, and an erase retires the spool that held the
@@ -804,6 +837,17 @@ void syncTask(void* param) {
                 e.empty_g = (pid && storeGetProduct(pid, prod) && prod.empty_g > 0.0f)
                           ? prod.empty_g : DEFAULT_SPOOL_TARE_G;
             }
+            // What the spool cost, if the tag says so in dollars (the store keeps
+            // USD only): adopted like the rest of the tag, so the cost sync
+            // agrees with the tag instead of seeing a difference to write.
+            {
+                xSemaphoreTake(gTagMutex, portMAX_DELAY);
+                const OptAuxiliary aux = gTagAux;
+                xSemaphoreGive(gTagMutex);
+                if (aux.has_purchase && !aux.price_opaque && aux.purchase_price > 0 &&
+                    (!aux.purchase_currency[0] || !strcasecmp(aux.purchase_currency, "USD")))
+                    e.cost = aux.purchase_price;
+            }
             e.needs_ob = false;
             e.foreign  = sForeign;   // adopted from someone else's tag (provenance)
             strlcpy(e.nfc_uid, physHex, sizeof(e.nfc_uid));
@@ -815,19 +859,11 @@ void syncTask(void* param) {
             gSpoolId = sSpoolId;
             gSpoolNeedsOnboarding = false;
 
-            // Write the minted UUID back only if the tag arrived with a nil UUID
-            // (equivalently !sForeign here) — the one thing adoption itself
-            // changes. A tag with its own UUID needs no write: the record was
-            // just built from it, so the two already agree. Later edits reach it
-            // through the normal reconcile, like any other tag.
-            if (wasNil && !sForeign) {
-                xSemaphoreTake(gTagMutex, portMAX_DELAY);
-                memcpy(gTagMain.instance_uuid, main.instance_uuid, 16);
-                xSemaphoreGive(gTagMutex);
-                gWriteMainPending = true;
-            }
+            // No write: the record was just built from this tag, so the two
+            // agree. Later edits reach it through the normal reconcile.
 
             sSnapshot = main;
+            sCostSnapshot = e.cost;
             ctrlPost(CtrlEvent::BeginWeigh);
             sphase = SyncPhase::Weighing;
             continue;

@@ -1,3 +1,4 @@
+#include <string>
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Norm Sohl
 
@@ -394,6 +395,54 @@ int main() {
         std::printf("passthrough: %u B of unmodelled keys survived a re-encode "
                     "(%zu B Main) -> %s\n",
                     (unsigned)in.extra_len, outLen, ok ? "ok" : "FAIL");
+        if (!ok) return 1;
+    }
+
+    // A modelled key with a value we can't hold (review A9): a weight stored as
+    // text, a brand name longer than our buffer, a 5-byte colour. Each must come
+    // back exactly as it was, once -- not dropped, not rewritten as 0, not twice.
+    {
+        uint8_t hand[200];
+        CborEncoder e, m2;
+        cbor_encoder_init(&e, hand, sizeof hand, 0);
+        cbor_encoder_create_map(&e, &m2, CborIndefiniteLength);
+        cbor_encode_int(&m2, 10); cbor_encode_text_stringz(&m2, "PLA Galaxy Black");
+        cbor_encode_int(&m2, 16); cbor_encode_text_stringz(&m2, "1000 g");
+        std::string longName(80, 'B');
+        cbor_encode_int(&m2, 11); cbor_encode_text_stringz(&m2, longName.c_str());
+        const uint8_t five[5] = {1, 2, 3, 4, 5};
+        cbor_encode_int(&m2, 19); cbor_encode_byte_string(&m2, five, 5);
+        cbor_encode_int(&m2, 34); cbor_encode_float(&m2, 215.0f);
+        cbor_encoder_close_container(&e, &m2);
+        size_t handLen = cbor_encoder_get_buffer_size(&e, hand);
+
+        std::vector<uint8_t> t = good;
+        OptMeta meta{};
+        size_t payloadOff = optBuildBlankTag(80, 4, t.data(), t.size(), &meta);
+        std::memcpy(t.data() + payloadOff + meta.main_region_offset, hand, handLen);
+        OptMain in{};
+        optDecode(t.data(), t.size(), nullptr, &in, nullptr);
+        // A writer setting a value for an opaque key must not produce a second copy.
+        std::strcpy(in.brand_name, "Overlay");
+        in.nominal_netto_full_weight = 1000.0f;
+        in.min_print_temperature = 210;
+        uint8_t out[320];
+        size_t outLen = optEncodeMain(in, out, sizeof out);
+        // Count each key in the re-encoded map.
+        CborParser pr; CborValue it, mv;
+        int count[64] = {0};
+        bool parsed = cbor_parser_init(out, outLen, 0, &pr, &it) == CborNoError && cbor_value_is_map(&it)
+                   && cbor_value_enter_container(&it, &mv) == CborNoError;
+        while (parsed && !cbor_value_at_end(&mv)) {
+            int64_t k;
+            if (!cbor_value_is_integer(&mv) || cbor_value_get_int64(&mv, &k) != CborNoError) { parsed = false; break; }
+            if (k >= 0 && k < 64) count[k]++;
+            if (cbor_value_advance(&mv) != CborNoError || cbor_value_advance(&mv) != CborNoError) { parsed = false; break; }
+        }
+        const bool ok = parsed && count[16] == 1 && count[11] == 1 && count[19] == 1 && count[34] == 1
+                     && count[10] == 1 && optIsOpaque(in, 16) && optIsOpaque(in, 11) && optIsOpaque(in, 19)
+                     && optIsOpaque(in, 34) && !optIsOpaque(in, 10);
+        std::printf("opaque modelled keys: kept verbatim, written once -> %s\n", ok ? "ok" : "FAIL");
         if (!ok) return 1;
     }
 

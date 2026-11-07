@@ -97,6 +97,10 @@ echo "    current name, across compaction and replay ---"
 STORE_TEST_ROOT="$OUT/fs9" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --usage-labels | tail -1
 
 echo
+echo "--- names with control characters survive replay (review A2) ---"
+STORE_TEST_ROOT="$OUT/fs10" LD_PRELOAD="$PRELOAD" "$OUT/store_test" --names | tail -1
+
+echo
 echo "--- consumption rollup survives the fold ---"
 # The check that cannot be recovered afterwards: once raw events are folded
 # away, the Usage rows are the only evidence left. Both dumps must be identical.
