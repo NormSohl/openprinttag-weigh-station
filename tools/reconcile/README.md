@@ -97,3 +97,14 @@ usage. On the Nov 4 backup this is spool #96, 1200.4 → 1030.4 g.
 | `overrides.json` | Lab corrections and test vendors. |
 
 Needs `tools/esun-catalogue/make.sh` to have run (`rehearse.sh` runs it if not).
+
+## The Stock List step
+
+`overrides.json` → `"stock"` holds the lab's decisions by product name:
+`relink` points a Stock List item at the product the lab orders (PLA Basic X →
+PLA+ X, created from the eSUN catalogue when the station has none; the old
+product then counts toward the item as a substitute), `substitutes` adds
+stand-ins to an item, and `not_stocked` records what was deliberately left
+unlinked (a note only). `stockplan.py` turns them into the plan that
+`apply.py` and the kit's `reconcile.js` both apply through `/api/stock/update`,
+and `verify.py` checks.

@@ -6,9 +6,9 @@ stays home: it builds a kit that travels on a thumb drive.
 
 | Step | What | Can it be undone? |
 |---|---|---|
-| Flash | Install `main` (barcode scanning, Restock, names as labels, …) | Yes: rebuild the previous firmware on the Mac, restore the before-flash backup |
+| Flash | Install `main` (barcode scanning, Restock, names as labels, Stock List substitutes, …) | Yes: rebuild the previous firmware on the Mac, restore the before-flash backup |
 | Catalogue | Load the eSUN US catalogue, which Restock and the Stock List search first | Yes: load another file; it changes no product, spool or Stock List item |
-| Reconcile | Correct every eSUN product against the eSUN US catalogue, merge duplicates, remove the Cabbage test data | Yes: restore its before-reconcile backup |
+| Reconcile | Correct every eSUN product against the eSUN US catalogue, merge duplicates, point the PLA Basic Stock List items at PLA+ (and PETG Basic White at PETG White), set which products count toward each item as substitutes, remove the Cabbage test data | Yes: restore its before-reconcile backup |
 
 They can be the same visit or different ones. The old A/B/C plan is gone: the
 Stock List is already linked, so one flash covers both earlier updates.

@@ -54,6 +54,30 @@
       ],
       "PLA Silk Silver": [
         "PLA Basic Silver"
+      ],
+      "PETG Green": [
+        "PETG+HS Green"
+      ],
+      "PLA Luminous Green": [
+        "PLA Luminous Blue"
+      ],
+      "PLA Wood Plain Wood": [
+        "PLA Wood Aspen"
+      ],
+      "PLA Matte Light Blue": [
+        "PLA+ Matte Lake"
+      ]
+    },
+    "not_stocked": {
+      "_comment": "Lab decision 2026-11-07: on the shelf, not reordered, so counted toward no item.",
+      "products": [
+        "PLA Silk Magic Black Gold",
+        "PLA Silk Magic Black Green",
+        "PLA Silk Mystic Gold Green Black",
+        "PLA Silk Mystic Gold Red Green",
+        "PLA Silk Mystic Red Green Blue",
+        "PLA Matte Dual Green Blue",
+        "TPU-95A White"
       ]
     }
   }
