@@ -43,3 +43,4 @@ $PY barcodes.py
 $PY optmatch.py
 $PY build_catalogue.py
 $PY build_comparison.py
+$PY station_catalogue.py

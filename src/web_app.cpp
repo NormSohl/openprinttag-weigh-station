@@ -260,6 +260,24 @@ const statusEl=$("#cat-status"), resolvedEl=$("#cat-resolved");
 let PACKAGES = [];
 let brandNames = new Map();
 
+// ── The station's own eSUN US catalogue (/catalogue.json, uploaded on
+// Administration). Searched before the online OpenPrintTag database, and needs
+// no internet. LOCAL.items rows become objects keyed by LOCAL.fields.
+const LOCAL_VALUE = "@esun";
+let LOCAL = null;
+async function loadLocal(){
+  try {
+    const r = await fetch("/catalogue.json", {cache:"no-store"});
+    if (!r.ok) return;
+    const d = await r.json();
+    d.items = d.items.map(a => Object.fromEntries(d.fields.map((k,i) => [k, a[i]])));
+    LOCAL = d;
+  } catch(e) { LOCAL = null; }
+}
+// Every value a pick needs is in the row, worked out when the catalogue was
+// built (tools/esun-catalogue/station_catalogue.py); this page only copies.
+function localItem(pn){ return LOCAL && LOCAL.items.find(i => i.pn === pn); }
+
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function setStatus(html, err){ statusEl.className="cat-status"+(err?" err":""); statusEl.innerHTML=html; }
 
@@ -360,11 +378,19 @@ function pushMru(key,val,cap){ let a=loadMru(key).filter(v=>v!==val); a.unshift(
 function vendorCandidates(){
   const counts=new Map();
   for(const p of PACKAGES) counts.set(p.brand,(counts.get(p.brand)||0)+1);
-  return [...counts.entries()]
-    .map(([slug,count])=>({value:slug, label:brandNames.get(slug)||prettifySlug(slug), count}))
+  const online=[...counts.entries()]
+    .map(([slug,count])=>({value:slug, label:(brandNames.get(slug)||prettifySlug(slug))
+        +(LOCAL && slug===LOCAL.vendor.toLowerCase() ? " — OpenPrintTag database" : ""), count}))
     .sort((a,b)=>a.label.localeCompare(b.label));
+  return LOCAL ? [{value:LOCAL_VALUE, label:`${LOCAL.vendor} — eSUN US catalogue`, count:LOCAL.count}, ...online] : online;
 }
 function typeCandidatesFor(vendorSlug){
+  if(vendorSlug===LOCAL_VALUE){
+    const counts=new Map();
+    for(const it of LOCAL.items) counts.set(it.material,(counts.get(it.material)||0)+1);
+    return [{value:"", label:"All materials", count:LOCAL.items.length},
+      ...[...counts.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([m,count])=>({value:m, label:m, count}))];
+  }
   const counts=new Map();
   for(const p of PACKAGES){ if(p.brand!==vendorSlug) continue; const tok=p.typeTok||"other"; counts.set(tok,(counts.get(tok)||0)+1); }
   const total=[...counts.values()].reduce((a,b)=>a+b,0);
@@ -374,6 +400,9 @@ function typeCandidatesFor(vendorSlug){
   return rows;
 }
 function materialCandidatesFor(vendorSlug, typeTok){
+  if(vendorSlug===LOCAL_VALUE)
+    return LOCAL.items.filter(it=>!typeTok || it.material===typeTok)
+      .map(it=>({value:it.pn, label:it.list_label}));
   return PACKAGES.filter(p=>p.brand===vendorSlug && (!typeTok || p.typeTok===typeTok))
     .map(p=>{
       const badge=weightBadge(p.file);
@@ -476,7 +505,8 @@ vendorCombo.setSource({
         setField("cat_type_tok", tc.value); setField("cat_pkg_path", "");
         materialCombo.setSource({
           candidatesFn: ()=>materialCandidatesFor(c.value, tc.value || null),
-          onPick(mc){ setField("cat_pkg_path", mc.value); resolvePick(mc.value); }
+          onPick(mc){ setField("cat_pkg_path", mc.value);
+            if(c.value===LOCAL_VALUE) applyLocal(localItem(mc.value)); else resolvePick(mc.value); }
         });
       }
     });
@@ -517,6 +547,7 @@ function applyPick(pkg, mat, cont, brand, brandSlug){
   const material = mat.name || "";
   const abbr = mat.abbreviation || mat.type || "";
 
+  setField("cat_type", "");   // only the station's own catalogue states it
   setField("cat_vendor", vendor);
   setField("cat_material", material);
   setField("cat_abbr", abbr);
@@ -553,25 +584,131 @@ function applyPick(pkg, mat, cont, brand, brandSlug){
     `</p></div>`;
 }
 
-// ── boot ──────────────────────────────────────────────────────────────────
+// A pick from the station's own catalogue: every value is already in the row.
+function applyLocal(it){
+  if(!it) return;
+  setField("cat_vendor", LOCAL.vendor);
+  setField("cat_material", it.name);
+  setField("cat_abbr", it.abbr);
+  setField("cat_type", it.type);
+  setField("cat_rgba", it.rgba);
+  setField("cat_dia", it.dia);
+  setField("cat_nom_g", it.size_g);
+  setField("cat_empty_g", it.tare);
+  setField("cat_gtin", it.gtin);
+  setField("cat_pkg_uuid", it.pkg_uuid);
+  setField("cat_mat_uuid", it.mat_uuid);
+  setField("cat_brand_uuid", it.brand_uuid);
+  const T = it.temps || ["","","",""];
+  setField("cat_print_min", T[0]); setField("cat_print_max", T[1]);
+  setField("cat_bed_min", T[2]);   setField("cat_bed_max", T[3]);
+  setField("cat_vendor_slug", LOCAL_VALUE); setField("cat_type_tok", it.material); setField("cat_pkg_path", it.pn);
+  $("#cat-source").value = "catalog";
+  const sw = it.rgba ? `<span class="sw" style="background:#${esc(it.rgba.slice(0,6))}"></span>` : "";
+  resolvedEl.innerHTML =
+    `<div class="card" style="border-color:#2a5;margin-top:10px">` +
+    `<div style="font-size:17px;font-weight:600">${sw}${esc(LOCAL.vendor)} ${esc(it.name)}</div>` +
+    `<p class="muted">${esc(it.abbr)} &middot; ${it.dia} mm &middot; ${it.size_g} g &middot; tare ` +
+      (it.tare!=null ? `${it.tare} g` : `unknown <span class='ob'>&mdash; pick a spool profile or capture it below</span>`) + `</p>` +
+    `<p class="muted" style="font-size:12px">eSUN part ${esc(it.pn)} &middot; barcode ${esc(it.gtin||"—")}` +
+      (it.temps ? ` &middot; print ${it.temps[0]}&ndash;${it.temps[1]}&deg;C` : ``) +
+      ` &middot; from the eSUN US catalogue of ${esc(LOCAL.date)}</p></div>`;
+}
+// Pick a catalogue item by part number through the three fields, as clicks
+// would (a scanned barcode uses this). False if it isn't in the catalogue.
+function pickLocal(pn){
+  const it = localItem(pn);
+  return !!(it && vendorCombo.select(LOCAL_VALUE) && typeCombo.select(it.material) && materialCombo.select(pn));
+}
+window.catLocalByGtin = g => LOCAL ? LOCAL.items.filter(i => i.gtin && +i.gtin === +g) : [];
+window.catLocalPick = pickLocal;
+
+// ── boot: the station's catalogue first (no internet needed), then the
+//    online database; either alone is enough to search ─────────────────────
 (async () => {
-  try {
-    await loadIndex();
+  await loadLocal();
+  if (LOCAL) {
     vendorCombo.enable();
-    setStatus(`${PACKAGES.length.toLocaleString()} packages, ${new Set(PACKAGES.map(p=>p.brand)).size} vendors ready.`);
-    // Start on the last catalog pick, when the page supplied one (/onboard,
-    // for a spool that still needs onboarding). Replayed as three ordinary
-    // picks, so the material resolves and fills the form exactly as a click
-    // would. Stops at the first value the catalog no longer has, leaving the
-    // rest for a person to choose.
-    const last = document.getElementById("cat-last");
-    if (last && vendorCombo.select(last.dataset.vendor) && typeCombo.select(last.dataset.type || ""))
-      materialCombo.select(last.dataset.pkg);
-  } catch(e){
-    setStatus(`Couldn't load the catalog: <b>${esc(e.message)}</b> &mdash; use manual entry below.`, true);
-    const det = document.getElementById("cat-manual-details");
-    if (det) det.open = true;
+    setStatus(`eSUN US catalogue: ${LOCAL.count} items (${esc(LOCAL.date)}). Loading the online OpenPrintTag database&hellip;`);
+    if (window.catManualReady) window.catManualReady();
   }
+  let online = true;
+  try { await loadIndex(); } catch(e) { online = false;
+    if (LOCAL) setStatus(`eSUN US catalogue: ${LOCAL.count} items (${esc(LOCAL.date)}). The online OpenPrintTag database couldn't be loaded (<b>${esc(e.message)}</b>): other vendors, use manual entry.`, true);
+    else {
+      setStatus(`Couldn't load the catalog: <b>${esc(e.message)}</b> &mdash; use manual entry below.`, true);
+      const det = document.getElementById("cat-manual-details");
+      if (det) det.open = true;
+      return;
+    }
+  }
+  vendorCombo.enable();
+  if (online) setStatus((LOCAL ? `eSUN US catalogue: ${LOCAL.count} items (${esc(LOCAL.date)}); ` : ``) +
+    `OpenPrintTag database: ${PACKAGES.length.toLocaleString()} packages, ${new Set(PACKAGES.map(p=>p.brand)).size} vendors.`);
+  // Start on the last catalog pick, when the page supplied one (/onboard,
+  // for a spool that still needs onboarding). Replayed as three ordinary
+  // picks, so the material resolves and fills the form exactly as a click
+  // would. Stops at the first value the catalog no longer has, leaving the
+  // rest for a person to choose.
+  const last = document.getElementById("cat-last");
+  if (last && vendorCombo.select(last.dataset.vendor) && typeCombo.select(last.dataset.type || ""))
+    materialCombo.select(last.dataset.pkg);
+})();
+
+// ── Manual entry with eSUN chosen as vendor: the Material, Color and Package
+// lists become the eSUN US catalogue's, and a complete choice is a catalogue
+// pick (source "catalog", every value from the row) rather than a typed one.
+// "Not in the eSUN US list" puts the ordinary lists back. ─────────────────
+(function(){
+  const vs = document.querySelector("select[name=vendor]"), ms = document.querySelector("select[name=material]"),
+        cs = document.querySelector("select[name=color]");
+  if (!vs || !ms || !cs) return;
+  const orig = { m: ms.innerHTML, c: cs.innerHTML };
+  const pk = document.createElement("select"); pk.id = "esun-package"; pk.hidden = true;
+  const pkLabel = document.createElement("label"); pkLabel.textContent = "Package"; pkLabel.hidden = true;
+  cs.after(pkLabel, pk);
+  let on = false;
+  const opt = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
+  const items = () => LOCAL.items;
+  function off(){
+    if (!on) return; on = false;
+    ms.innerHTML = orig.m; cs.innerHTML = orig.c; pk.hidden = pkLabel.hidden = true;
+    $("#cat-source").value = "manual";
+  }
+  function fillColours(){
+    const cols = [...new Set(items().filter(i => i.material === ms.value).map(i => i.colour))];
+    cs.innerHTML = opt("", "— choose a colour —") + cols.map(c => opt(c, c)).join("");
+    fillPackages();
+  }
+  function fillPackages(){
+    const its = items().filter(i => i.material === ms.value && i.colour === cs.value);
+    pk.innerHTML = its.map(i => opt(i.pn, i.name)).join("");
+    pk.hidden = pkLabel.hidden = its.length < 2;
+    choose();
+  }
+  function choose(){
+    const it = localItem(pk.value);
+    if (it && ms.value && cs.value) applyLocal(it);
+    else { $("#cat-source").value = "manual"; resolvedEl.innerHTML = ""; }
+  }
+  function onVendor(){
+    if (!LOCAL || vs.value.toLowerCase() !== LOCAL.vendor.toLowerCase()) { off(); return; }
+    if (on) return; on = true;
+    const mats = [...new Set(items().map(i => i.material))];
+    ms.innerHTML = opt("", "— choose an eSUN material —") + mats.map(m => opt(m, m)).join("")
+                 + opt("__other__", "Not in the eSUN US list…");
+    cs.innerHTML = opt("", "— choose a material first —"); pk.hidden = pkLabel.hidden = true;
+    $("#cat-source").value = "manual";
+  }
+  vs.addEventListener("change", onVendor);
+  ms.addEventListener("change", () => {
+    if (!on) return;
+    if (ms.value === "__other__") { const v = vs.value; off(); vs.value = v; return; }
+    fillColours();
+  });
+  cs.addEventListener("change", () => { if (on) fillPackages(); });
+  pk.addEventListener("change", () => { if (on) choose(); });
+  window.catManualReady = onVendor;   // the vendor may already be eSUN when the catalogue arrives
 })();
 })();
 </script>)OPTJS";
@@ -1906,6 +2043,12 @@ static const char ONBOARD_SCAN_SCRIPT[] =
     "if(U.length){if(window.stkOnly)stkOnly(U.map(function(s){return s.id}));"
       "msg('Scanned '+c+' &rarr; <b>'+U[0].name+'</b> on the Stock List, but that row "
       "is not linked to a product &mdash; fix it on the Stock List.');return}"
+    // Not a product yet, but in the station's eSUN catalogue: a new product,
+    // picked from it (CATALOG_SCRIPT's catLocalPick).
+    "var K=window.catLocalByGtin?catLocalByGtin(c):[];"
+    "if(K.length==1&&(!window.prodPick||prodPick(0))&&window.catLocalPick&&catLocalPick(K[0].pn)){upd();"
+      "msg('Scanned '+c+' &rarr; <b>eSUN '+K[0].name.replace(/</g,'&lt;')+'</b> from the eSUN US catalogue "
+      "&mdash; a new product.');return}"
     "msg('Unknown barcode '+c+' &mdash; pick the stock item below.');"
     "var q=document.getElementById('stk-q');if(q)q.focus()"
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed.')})};"
@@ -2121,6 +2264,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
          "<input type='hidden' name='cat_vendor'      id='cat-f-cat_vendor'>"
          "<input type='hidden' name='cat_material'    id='cat-f-cat_material'>"
          "<input type='hidden' name='cat_abbr'        id='cat-f-cat_abbr'>"
+         "<input type='hidden' name='cat_type'        id='cat-f-cat_type'>"
          "<input type='hidden' name='cat_rgba'        id='cat-f-cat_rgba'>"
          "<input type='hidden' name='cat_dia'         id='cat-f-cat_dia'>"
          "<input type='hidden' name='cat_nom_g'       id='cat-f-cat_nom_g'>"
@@ -2349,6 +2493,9 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
     uint64_t gtin = 0;
     bool     haveCatTemps = false;
     int16_t  catPrintMin = 0, catPrintMax = 0, catBedMin = 0, catBedMax = 0;
+    // The OpenPrintTag material type, when the pick stated one (the station's
+    // eSUN catalogue does; -1 = not stated, fall back to the materials table).
+    int      catType = -1;
 
     ProductRecord q;
     const bool haveChosen = chosen && storeGetProduct(chosen, q);
@@ -2479,11 +2626,12 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
             catBedMin   = (int16_t)arg("cat_bed_min").toInt();
             catBedMax   = (int16_t)arg("cat_bed_max").toInt();
         }
-        // Local material class/type enum still comes from the config catalog
-        // (the OPT database's class/type strings aren't mapped to our enum) —
-        // by abbreviation, which is all a catalog pick knows. The manual path
-        // looks up by the material row's name instead, because it has one.
+        // Material class/type: stated by the station's eSUN catalogue (cat_type);
+        // otherwise from the config catalog by abbreviation, which is all an
+        // online pick knows. The manual path looks up by the material row's
+        // name instead, because it has one.
         haveMat = cfgMaterialByAbbr(abbr.c_str(), m);
+        if (arg("cat_type").length()) catType = arg("cat_type").toInt();
 
         ProductRecord prod;
         strlcpy(prod.vendor,     vendor.c_str(),    sizeof(prod.vendor));
@@ -2682,7 +2830,10 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
             gTagMain.min_bed_temperature   = m.bed_min;
             gTagMain.max_bed_temperature   = m.bed_max;
         }
-        if (haveMat) {
+        if (catType >= 0) {
+            gTagMain.material_class = 0;   // FFF: the eSUN catalogue is filament only
+            optSetMaterialType(gTagMain, (int8_t)catType);
+        } else if (haveMat) {
             gTagMain.material_class = m.cls;
             optSetMaterialType(gTagMain, m.type);
         }
@@ -3717,7 +3868,11 @@ static const char STOCK_SCAN_SCRIPT[] =
         "msg(t+'Scanned '+c+' &rarr; <b>'+P[0].vendor+' '+P[0].material+'</b>');return}"
     "if(P.length>1)msg(t+'Scanned '+c+': several products have this barcode &mdash; pick one "
       "under <i>Item is&hellip;</i>.');"
-    "else{if(window.itemPick)itemPick(0);msg(t+'Scanned '+c+': no product has this barcode yet "
+    "else{if(window.itemPick)itemPick(0);"
+      "var K=window.catLocalByGtin?catLocalByGtin(c):[];"
+      "if(K.length==1&&window.catLocalPick&&catLocalPick(K[0].pn))msg(t+'Scanned '+c+' &rarr; <b>eSUN '"
+        "+K[0].name.replace(/</g,'&lt;')+'</b> from the eSUN US catalogue &mdash; a new product.');"
+      "else msg(t+'Scanned '+c+': no product has this barcode yet "
       "&mdash; search the catalog or enter it; the barcode is filled in.')}"
   "}).catch(function(){msg('Scanned '+c+' &mdash; lookup failed; the barcode is filled in.')})};"
 "})()</script>";
@@ -4296,6 +4451,10 @@ static const char ADMIN_STYLE[] =
     "h3.adv{color:#f88}"
     "</style>";
 
+// The station's eSUN catalogue summary (defined with its handlers below).
+struct CatalogueInfo { bool present = false; size_t bytes = 0; String date; long count = 0; };
+static CatalogueInfo catalogueInfo();
+
 static void handleConfig(AsyncWebServerRequest* req) {
     String p = head("Administration", "/config");
     p += ADMIN_STYLE;
@@ -4344,6 +4503,24 @@ static void handleConfig(AsyncWebServerRequest* req) {
 
     // ── Station setup ─────────────────────────────────────────────────────────
     p += "<h3>Station setup</h3>";
+
+    // eSUN US catalogue: what Restock and the Stock List search before the
+    // online OpenPrintTag database. Built on the Mac (tools/esun-catalogue).
+    {
+        const CatalogueInfo ci = catalogueInfo();
+        p += "<div class='card' id='catalogue-card'><label style='margin-top:0'>eSUN US catalogue</label>";
+        p += ci.present
+            ? "<p id='catalogue-status'><b>" + String(ci.count) + " items</b>, from esun3d.com on "
+              + esc(ci.date.c_str()) + ". Restock and the Stock List search it first, without internet.</p>"
+            : String("<p id='catalogue-status' class='ob'>None loaded: Restock and the Stock List "
+                     "search only the online OpenPrintTag database.</p>");
+        p += "<form method='POST' action='/catalogue/import' enctype='multipart/form-data'>"
+             "<input type='file' name='file' accept='.json' required>"
+             "<div><button type='submit' class='sec'>Load catalogue file</button></div></form>"
+             "<p class='muted'>The file is <code>station-catalogue.json</code> from "
+             "<code>tools/esun-catalogue</code>. Loading it replaces the catalogue only: "
+             "products, spools and the Stock List are not changed.</p></div>";
+    }
 
     // Station name: the Idle screen's green heading, and the only place on
     // the device that greets by the owning org's name -- everything else is
@@ -4591,6 +4768,101 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
                    "Import failed: expected a JSON object with vendors/materials/"
                    "spool-profiles/colors/stock-items arrays");
     }
+}
+
+// ── The station's eSUN US catalogue ──────────────────────────────────────────
+// Built on the Mac by tools/esun-catalogue (station_catalogue.py), uploaded on
+// Administration (or by the station kit's reconcile.js), and served to the
+// station's own pages, which search it before the online OpenPrintTag
+// database. Every value a pick needs is in each row; the station only stores
+// and serves the file and never parses it beyond the summary below. Reference
+// data, not records: replacing it changes no product, spool or Stock List item.
+//
+// The file is always present (created empty at boot, opened "a"), so nothing
+// ever asks LittleFS about a missing file, which logs an error (CLAUDE.md,
+// "LittleFS.exists() is a read-open"). Empty = no catalogue uploaded.
+static const char* CATALOGUE_PATH    = "/config/catalogue.json";
+static const char* CATALOGUE_STAGING = "/config/catalogue.staging";
+static constexpr size_t CATALOGUE_MAX_BYTES = 400 * 1024;
+
+// The summary from the file's first bytes: station_catalogue.py writes "date"
+// and "count" first, so this never reads the whole file.
+static CatalogueInfo catalogueInfo() {
+    CatalogueInfo ci;
+    File f = LittleFS.open(CATALOGUE_PATH, "r");
+    if (!f) return ci;
+    ci.bytes = f.size();
+    char hd[257] = {};
+    size_t n = f.read((uint8_t*)hd, sizeof(hd) - 1);
+    f.close();
+    hd[n] = 0;
+    if (n < 2 || hd[0] != '{') return ci;
+    ci.present = true;
+    // The value after "key": whatever whitespace the JSON writer put around it.
+    auto after = [&](const char* key) -> const char* {
+        const char* k = strstr(hd, key);
+        if (!k) return nullptr;
+        k += strlen(key);
+        while (*k == ' ' || *k == ':' || *k == '\t') k++;
+        return k;
+    };
+    if (const char* d = after("\"date\"")) if (*d == '"') { const char* e = strchr(++d, '"'); if (e) ci.date = String(d).substring(0, e - d); }
+    if (const char* c = after("\"count\"")) ci.count = atol(c);
+    return ci;
+}
+
+static void handleCatalogueGet(AsyncWebServerRequest* req) {
+    if (!catalogueInfo().present) { req->send(404, "text/plain", "no catalogue uploaded"); return; }
+    AsyncWebServerResponse* r = req->beginResponse(LittleFS, CATALOGUE_PATH, "application/json", false);
+    r->addHeader("Cache-Control", "no-cache");
+    req->send(r);
+}
+
+static bool sCatalogueImportAuthed = false;
+static bool sCatalogueTooBig = false;
+
+static void handleCatalogueImportUpload(AsyncWebServerRequest* req, const String& filename,
+                                         size_t index, uint8_t* data, size_t len, bool final) {
+    if (index == 0) { sCatalogueImportAuthed = !apiKeyIsSet() || authOk(req); sCatalogueTooBig = false; }
+    if (!sCatalogueImportAuthed) return;
+    if (index + len > CATALOGUE_MAX_BYTES) { sCatalogueTooBig = true; return; }   // Done refuses it
+    File f = LittleFS.open(CATALOGUE_STAGING, index == 0 ? "w" : "a");
+    if (f) { f.write(data, len); f.close(); }
+}
+
+static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
+    if (!sCatalogueImportAuthed) { LittleFS.remove(CATALOGUE_STAGING); return; }
+    if (!authOk(req)) return;
+    // Checked before the live file is touched: a refused upload changes nothing.
+    size_t size = 0;
+    char hd[257] = {};
+    File f = LittleFS.open(CATALOGUE_STAGING, "r");
+    if (f) { size = f.size(); hd[f.read((uint8_t*)hd, sizeof(hd) - 1)] = 0; f.close(); }
+    const bool ok = !sCatalogueTooBig && size > 0 && hd[0] == '{'
+                 && strstr(hd, "\"count\"") && strstr(hd, "\"fields\"");
+    if (!ok) {
+        LittleFS.remove(CATALOGUE_STAGING);
+        req->send(400, "text/plain", sCatalogueTooBig
+            ? "Catalogue refused: larger than " + String((unsigned)(CATALOGUE_MAX_BYTES / 1024)) + " KB"
+            : String("Catalogue refused: not a station catalogue (build it with tools/esun-catalogue/make.sh)"));
+        return;
+    }
+    LittleFS.remove(CATALOGUE_PATH);   // always present (see above), so no missing-file error
+    if (!LittleFS.rename(CATALOGUE_STAGING, CATALOGUE_PATH)) {
+        req->send(500, "text/plain", "Catalogue upload failed: could not store it");
+        return;
+    }
+    const CatalogueInfo ci = catalogueInfo();
+    if (req->hasParam("json") || req->hasParam("json", true)) {
+        req->send(200, "application/json", "{\"count\":" + String(ci.count) + ",\"date\":\"" + esc(ci.date.c_str()) + "\"}");
+        return;
+    }
+    String p = head("eSUN catalogue", "/config");
+    p += "<div class='card'><p>eSUN US catalogue loaded: <b>" + String(ci.count) + " items</b> from "
+         + esc(ci.date.c_str()) + ". Restock and the Stock List search it first.</p>"
+         "<a href='/config'><button type='button'>Back to Administration</button></a></div>";
+    p += FOOT;
+    req->send(200, "text/html", p);
 }
 
 // ── Backup / restore (host download + upload; SD snapshots are hardware-gated) ─
@@ -5041,6 +5313,9 @@ static void handleCalibratePage(AsyncWebServerRequest* req) {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void webAppBegin() {
+    // The eSUN catalogue file is always present (see CATALOGUE_PATH): "a"
+    // creates it empty when missing and writes nothing when not.
+    { File f = LittleFS.open(CATALOGUE_PATH, "a"); if (f) f.close(); }
     if (MDNS.begin(DEVICE_HOSTNAME))
         MDNS.addService("http", "tcp", 80);
 
@@ -5125,6 +5400,8 @@ void webAppBegin() {
     // HTML back instead of JSON).
     sServer.on("/config/export", HTTP_GET,  handleConfigExport);
     sServer.on("/config/import", HTTP_POST, handleConfigImportDone, handleConfigImportUpload);
+    sServer.on("/catalogue/import", HTTP_POST, handleCatalogueImportDone, handleCatalogueImportUpload);
+    sServer.on("/catalogue.json",   HTTP_GET,  handleCatalogueGet);
     sServer.on("/config/tables", HTTP_GET, handleConfigTables);   // before /config: prefix match
     sServer.on("/config",      HTTP_GET,  handleConfig);
     sServer.on("/api/config",  HTTP_POST, handleApiConfigSave);

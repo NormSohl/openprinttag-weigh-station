@@ -1038,3 +1038,153 @@ def test_stock_list_new_material_takes_the_items_diameter(sim, page):
     page.fill("#stock-dia", "2.85")
     assert page.input_value("#material-new-dia") == "2.85"
     assert page.locator("label:text-is('Diameter (mm)')").count() == 1
+
+
+# ── The station's eSUN US catalogue (tools/esun-catalogue/station_catalogue.py) ──
+# A small catalogue in the real format. Every value a pick needs is in the
+# row; the station only stores, serves and copies it. These tests run with the
+# internet blocked (conftest), like a station whose online catalog won't load.
+_CAT_FIELDS = ["pn", "fid", "material", "colour", "size_g", "dia", "packaging", "name", "list_label", "abbr",
+               "type", "gtin", "rgba", "tare", "brand_uuid", "pkg_uuid", "mat_uuid", "temps"]
+_BRAND = "db92e17c3c305fa9bec91022e233a216"
+_CAT_ITEMS = [
+    ["PLA+175B1P1", "PLA+175B", "PLA+", "Black", 1000, 1.75, "Paper spool", "PLA+ Black",
+     "PLA+ Black · 6922572219021", "PLA Pro", 0, "6922572219021", "000000ff", None, _BRAND,
+     "0b22fb8db1c653ae8cb24cd80e9c4e78", "b1e17cfb4cc85181b88076343255214b", [210, 230, 45, 60]],
+    ["PLA+175B1R1", "PLA+175B", "PLA+", "Black", 1000, 1.75, "Refill", "PLA+ Black Refill",
+     "PLA+ Black Refill · 6922572208148", "PLA Pro", 0, "6922572208148", "000000ff", None, _BRAND,
+     "7f73a76f429f5054827b94d2dbeff33c", "b1e17cfb4cc85181b88076343255214b", [210, 230, 45, 60]],
+    ["PETG+175H1P1", "PETG+175H", "PETG+", "Grey", 1000, 1.75, "Paper spool", "PETG+ Grey",
+     "PETG+ Grey", "PETG", 1, "", "", None, _BRAND, "", "5d0aa0e2a8b25b6e9d5c2bf8c2a8f9f1", [230, 250, 75, 90]],
+]
+
+
+def _upload_catalogue(sim, items=None):
+    items = _CAT_ITEMS if items is None else items
+    data = json.dumps({"date": "2026-11-06", "count": len(items), "vendor": "eSUN", "source": "test",
+                       "fields": _CAT_FIELDS, "items": items}).encode()
+    return json.loads(sim.upload("/catalogue/import?json=1", data, filename="station-catalogue.json"))
+
+
+def _cat_field(page, name):
+    return page.input_value("#cat-f-" + name)
+
+
+def _wait_catalogue(page):
+    page.wait_for_function("document.getElementById('cat-in-vendor') && !document.getElementById('cat-in-vendor').disabled")
+
+
+def _pick(page, field, text):
+    page.click("#cat-in-" + field)
+    page.locator(f"#cat-panel-{field} .cat-row", has_text=text).first.click()
+
+
+def test_catalogue_upload_is_checked_and_shown_on_administration(sim, page):
+    page.goto(sim.url("/config"))
+    assert "None loaded" in page.inner_text("#catalogue-status")
+    assert _upload_catalogue(sim) == {"count": 3, "date": "2026-11-06"}
+    import urllib.error
+    with pytest.raises(urllib.error.HTTPError):   # not a catalogue: refused ...
+        sim.upload("/catalogue/import?json=1", b"{\"vendors\":[]}", filename="x.json")
+    assert sim.get_json("/catalogue.json")["count"] == 3   # ... and the loaded one kept
+    page.goto(sim.url("/config"))
+    assert "3 items" in page.inner_text("#catalogue-status")
+
+
+def test_restock_searches_the_catalogue_offline_and_copies_its_values(sim, page):
+    _upload_catalogue(sim)
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    _wait_catalogue(page)
+    page.click("#cat-in-vendor")
+    rows = page.locator("#cat-panel-vendor .cat-row")
+    assert "eSUN US catalogue" in rows.first.inner_text()   # first, and works without internet
+    rows.first.click()
+    _pick(page, "type", "PLA+")
+    _pick(page, "material", "PLA+ Black Refill")
+    assert page.input_value("#cat-source") == "catalog"
+    assert _cat_field(page, "cat_material") == "PLA+ Black Refill"
+    assert _cat_field(page, "cat_abbr") == "PLA Pro" and _cat_field(page, "cat_type") == "0"
+    assert _cat_field(page, "cat_gtin") == "6922572208148"
+    assert _cat_field(page, "cat_mat_uuid") == "b1e17cfb4cc85181b88076343255214b"
+    assert _cat_field(page, "cat_print_min") == "210" and _cat_field(page, "cat_bed_max") == "60"
+    assert "from the eSUN US catalogue" in page.inner_text("#cat-resolved")
+    page.select_option("select#profile", index=1)          # the catalogue has no tare: the profile's
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*")
+    prods = sim.get_json("/api/products")
+    p = [x for x in prods if x["material"] == "PLA+ Black Refill"][0]
+    assert p["vendor"] == "eSUN" and p["gtin"] == "6922572208148" and p["abbr"] == "PLA Pro"
+    assert p["material_uuid"] == "b1e17cfb4cc85181b88076343255214b"
+    assert p["brand_uuid"] == _BRAND and p["package_uuid"] == "7f73a76f429f5054827b94d2dbeff33c"
+    assert page.js_errors == []
+
+
+def test_the_same_catalogue_item_twice_is_one_product(sim, page):
+    """Even without a barcode: the material ID + weight finds it again."""
+    _upload_catalogue(sim)
+    for _ in range(2):
+        sim.blank(gross=1220)
+        spool = sim.get_json("/_sim/state")["spool"]
+        sim._post("/api/onboard", id=spool, source="catalog", profile="", empty_g=200,
+                  cat_vendor="eSUN", cat_material="PETG+ Grey", cat_abbr="PETG", cat_type=1, cat_dia=1.75,
+                  cat_nom_g=1000, cat_brand_uuid=_BRAND, cat_mat_uuid="5d0aa0e2a8b25b6e9d5c2bf8c2a8f9f1")
+        sim.remove()
+    prods = [p for p in sim.get_json("/api/products") if p["material"] == "PETG+ Grey"]
+    assert len(prods) == 1
+
+
+def test_manual_entry_with_esun_lists_esun_materials(sim, page):
+    _upload_catalogue(sim)
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    _wait_catalogue(page)
+    page.click("#cat-manual-details summary")
+    vendors = page.eval_on_selector_all("select[name=vendor] option", "o => o.map(x => x.value)")
+    esun = [v for v in vendors if v.lower() == "esun"][0]
+    page.select_option("select[name=vendor]", esun)
+    mats = page.eval_on_selector_all("select[name=material] option", "o => o.map(x => x.textContent)")
+    assert "PLA+" in mats and "PETG+" in mats and "Not in the eSUN US list…" in mats
+    page.select_option("select[name=material]", "PLA+")
+    page.select_option("select[name=color]", "Black")
+    assert page.is_visible("#esun-package")                  # spool and refill
+    page.select_option("#esun-package", "PLA+175B1R1")
+    assert page.input_value("#cat-source") == "catalog"
+    assert _cat_field(page, "cat_material") == "PLA+ Black Refill"
+    # Not in the list: the ordinary materials come back, and it's a typed entry again.
+    page.select_option("select[name=material]", "__other__")
+    assert page.input_value("#cat-source") == "manual"
+    mats = page.eval_on_selector_all("select[name=material] option", "o => o.map(x => x.textContent)")
+    assert "PLA+" not in mats or "Not in the eSUN US list…" not in mats
+    assert page.js_errors == []
+
+
+def test_scanning_a_catalogue_barcode_picks_it_as_a_new_product(sim, page):
+    _upload_catalogue(sim)
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    _wait_catalogue(page)
+    scan(page, "6922572219021")
+    page.wait_for_selector("#scan-msg:not([hidden])")
+    assert "from the eSUN US catalogue" in page.inner_text("#scan-msg")
+    assert page.input_value("#cat-source") == "catalog"
+    assert _cat_field(page, "cat_material") == "PLA+ Black"
+
+
+def test_stock_list_scan_and_search_use_the_catalogue(sim, page):
+    _upload_catalogue(sim)
+    page.goto(sim.url("/stock"))
+    _wait_catalogue(page)
+    scan(page, "6922572208148")
+    page.wait_for_selector("#scan-msg:not([hidden])")
+    assert "from the eSUN US catalogue" in page.inner_text("#scan-msg")
+    assert _cat_field(page, "cat_material") == "PLA+ Black Refill"
+
+
+def test_without_a_catalogue_the_pages_behave_as_before(sim, page):
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    page.wait_for_timeout(500)
+    assert "Couldn't load the catalog" in page.inner_text("#cat-status")
+    assert page.evaluate("document.getElementById('cat-manual-details').open")
+    assert page.js_errors == []

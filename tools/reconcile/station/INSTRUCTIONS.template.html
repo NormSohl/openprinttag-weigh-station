@@ -13,6 +13,7 @@ li{margin:.35em 0}table{border-collapse:collapse}td{padding:2px 10px 2px 0;verti
 This kit:</p>
 <table>
 <tr><td>Firmware</td><td><code>{{BUILD}}</code> (commit {{COMMIT}}), {{SIZE}} bytes</td></tr>
+<tr><td>eSUN catalogue</td><td><code>station-catalogue.json</code>: {{CATCOUNT}} orderable items from esun3d.com, {{CATDATE}}</td></tr>
 <tr><td>Decisions</td><td>{{DECISIONS}}: {{MERGES}} merges, {{RENAMES}} renames, remove test vendor(s) {{VENDORS}}</td></tr>
 </table>
 <p>Copy the whole kit folder from the thumb drive to the PC's Desktop first.</p>
@@ -54,7 +55,18 @@ Administration; weigh the noted spool, remaining is the same within a few grams;
 manually refuses to save until <b>This is a new product</b> is ticked. Reorder now lists an item once
 it's below half its target. Download another backup (Administration → Backup).</p>
 
-<h2>3. Reconcile</h2>
+<h2>3. Load the eSUN US catalogue</h2>
+<ol>
+<li>On the station: <b>Administration</b> → <b>Station setup</b> → <b>eSUN US catalogue</b>.</li>
+<li>Click <b>Choose file</b>, pick <code>station-catalogue.json</code> from the kit folder, click <b>Load catalogue file</b>.</li>
+<li>It says <i>eSUN US catalogue loaded: {{CATCOUNT}} items</i>. Nothing else on the station changes.</li>
+</ol>
+<p><b>Check:</b> put a new spool's tag on the scale (or open Restock with one already on), choose
+<i>+ New product…</i>. Under <b>Search filament catalog</b>, the vendor list starts with
+<i>eSUN — eSUN US catalogue</i>. In <b>Or enter manually</b>, choosing the eSUN vendor lists eSUN's own
+materials and colours. Both work without internet.</p>
+
+<h2>4. Reconcile</h2>
 <div class="warn">Nobody at the scale for the few minutes this takes.</div>
 <ol>
 <li>In Chrome, on any page of the <b>station</b> (not the flasher), press <kbd>F12</kbd> and click the <b>Console</b> tab.</li>

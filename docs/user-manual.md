@@ -100,8 +100,17 @@ On the **Restock** page, say what the spool is under **What is this spool?**:
   use the **catalog search**: the vendor, material type and material fields
   show the last product picked. Same product? Leave them. Different? Click a
   field to see the full list, or type to narrow it.
+  - **eSUN:** pick **eSUN — eSUN US catalogue**, the first vendor. It lists
+    what eSUN US sells (material, then colour and package) and works without
+    internet. Everything the tag needs comes with the pick: name, barcode,
+    colour, print temperatures. Scanning the box's barcode picks it for you.
+  - **Other vendors** come from the online OpenPrintTag database, which needs
+    internet. eSUN is there too, as **eSUN — OpenPrintTag database**, for a
+    spool the eSUN US list doesn't have.
 - **Not in the catalog?** Open **Or enter manually** and pick the vendor,
-  material and colour. Use **+ Add new** for anything missing. Tick **This
+  material and colour. Choosing the **eSUN** vendor lists eSUN's own
+  materials, colours and packages, and a full choice counts as a catalogue
+  pick. Otherwise use **+ Add new** for anything missing, and tick **This
   is a new product**: a typed entry always makes a new product, because the
   station never matches products by name. If the name you typed is already
   a product, the page offers it instead.
@@ -204,7 +213,7 @@ do the same.)
 | **Reorder** | Stock List items with less than half their target on the shelf, and how many to order. Download the list as CSV. |
 | **Restock** | Enter details for a new spool on the scale (onboarding). |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Administration** | For trained staff. **Staff tools:** Stock List (what we want to keep in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
+| **Administration** | For trained staff. **Staff tools:** Stock List (what we want to keep in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** the eSUN US catalogue (what's loaded, and **Load catalogue file** for a new one; loading it changes no product, spool or Stock List item), station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
 
 **Tables sort:** tap any column heading to sort by it, tap again to reverse.
 
@@ -275,7 +284,9 @@ to narrow the list:
 - **Already on file?** Pick the product. Products already on the Stock List
   say so.
 - **Otherwise:** pick **+ New product…** and use the **catalog search**. It
-  starts on the last product added here; click a field to change it.
+  starts on the last product added here; click a field to change it. For
+  eSUN, use **eSUN — eSUN US catalogue** (first in the vendor list); scanning
+  an eSUN box picks it there.
 - **Not in the catalog?** Open **Or enter manually** and tick **This is a new
   product**.
 

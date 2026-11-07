@@ -69,6 +69,15 @@
       bad(`This station runs ${st.build_version}, but these decisions are for firmware ${KIT.build}. Flash the kit's firmware first.`);
       plan.ok = false; return plan;
     }
+    // the eSUN catalogue (loaded separately, on Administration)
+    try {
+      const c = await fetch("/catalogue.json", { cache: "no-store" });
+      const cj = c.ok ? await c.json() : null;
+      if (!cj) bad(`eSUN US catalogue: not loaded. Load station-catalogue.json on Administration -> eSUN US catalogue (step 3 of the instructions).`);
+      else if (KIT.catalogue && (cj.date !== KIT.catalogue.date || cj.count !== KIT.catalogue.count))
+        bad(`eSUN US catalogue: the station has ${cj.count} items from ${cj.date}, this kit's is ${KIT.catalogue.count} from ${KIT.catalogue.date}. Load the kit's station-catalogue.json.`);
+      else out(`eSUN US catalogue: loaded, ${cj.count} items from ${cj.date}`);
+    } catch (e) { bad("eSUN US catalogue: couldn't check (" + e.message + ")"); }
     // test vendors
     const tv = testVendorLines(await getT("/export"));
     plan.test = tv;

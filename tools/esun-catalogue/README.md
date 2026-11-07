@@ -26,6 +26,9 @@ Outputs, in `docs/reference/`:
    Python environment and fetches the OpenPrintTag database into `work/` (git
    ignores it). `OPT_REF=<full commit hash>` pins the database (the 2026-11-06 build used `120b321f1b690acca543459344fe35415a895b19`); `DATE=` picks older data.
 
+4. Load `work/station-catalogue.json` on the station (Administration → eSUN US
+   catalogue), or ask Claude for a new station kit, which includes it.
+
 Keep the old `data/` files: they are the record of what was orderable when, and let
 any spreadsheet be rebuilt exactly.
 
@@ -41,6 +44,7 @@ any spreadsheet be rebuilt exactly.
 | `optmatch.py` | Is each variant in the OpenPrintTag database: this package, the colour only, or not at all. |
 | `build_catalogue.py` | The master spreadsheet, and `work/catalogue_full.json` for `tools/reconcile`. |
 | `build_comparison.py` | The Lieske comparison spreadsheet. |
+| `station_catalogue.py` | `work/station-catalogue.json`: the station's own copy (orderable items only), loaded on Administration → eSUN US catalogue. Every row carries its final values (name, list label, short code, material type, temperatures, colour, barcode, OpenPrintTag IDs); the station copies them and computes nothing. IDs are the database's where it has the item, else derived as the spec does (UUIDv5 from brand + barcode / brand + material name), so a later database entry for the same item carries the same IDs. |
 
 `esunlib.py` holds what they share.
 
