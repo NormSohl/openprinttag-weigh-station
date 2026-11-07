@@ -1188,3 +1188,38 @@ def test_without_a_catalogue_the_pages_behave_as_before(sim, page):
     assert "Couldn't load the catalog" in page.inner_text("#cat-status")
     assert page.evaluate("document.getElementById('cat-manual-details').open")
     assert page.js_errors == []
+
+
+def test_scan_then_a_catalogue_item_without_a_barcode_teaches_it(sim, page):
+    """The box's barcode is unknown, and the catalogue item has none either:
+    saving records the scanned code on the new product, so the next box of it
+    is recognised."""
+    _linked_stock_row(sim, page)                          # some other product exists
+    _upload_catalogue(sim)
+    code = gs1("400000000777")
+    sim.blank(gross=1220)
+    page.goto(sim.url("/onboard"))
+    _wait_catalogue(page)
+    scan(page, code)
+    page.wait_for_selector("#scan-msg:has-text('Unknown barcode')")
+    page.click("#stk-list .stk.new")                      # + New product...
+    page.click("#cat-in-vendor")
+    page.locator("#cat-panel-vendor .cat-row", has_text="eSUN US catalogue").click()
+    _pick(page, "type", "PETG+")
+    _pick(page, "material", "PETG+ Grey")
+    assert _cat_field(page, "cat_gtin") == ""
+    assert "will be recorded for the new product" in page.inner_text("#scan-learn")
+    page.select_option("select#profile", index=1)
+    msgs = []
+    page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
+    page.click("button[type=submit]")
+    page.wait_for_url("**/spool?id=*learned=1*")
+    assert msgs and "scanned before the product was chosen" in msgs[0]
+    found = sim.get_json("/api/lookup?gtin=" + code)["products"]
+    assert len(found) == 1 and found[0]["material"] == "PETG+ Grey"
+    pid = found[0]["id"]
+    sim.remove()
+    sim.blank(gross=1050)
+    page.goto(sim.url("/onboard"))
+    scan(page, code)
+    page.wait_for_function("document.getElementById('prod').value==%r" % str(pid))
