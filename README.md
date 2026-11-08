@@ -1,4 +1,4 @@
-# Filliment Scale
+# Filament Scale
 
 <p align="center">
   <img src="docs/images/device-full.jpg" width="600" alt="The assembled weigh station on the workbench: black enclosure, 3.5-inch display, and the round weighing platform with its orange centering spigot">
@@ -9,6 +9,9 @@
 The Seattle Makers filament weigh station: a **self-contained** NFC +
 load-cell scale for the 3D-printing lab, and everything needed to build
 one — the 3D-printed enclosure, wiring, and firmware.
+
+The story of the project, with photos: [A filament weigh station for Seattle
+Makers](https://www.sohl.com/2026/11/07/filament-weigh-station/) on sohl.com.
 
 Place a spool on the scale: it reads the [OpenPrintTag](https://specs.openprinttag.org)
 (OPT) NFC tag, weighs the spool, and records the remaining filament
