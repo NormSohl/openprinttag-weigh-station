@@ -131,15 +131,27 @@ void syncTask(void* param);
 void displayBegin();
 
 // Boot progress marker. Each init step announces itself BEFORE it runs, so if
-// the board hangs the last line printed names the culprit. Flushed immediately
-// because a hang would otherwise leave the message sitting in the USB buffer.
+// the board hangs the last line printed names the culprit.
+//
+// NEVER Serial.flush() here (or anywhere in the firmware). On this core,
+// HWCDC::flush() loops until the USB host has read everything, with no
+// timeout. Plugged into a computer with no monitor open, nothing reads, so boot
+// stopped at the first mark until someone opened the port: the screen sat white
+// for minutes (the studio PC after a web flash, 2026-11-08; the Mac at home).
+// A hang doesn't need the flush anyway: the USB interrupt drains the buffer by
+// itself whenever a monitor is reading, even while this task is stuck.
 static void bootMark(const char* step) {
     Serial.printf("[boot] %s\n", step);
-    Serial.flush();
 }
 
 void setup() {
     Serial.begin(115200);
+    // Never block on USB output. Once a host has read from the USB-Serial/JTAG
+    // port, the core waits up to 100 ms per write for it to drain, so with a
+    // computer attached and no monitor open every log line would stall the
+    // task printing it. Output nobody is reading is dropped instead, which is
+    // the right trade. (See bootMark() for the other half: no flush.)
+    Serial.setTxTimeoutMs(0);
     // Native USB (USB-Serial/JTAG on this board): the host re-enumerates after
     // the post-flash reset and a monitor typically attaches ~1-2 s in, so
     // anything printed before that is lost. Hold here so the first boot is
