@@ -4,6 +4,9 @@
 import collections
 import json
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import pytest
 
@@ -1518,3 +1521,113 @@ def test_status_reports_the_audit_phase(sim, page):
     assert sim.get_json("/api/status")["audit"] == "scanning"
     sim._post("/api/audit/abandon")
     assert sim.get_json("/api/status")["audit"] == "idle"
+
+
+def _post_status(url, data, headers=None):
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode(),
+                                 headers=headers or {})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def _req(url, data=b"", headers=None):
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.headers
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers
+
+
+def _try(f):
+    """f(), or None while the page is mid-navigation."""
+    try:
+        return f()
+    except Exception:
+        return None
+
+
+def test_staff_pin(sim, browser):
+    """With a staff PIN set, every change needs it. The browser never shows its
+    own username + password box (no WWW-Authenticate): pages ask for the PIN
+    alone, check it, keep it in a cookie, and forms, uploads and fetch() carry
+    it. Scripts keep X-API-Key and Basic with any username."""
+    import base64
+    url = sim.url("/api/station-name")
+    assert _post_status(sim.url("/api/apikey"), {"key": "4821"}) == 200
+    code, hdr = _req(url, b"name=Lab")
+    assert code == 401 and "WWW-Authenticate" not in hdr
+    basic = lambda u, p: {"Authorization": "Basic " + base64.b64encode(f"{u}:{p}".encode()).decode()}
+    assert _post_status(url, {"name": "Lab"}, basic("Norm", "0000")) == 401
+    for user in ("Norm", "", "admin"):
+        assert _post_status(url, {"name": "Lab"}, basic(user, "4821")) == 200, user
+    assert _post_status(url, {"name": "Lab"}, {"X-API-Key": "4821"}) == 200
+    assert _post_status(url, {"name": "Lab"}, {"Cookie": "a=1; ws_pin=4821"}) == 200
+    assert _post_status(sim.url("/api/pin"), {"pin": "0000"}) == 401
+    assert _post_status(sim.url("/api/pin"), {"pin": "4821"}) == 200
+    assert urllib.request.urlopen(sim.url("/api/status")).status == 200   # reads stay open
+    # an upload carries the cookie too (Backup -> Restore config)
+    cfg = urllib.request.urlopen(sim.url("/config/export")).read()
+    b = "----pinb"
+    body = (f"--{b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"c.json\"\r\n"
+            f"Content-Type: application/json\r\n\r\n").encode() + cfg + f"\r\n--{b}--\r\n".encode()
+    ct = {"Content-Type": "multipart/form-data; boundary=" + b}
+    assert _req(sim.url("/config/import"), body, ct)[0] == 401
+    assert _req(sim.url("/config/import"), body, dict(ct, Cookie="ws_pin=4821"))[0] == 200
+
+    # No ctx.route here: a Python route handler holds every request until this
+    # thread answers it, which deadlocked against the waits below. The pages
+    # this test drives (Raw tables, Administration) fetch nothing from outside.
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    dialogs = []
+    pg.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    vendors = lambda: pg.evaluate("fetch('/config/export').then(r => r.json()).then(j => j.vendors.length)")
+    form = "form:has(input[name=which][value=vendors])"
+    def add_vendor(name):
+        ta = pg.locator(form + " textarea")
+        v = json.loads(ta.input_value()); v.append(name if isinstance(v[0], str) else dict(v[0], name=name)); ta.fill(json.dumps(v))
+        pg.locator(form + " button[type=submit]").click()
+    # a plain form (Raw tables) asks for the PIN in the page's own box
+    pg.goto(sim.url("/config/tables"))
+    n0 = vendors()
+    add_vendor("PinTest1")
+    box = pg.locator("input[type=password]")
+    box.wait_for()
+    box.fill("1111"); box.press("Enter")
+    pg.wait_for_selector("text=Wrong PIN")
+    box.fill("4821"); box.press("Enter")
+    for _ in range(50):
+        if _try(vendors) == n0 + 1:
+            break
+        pg.wait_for_timeout(100)
+    assert vendors() == n0 + 1
+    pg.wait_for_load_state()
+    # the cookie carries the next change with no second ask
+    add_vendor("PinTest2")
+    pg.wait_for_load_state()
+    for _ in range(50):
+        if _try(vendors) == n0 + 2:
+            break
+        pg.wait_for_timeout(100)
+    assert vendors() == n0 + 2
+    assert pg.locator("input[type=password]").count() == 0
+    # fetch(): a refused call asks for the PIN, then retries
+    ctx.clear_cookies()
+    pg.goto(sim.url("/config"))
+    # start the call without waiting on it: it can only finish once the PIN is typed
+    pg.evaluate("""() => { window._st = fetch('/api/station-name', {method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'name=Lab2'}).then(r => r.status) }""")
+    box = pg.locator("input[type=password]"); box.wait_for()
+    box.fill("4821"); box.press("Enter")
+    assert pg.evaluate("window._st") == 200
+    # Administration's PIN card says what is true after a save, and keeps the cookie in step
+    pg.fill("#ak", "4822"); pg.click("text=Save PIN")
+    pg.wait_for_function("document.getElementById('akmsg').textContent.startsWith('Saved')")
+    assert "is set" in pg.inner_text("#akstate")
+    assert any(c["name"] == "ws_pin" and c["value"] == "4822" for c in ctx.cookies())
+    assert not pg.js_errors if hasattr(pg, "js_errors") else True
+    ctx.close()

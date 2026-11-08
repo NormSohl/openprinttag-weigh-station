@@ -81,7 +81,9 @@ public:
     bool   hasHeader(const char* name) const;
     String header(const char* name) const;
     bool   authenticate(const char* user, const char* pass) const;
-    void   requestAuthentication(const char* realm = nullptr, bool digest = false);
+    // Defaults to Digest, as the real library does: the firmware must ask for
+    // Basic explicitly, and a test that forgets to would see a Digest challenge.
+    void   requestAuthentication(const char* realm = nullptr, bool digest = true);
 
     // ── responses ──
     void send(int code, const char* type = "", const char* body = "") {

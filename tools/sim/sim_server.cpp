@@ -57,10 +57,12 @@ bool AsyncWebServerRequest::authenticate(const char* user, const char* pass) con
     std::string cred = b64decode(h.substr(6));
     return cred == std::string(user) + ":" + pass;
 }
-void AsyncWebServerRequest::requestAuthentication(const char* realm, bool) {
+void AsyncWebServerRequest::requestAuthentication(const char* realm, bool digest) {
     auto* r = new AsyncWebServerResponse(401, "text/plain", "Unauthorized");
+    // Digest is only announced, not implemented: nothing here can answer it,
+    // which is exactly what a browser meeting it on the station would find.
     r->addHeader("WWW-Authenticate",
-                 (std::string("Basic realm=\"") + (realm ? realm : "Login Required") + "\"").c_str());
+                 (std::string(digest ? "Digest" : "Basic") + " realm=\"" + (realm ? realm : "Login Required") + "\"").c_str());
     send(r);
 }
 

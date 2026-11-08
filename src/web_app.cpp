@@ -114,19 +114,87 @@ void webAppNotifyStateChanged() {
 // scrapers need no credentials. See api_key.h for the threat model and why an
 // unset key deliberately leaves everything open.
 //
-// Returns true if the request may proceed. On refusal it has already sent the
-// 401, so the caller must simply return.
-static bool authOk(AsyncWebServerRequest* req) {
+// The password half of an "Authorization: Basic <base64(user:pass)>" header,
+// whatever the user half says; "" if the header isn't well-formed Basic.
+static String basicPassword(const String& hdr) {
+    if (!hdr.startsWith("Basic ")) return "";
+    static const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    String out;
+    uint32_t acc = 0; int bits = 0;
+    for (unsigned i = 6; i < hdr.length(); i++) {
+        const char c = hdr[i];
+        if (c == '=') break;
+        const char* p = strchr(kB64, c);
+        if (!p || !c) return "";
+        acc = (acc << 6) | (uint32_t)(p - kB64); bits += 6;
+        if (bits >= 8) { bits -= 8; out += (char)((acc >> bits) & 0xFF); }
+    }
+    const int colon = out.indexOf(':');
+    return colon < 0 ? String("") : out.substring(colon + 1);
+}
+
+// The station's staff PIN cookie ("ws_pin", set by PIN_SCRIPT_JS once the
+// station has accepted the PIN), percent-decoded; "" if absent.
+static String pinCookie(AsyncWebServerRequest* req) {
+    if (!req->hasHeader("Cookie")) return "";
+    const String c = "; " + req->header("Cookie");
+    const int at = c.indexOf("; ws_pin=");
+    if (at < 0) return "";
+    int end = c.indexOf(';', at + 9);
+    const String raw = c.substring(at + 9, end < 0 ? c.length() : end);
+    String out;
+    for (unsigned i = 0; i < raw.length(); i++) {
+        if (raw[i] == '%' && i + 2 < raw.length()) {
+            char h[3] = { raw[i + 1], raw[i + 2], 0 };
+            out += (char)strtol(h, nullptr, 16); i += 2;
+        } else out += raw[i];
+    }
+    return out;
+}
+
+// True if the request carries the staff PIN in any accepted form.
+static bool hasPin(AsyncWebServerRequest* req) {
     if (!apiKeyIsSet()) return true;                 // not configured: open
     const String key = apiKeyGet();
     if (req->hasHeader("X-API-Key") && req->header("X-API-Key") == key) return true;
     if (req->hasParam("key") && req->getParam("key")->value() == key)   return true;
-    // Basic auth accepts any username: the secret is the password. Lets browsers
-    // prompt natively and `curl -u :secret` work without a header.
-    if (req->authenticate("", key.c_str()) ||
-        req->authenticate("admin", key.c_str()))     return true;
-    req->requestAuthentication();                    // sends 401 + WWW-Authenticate
+    // Basic auth, ANY username: the secret is the password (`curl -u :secret`).
+    if (req->hasHeader("Authorization") && basicPassword(req->header("Authorization")) == key)
+        return true;
+    // The browser's route: every page asks for the PIN in its own box and keeps
+    // it in a cookie, so plain forms and file uploads carry it with no changes.
+    if (pinCookie(req) == key) return true;
     return false;
+}
+
+// Returns true if the request may proceed. On refusal it has already sent the
+// 401, so the caller must simply return.
+//
+// The 401 deliberately carries NO WWW-Authenticate header: that header is what
+// makes a browser pop its own username + password box, which confused staff
+// who only have a PIN (2026-11-08). The pages ask for the PIN themselves
+// (PIN_SCRIPT_JS); this body is only seen when that was bypassed, so it clears
+// a stale cookie and points back.
+static bool authOk(AsyncWebServerRequest* req) {
+    if (hasPin(req)) return true;
+    req->send(401, "text/html",
+        "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Staff PIN needed</title><body style='font-family:system-ui;margin:2em'>"
+        "<h2>Staff PIN needed</h2><p>This change needs the staff PIN, and it wasn't given "
+        "or was wrong. Nothing was changed.</p>"
+        "<p><a href='javascript:history.back()'>Go back</a> and try again: the page will ask for the PIN.</p>"
+        "<script>document.cookie='ws_pin=;path=/;max-age=0;SameSite=Strict'</script></body>");
+    return false;
+}
+
+// POST /api/pin  pin=<PIN>  ->  200 if it is the staff PIN (or none is set),
+// else 401. Lets a page check the PIN before it sends a form, so nobody types a
+// whole form only to have it refused. Changes nothing.
+static void handleApiPin(AsyncWebServerRequest* req) {
+    const bool ok = !apiKeyIsSet() ||
+        (req->hasParam("pin", true) && req->getParam("pin", true)->value() == apiKeyGet());
+    req->send(ok ? 200 : 401, "application/json",
+              String("{\"ok\":") + (ok ? "true" : "false") + ",\"required\":" + (apiKeyIsSet() ? "true" : "false") + "}");
 }
 
 // 32 lowercase hex chars (no dashes, matching the store's uuid format) -> 16
@@ -790,7 +858,10 @@ static String head(const char* title, const char* active = "") {
     h += title;
     h += "</title>";
     h += STYLE;
-    h += "</head><body><header>Weigh Station<nav>";
+    // data-pin tells PIN_SCRIPT_JS a staff PIN is set; without it the script
+    // leaves forms alone, so a station with no PIN behaves exactly as before.
+    h += apiKeyIsSet() ? "</head><body data-pin=1><header>Weigh Station<nav>"
+                       : "</head><body><header>Weigh Station<nav>";
     navlink(h, "/",          "Inventory", active);
     // "Restock" (on direct user request): the tab for entering new spools,
     // next to Reorder. The page and API keep their /onboard paths -- the
@@ -988,7 +1059,42 @@ static bool stockRowForSub(uint32_t pid, CfgStock& out) {
       "gs.forEach(function(g){g.forEach(function(r){r.parentNode.appendChild(r)})})}})})" \
 "})()</script>"
 
-static const char* FOOT = SCAN_SCRIPT_JS SORT_SCRIPT_JS "</main></body></html>";
+// Staff PIN, on every page (FOOT loads /pin.js). A change the station refuses for want of
+// the PIN never shows the browser's own username + password box (authOk() sends
+// no WWW-Authenticate); instead this asks for the PIN alone, checks it with
+// POST /api/pin before anything is sent, and keeps it in a cookie, which plain
+// forms, file uploads and fetch() then all carry by themselves. The cookie
+// lasts 30 minutes from the last page load (refreshed below), SameSite=Strict
+// so no other site can make a change with it.
+//   - POST forms: checked before submit, after the form's own onsubmit (a
+//     confirm() the user cancelled stays cancelled).
+//   - fetch(): a 401 asks for the PIN and retries once.
+static const char PIN_JS[] =
+"(function(){var d=document,P=d.body.dataset.pin,F=fetch.bind(window);" \
+"function g(){var m=d.cookie.match(/(?:^|; )ws_pin=([^;]*)/);return m?decodeURIComponent(m[1]):''}" \
+"function s(k){d.cookie='ws_pin='+encodeURIComponent(k)+';path=/;max-age='+(k?1800:0)+';SameSite=Strict'}" \
+"window.wsSetPin=s;if(g())s(g());" \
+"function ask(){return new Promise(function(r){var o=d.createElement('div');" \
+"o.style.cssText='position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:99';" \
+"o.innerHTML=\"<form class=card style='min-width:260px'><label>Staff PIN</label><input type=password inputmode=numeric autocomplete=off>\"+" \
+"\"<p class=pe style='color:#e55'></p><button>OK</button> <button type=button class=sec>Cancel</button></form>\";" \
+"d.body.appendChild(o);var f=o.firstChild,i=f[0];i.focus();" \
+"function e(k){o.remove();r(k)}f[2].onclick=function(){e()};" \
+"f.onsubmit=function(v){v.preventDefault();var b=new URLSearchParams({pin:i.value});" \
+"F('/api/pin',{method:'POST',body:b}).then(function(x){if(x.ok){s(i.value);e(i.value)}else{f.querySelector('.pe').textContent='Wrong PIN';i.value=''}})}})}" \
+"d.addEventListener('submit',function(v){var f=v.target,b=v.submitter;" \
+"if(!P||g()||v.defaultPrevented||f.method!='post')return;v.preventDefault();" \
+"ask().then(function(k){if(!k)return;if(b&&b.name){var h=d.createElement('input');h.type='hidden';h.name=b.name;h.value=b.value;f.appendChild(h)}f.submit()})});" \
+"window.fetch=function(u,o){return F(u,o).then(function(x){if(x.status!=401||/api.pin/.test(u))return x;" \
+"s('');return ask().then(function(k){return k?F(u,o):x})})}" \
+"})()";
+
+// Served once as /pin.js and cached, rather than inlined into FOOT: every page
+// is built as one String in RAM, and 1.6 KB on each of them pushed /stock past
+// the page-size budget.
+#define PIN_SCRIPT_JS "<script src='/pin.js'></script>"
+
+static const char* FOOT = SCAN_SCRIPT_JS SORT_SCRIPT_JS PIN_SCRIPT_JS "</main></body></html>";
 
 // ── Current spool on the scale ────────────────────────────────────────────────
 // Returns the local spool id if a tag is presently weighed/registered, else -1.
@@ -4927,15 +5033,14 @@ static void handleConfig(AsyncWebServerRequest* req) {
 
     // ── Advanced ──────────────────────────────────────────────────────────────
     p += "<h3 class='adv'>Advanced</h3>";
-    p += "<div class='card danger'><label style='margin-top:0'>API key</label>";
+    p += "<div class='card danger'><label style='margin-top:0'>Staff PIN (API key)</label>";
     if (apiKeyIsSet())
-        p += "<p>A key <b>is set</b>: changes need it; reading stays open.</p>";
+        p += "<p id='akstate'>A PIN <b>is set</b>: every change asks for it; reading and weighing stay open.</p>";
     else
-        p += "<p class='muted'>None set, so anything on this network can make changes "
-             "(the station is kept open on purpose). Setting a key makes the web app ask "
-             "for it on the first change.</p>";
-    p += "<input id='ak' type='text' placeholder='blank clears the key' autocomplete='off'>"
-         "<div style='margin-top:8px'><button type='button' class='sec' onclick='sk()'>Save key</button></div>"
+        p += "<p class='muted' id='akstate'>None set, so anyone on this network can make changes. "
+             "Setting one makes every page ask for it before a change.</p>";
+    p += "<input id='ak' type='text' placeholder='new PIN (blank clears it)' autocomplete='off'>"
+         "<div style='margin-top:8px'><button type='button' class='sec' onclick='sk()'>Save PIN</button></div>"
          "<p class='muted' id='akmsg'></p>"
          "<p class='muted'>Scripts send it as <code>X-API-Key</code>, <code>?key=</code>, or "
          "HTTP Basic. Lost it? <code>APIKEY none</code> over USB serial clears it.</p></div>";
@@ -4944,8 +5049,12 @@ static void handleConfig(AsyncWebServerRequest* req) {
          "fetch('/api/apikey',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
          "body:'key='+encodeURIComponent(k)})"
          ".then(r=>{document.getElementById('akmsg').textContent="
-         "r.ok?'Saved. New requests need the new key.':'Refused (HTTP '+r.status+') — "
-         "the current key is required to change it.';});}"
+         "r.ok?'Saved. New requests need the new PIN.':'Refused (HTTP '+r.status+') — "
+         "the current PIN is required to change it.';"
+         // the status line above was rendered before the save; say what is true now
+         "if(r.ok&&window.wsSetPin)wsSetPin(k);"
+         "if(r.ok)document.getElementById('akstate').innerHTML=k?"
+         "'A PIN <b>is set</b>: every change asks for it; reading and weighing stay open.':'None set, so anyone on this network can make changes.';});}"
          "</script>";
     p += "<div class='card danger tools'>";
     tool("tables-link", "/config/tables", "Raw tables",
@@ -5783,6 +5892,12 @@ void webAppBegin() {
     sServer.on("/api/usage",      HTTP_GET,  handleApiUsage);
     sServer.on("/api/status",     HTTP_GET,  handleApiStatus);
     sServer.on("/api/apikey",     HTTP_POST, handleApiKeySet);
+    sServer.on("/api/pin",        HTTP_POST, handleApiPin);
+    sServer.on("/pin.js", HTTP_GET, [](AsyncWebServerRequest* req) {
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/javascript", PIN_JS);
+        r->addHeader("Cache-Control", "max-age=86400");
+        req->send(r);
+    });
     sServer.on("/api/tz",         HTTP_POST, handleApiTzSet);
     sServer.on("/api/station-name", HTTP_POST, handleApiStationName);
 

@@ -321,9 +321,17 @@ curl -X POST "http://weighstation.local/api/cal-zero?key=SECRET"
 curl -X POST -u :SECRET http://weighstation.local/api/cal-zero
 ```
 
-Basic auth accepts any username; the secret is the password. Browsers prompt
-for it natively, which is how the web app's own Save buttons work once a key is
-set.
+Basic auth accepts any username; the secret is the password.
+
+**In the web app it is the staff PIN** (Administration → Advanced → Staff PIN).
+A refused write answers `401` with **no** `WWW-Authenticate` header, so a
+browser never shows its own username + password box. Instead every page loads
+`/pin.js`, which asks for the PIN alone, checks it with `POST /api/pin`
+(`pin=…` → 200 if right, 401 if not; changes nothing), and keeps it in a
+`ws_pin` cookie (`SameSite=Strict`, 30 minutes from the last page load). The
+station accepts that cookie as a fourth way to present the key, which is how
+plain forms and file uploads carry it. Pages mark `<body data-pin=1>` when a PIN
+is set; without it the script leaves forms alone.
 
 ### What this does and does not protect
 
