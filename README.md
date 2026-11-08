@@ -1,4 +1,4 @@
-# Filliment Scale
+# Filament Scale
 
 <p align="center">
   <img src="docs/images/device-full.jpg" width="600" alt="The assembled weigh station on the workbench: black enclosure, 3.5-inch display, and the round weighing platform with its orange centering spigot">
