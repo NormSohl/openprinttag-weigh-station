@@ -1,15 +1,24 @@
 # Design: onboard from the Stock List, matched by barcode
 
-Status: **proposed** (2026-10-29) — nothing built. Written up from a design
-discussion on the Mac; the reasoning is kept here so the branch carries it.
+Status: **built** (2026-10-29 to 2026-11-06), on `main`, in the firmware
+for the 2026-11-08 flash. Tested in the simulator (`tools/sim/tests`, 22 scan
+tests); **not yet run on the station, with a real scanner, or on a real eSUN
+box.** Written up from a design discussion on the Mac; the reasoning is kept
+here. Where the build differs from the plan below, the note at the top of each
+phase says so.
 
 | step | state |
 |---|---|
-| 1. Stock List picker on `/onboard` (no scanner needed) | not started |
-| 2. `/api/lookup` + scan capture on `/onboard` | not started |
-| 3. Learn barcodes on save; flag a pick whose barcode disagrees | not started |
-| 4. Scans on `/stock`; GTIN shown and editable on `/product` | not started |
-| 5. Repair page: unlinked products vs. Stock List rows with nothing on hand | not started — this is step 7 (*Product merge*) of `onboarding-vocabulary.md` |
+| 1. Stock List picker on `/onboard` (no scanner needed) | built; since reworked into Restock's single "What is this spool?" list (`whatPickerField()`) |
+| 2. `/api/lookup` + scan capture on `/onboard` | built; the scan listener is on every page (`SCAN_SCRIPT_JS` in `FOOT`) |
+| 3. Learn barcodes on save; flag a pick whose barcode disagrees | built |
+| 4. Scans on `/stock`; GTIN shown and editable on `/product` | built |
+| 5. Repair page: unlinked products vs. Stock List rows with nothing on hand | built (`/repair`, merge and undo) |
+| later: eSUN US catalogue | a code no product has but the station's catalogue does opens New product with that item picked (2026-11-06) |
+
+Still to check on site: a scan on Restock picks the right item with the real
+scanner (it must send Enter, no prefix or Tab), and the EAN is printed on the
+outside of the box.
 
 ## The problem
 
@@ -98,8 +107,9 @@ write path, the tag write and the reorder roll-up stay as they are.
 ### Phase 1 — Stock List picker (useful with no scanner)
 
 *Built on `barcode-onboarding` (`stockPickerField()`, `STOCK_PICK_SCRIPT` in
-`web_app.cpp`); tested in `tools/sim/tests/test_webapp.py`. Not yet on the
-station. Linked rows are listed first.*
+`web_app.cpp`); tested in `tools/sim/tests/test_webapp.py`. Linked rows are
+listed first. Since 2026-10-30 this and the product list are one scrolling
+list, "What is this spool?" (`whatPickerField()`).*
 
 - `/onboard`, above "This spool is…": **"Which stock item is this?"**, a
   search box over Stock List rows, using the row's own name and the linked
@@ -121,9 +131,9 @@ station. Linked rows are listed first.*
 ### Phase 2 — Barcode lookup and scan capture
 
 *Built on `barcode-onboarding` (`handleApiLookup()`, `SCAN_SCRIPT`,
-`ONBOARD_SCAN_SCRIPT` in `web_app.cpp`), for `/onboard` only so far; `/stock`
-is phase 4. Tested in the simulator with `scan()`; not yet on the station or
-with a real scanner. A code that matches a Stock List row with no linked
+`ONBOARD_SCAN_SCRIPT` in `web_app.cpp`), now on every page, with `/stock` and `/product`
+in phase 4. Tested in the simulator with `scan()`; not yet with a real
+scanner. A code that matches a Stock List row with no linked
 product shows that row and says to fix it, rather than "unknown".*
 
 - **`GET /api/lookup?gtin=N`** (open read, like every other GET). Matches
@@ -161,7 +171,7 @@ product shows that row and says to fix it, rather than "unknown".*
 
 *Built on `barcode-onboarding` (`gs1Parse()` and step 1b in
 `handleApiOnboard()`, the notice in `handleSpoolDetail()`, the submit check in
-`handleOnboardForm()`). Not yet on the station. One addition to the plan: a
+`handleOnboardForm()`). One addition to the plan: a
 scan that disagrees with a picked product's barcode asks before submit too,
 not only on the result page, the same as the catalog cross-check.*
 
@@ -187,7 +197,7 @@ not only on the result page, the same as the catalog cross-check.*
 
 *Built on `barcode-onboarding` (`STOCK_SCAN_SCRIPT`, the barcode field in
 `handleProductDetail()`/`handleApiProduct()`, the marker in
-`handleStockPage()`). Not yet on the station. Additions: a scan on `/stock`
+`handleStockPage()`). Additions: a scan on `/stock`
 says when the code is already on another row; unlinked rows show their
 colour, since nothing else tells them apart. The Stock List row's own
 barcode field is still free text, as before.*
@@ -203,7 +213,7 @@ barcode field is still free text, as before.*
 ### Step 5 — Repair page
 
 *Built on `barcode-onboarding` (`handleRepairPage()` and friends in
-`web_app.cpp`; `storeMergeProduct()` in `store.cpp`). Not yet on the station.*
+`web_app.cpp`; `storeMergeProduct()` in `store.cpp`).*
 
 `/repair`, reached from Settings and from the Stock List's "not linked" note
 (not a nav tab, on direct user request: there are enough tabs). It only
@@ -248,8 +258,9 @@ somewhere to keep that), and the vendor alias table of
   scan by design, so the script exposes `window.simulateScan("…")` for the
   browser console and accepts `?scan=…` on the URL. Real scanner on the
   staff PC last, on site.
-- `pio run` for every phase; the web app has no native harness, so this is
-  compile-verified until the bench.
+- `pio run` for every phase, and the simulator (`tools/sim/`), which runs
+  the real `web_app.cpp` natively; `tools/sim/test.sh` drives it with
+  Playwright. Neither says anything about the real scanner or ESP32 timing.
 
 Each phase is useful on its own and can ship separately: phase 1 fixes the
 matching without any hardware.
@@ -278,8 +289,8 @@ nothing reaches the station. Inside the web app:
 ## Open questions
 
 - Is the EAN on the outside of eSUN boxes? (One box settles it.)
-- How many production Stock List rows are unlinked today? Pull
-  `/api/stock`, `/api/products` and `/api/spools` from the makerspace
-  network to count before building the repair page.
+- ~~How many production Stock List rows are unlinked?~~ Answered from the
+  2026-11-04 backup: after the flash-day reconcile (`tools/reconcile`) every
+  Stock List item links a product.
 - Other vendors in stock: check their GTIN coverage in the database the
   same way.
