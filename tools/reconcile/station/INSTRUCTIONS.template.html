@@ -16,6 +16,21 @@ This kit:</p>
 <tr><td>eSUN catalogue</td><td><code>station-catalogue.json</code>: {{CATCOUNT}} orderable items from esun3d.com, {{CATDATE}}</td></tr>
 <tr><td>Decisions</td><td>{{DECISIONS}}: {{MERGES}} merges, {{RENAMES}} renames, {{RELINKS}} Stock List items pointed at PLA+ / PETG, substitutes, remove test vendor(s) {{VENDORS}}</td></tr>
 </table>
+<h2>Before you start</h2>
+<p><b>Before leaving home:</b></p>
+<ul>
+<li>Bring the thumb drive with this kit on it.</li>
+<li>Set up the barcode scanner from the setup barcodes in its manual: <b>Enter</b> after each scan
+    (no Tab, no prefix), read <b>only when the trigger is pressed</b> (not automatically in its stand),
+    <b>US keyboard</b>. Check it in Notepad: a box's barcode types 13 digits, then the cursor moves to a new line.</li>
+</ul>
+<p><b>At the studio PC, before anything else:</b></p>
+<ul>
+<li>Press <kbd>F12</kbd> in Chrome: the developer tools open (step 4 needs them).</li>
+<li>The USB cable reaches the station's panel port and carries data, not just charge (step 2 needs it).</li>
+<li>Nobody is in the middle of an inventory audit: Inventory shows <b>Start audit</b>, not Finish or Abandon.
+    The reconcile refuses to run during one.</li>
+</ul>
 <p>Copy the whole kit folder from the thumb drive to the PC's Desktop first.</p>
 
 <h2>0. Check the firmware file (optional, 1 minute)</h2>
@@ -84,8 +99,21 @@ materials and colours. Both work without internet.</p>
 </ol>
 <p>Then: on Administration → Products the names read like <i>PLA Basic Black</i>, <i>PETG Black</i>,
 <i>PLA Silk Mystic …</i>; no {{VENDORS}} products; Reorder has no "not linked" items.
+On the Stock List the PLA Basic items now read PLA+ (and PETG Basic White reads PETG White); an item's
+Edit form lists the products that count toward it as substitutes.
 Erase the test spools' tags (Administration → Erase Tag) or bin them, or the station adopts them back
 when they're placed. Each spool's tag picks up its new name by itself the next time it's placed.</p>
+
+<h2>Afterwards</h2>
+<ul>
+<li>Plug the barcode scanner into the PC. On <b>Restock</b>, scan an eSUN box: it picks the matching
+    Stock List item and says <i>Scanned …</i>. A scan never types into a box or submits a form.</li>
+<li>Open <code>http://weighstation.local/api/status</code> (or the station's address) and send Claude
+    the <code>build_version</code> it shows. Claude then updates the Hub row and the manual.</li>
+<li>Bring the four reconcile backup files from this PC's Downloads folder home.</li>
+<li>That night: check that <code>C:\Inventory Backups</code> on the staff PC got its backup.</li>
+<li>Later, with Claude: the manual and quick-reference PDFs, and the Notion manual's screen pictures.</li>
+</ul>
 
 <h2>If something goes wrong</h2>
 <ul>
