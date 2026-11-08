@@ -2,7 +2,7 @@
 
 *Print this page and keep it at the station. Full detail: [user-manual.md](user-manual.md).*
 
-## Steps — for each new, untagged reel
+## Staff only — for each new, untagged reel
 
 1. **Stick an OpenPrintTag sticker** on the flat hub face, centered. Press firmly.
 2. **Place the spool on the scale.**

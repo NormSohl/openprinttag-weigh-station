@@ -49,7 +49,7 @@ for the exact command. Building firmware from source is documented in
 
 - [`docs/build-guide.md`](docs/build-guide.md) — build one from scratch: parts, printing, wiring, flashing, first bring-up
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — set up, build, and flash
-- [`docs/user-manual.md`](docs/user-manual.md) — operation (members + admins)
+- [`docs/user-manual.md`](docs/user-manual.md) — operation (members weigh; staff restock and run the station)
 - [`hardware/netlist.md`](hardware/netlist.md) — wiring diagram + pinout
 - [`docs/design/sd-local-ecosystem.md`](docs/design/sd-local-ecosystem.md) — the
   local-storage architecture

@@ -34,7 +34,7 @@ backups. There is no external server.
 | <img src="images/lcd/idle.svg" width="300" alt="Idle screen: Seattle Makers, Place spool to begin, web app address, and a QR code"> | **Ready.** Place a spool. |
 | <img src="images/lcd/weighing.svg" width="300" alt="Weighing screen showing grams"> | **Weighing.** Don't lift yet. |
 | <img src="images/lcd/present.svg" width="300" alt="Present screen: spool number, material, grams remaining, Weight recorded"> | **Done.** Remove the spool. |
-| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS DETAILS, Scan QR to add details or visit the Restock page, both addresses, and a QR code"> | **New spool registered.** Enter its details (see *New Spools*). |
+| <img src="images/lcd/registered.svg" width="300" alt="Registered screen: Registered!, spool number and weight on one line, NEEDS DETAILS, Scan QR to add details or visit the Restock page, both addresses, and a QR code"> | **New spool registered.** Staff enter its details (see *For Staff: New Spools*). |
 | <img src="images/lcd/updating-tag.svg" width="300" alt="Updating tag screen"> | **Updating tag.** Don't lift yet. |
 | <img src="images/lcd/idle-uncalibrated.svg" width="300" alt="Idle screen with a Scale not calibrated warning and a QR code"> | **Scale not calibrated.** Tell an admin. |
 | Red **ERASE MODE** on the idle screen | **Erase mode is on.** Any tag placed is erased. |
@@ -57,7 +57,9 @@ shown under it.
 
 ---
 
-## For Members: New Spools
+## For Staff: New Spools
+
+**Only staff restock.** Saving a new spool needs the staff PIN.
 
 ### Applying a tag
 
@@ -84,8 +86,7 @@ every new spool.
 
 ### Onboarding it (web app)
 
-On the **Restock** page, say what the spool is under **What is this spool?**
-(saving asks for the **staff PIN**; members without it ask a staff member):
+On the **Restock** page, say what the spool is under **What is this spool?**:
 
 - **Scan the box's barcode.** It can be scanned before or after the spool is
   placed (a scan with no spool on the scale is held for one minute). A
@@ -403,7 +404,7 @@ curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
 
 ### The staff PIN
 
-**Every change needs the staff PIN**: Restock, the Stock List, products,
+**Every change needs the staff PIN**: Restock (staff only), the Stock List, products,
 audits, Erase Tag, Backup → Restore, calibration and settings. **Weighing a
 spool and reading every page stay open**, so members can still weigh.
 
