@@ -10,6 +10,9 @@ The Seattle Makers filament weigh station: a **self-contained** NFC +
 load-cell scale for the 3D-printing lab, and everything needed to build
 one — the 3D-printed enclosure, wiring, and firmware.
 
+The story of the project, with photos: [A filament weigh station for Seattle
+Makers](https://www.sohl.com/2026/11/07/filament-weigh-station/) on sohl.com.
+
 Place a spool on the scale: it reads the [OpenPrintTag](https://specs.openprinttag.org)
 (OPT) NFC tag, weighs the spool, and records the remaining filament
 **locally on the device** — no external server. A built-in web app handles
