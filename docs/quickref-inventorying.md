@@ -15,7 +15,7 @@ Open `http://weighstation.local/`.
 
 ## Running a shelf audit
 
-1. On **Inventory**, press **Start audit**. Keep the page open.
+1. On **Inventory**, press **Start audit** (staff PIN if asked). Keep the page open.
 2. **Weigh every spool.** Each weigh marks it found.
 3. Press **Finish audit.** The page lists spools that weren't weighed.
 4. For each one, press:

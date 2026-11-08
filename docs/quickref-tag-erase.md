@@ -7,7 +7,7 @@ Erases every tag placed on the scale while erase mode is on.
 ## Steps
 
 1. Open **Administration → Erase Tag** (or `http://weighstation.local/erase`).
-2. Press **Start erase mode** and confirm. The station screen shows
+2. Press **Start erase mode**, confirm, and enter the staff PIN. The station screen shows
    **ERASE MODE** in red.
 3. **Place a spool.** It's erased at once. Wait for **"Tag erased"**.
 4. **Remove it** and place the next one.

@@ -84,7 +84,8 @@ every new spool.
 
 ### Onboarding it (web app)
 
-On the **Restock** page, say what the spool is under **What is this spool?**:
+On the **Restock** page, say what the spool is under **What is this spool?**
+(saving asks for the **staff PIN**; members without it ask a staff member):
 
 - **Scan the box's barcode.** It can be scanned before or after the spool is
   placed (a scan with no spool on the scale is held for one minute). A
@@ -219,7 +220,7 @@ do the same.)
 | **Reorder** | Stock List items with less than half their target on the shelf, and how many to order. Download the list as CSV. |
 | **Restock** | Enter details for a new spool on the scale (onboarding). |
 | **Usage** | Filament used per material by month, quarter and year, with cost where a price was recorded. CSV download. |
-| **Administration** | For trained staff. **Staff tools:** Stock List (what we want to keep in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** the eSUN US catalogue (what's loaded, and **Load catalogue file** for a new one; loading it changes no product, spool or Stock List item), station name, clock (timezone and format), and WiFi network. **Advanced:** the API key, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
+| **Administration** | For trained staff. **Staff tools:** Stock List (what we want to keep in stock, with a 90-day popularity score), Erase Tag (see the Tag Erase quick reference), Products, Repair (link Stock List items, merge duplicate products), Calibrate scale, and Backup. **Station setup:** the eSUN US catalogue (what's loaded, and **Load catalogue file** for a new one; loading it changes no product, spool or Stock List item), station name, clock (timezone and format), and WiFi network. **Advanced:** the staff PIN, and **Raw tables** (the picklists and Stock List as JSON, for bulk edits). A problem that needs attention, like an uncalibrated scale, shows at the top. |
 
 **Tables sort:** tap any column heading to sort by it, tap again to reverse.
 
@@ -248,7 +249,7 @@ station.
 
 ### Physical inventory audits
 
-1. On **Inventory**, press **Start audit**. Keep the page open.
+1. On **Inventory**, press **Start audit** (enter the staff PIN if asked). Keep the page open.
 2. **Weigh every spool.** Each weigh marks it found.
 3. Press **Finish audit.** The page lists the spools that weren't weighed.
 4. For each one, press:
@@ -400,30 +401,34 @@ curl -sf "http://weighstation.local/export" -o "events-$(date +%F).ndjson"
 - **Poll gently:** every few seconds at most, one program at a time.
   `/api/status` gives everything in one request.
 
-### Protecting the write endpoints
+### The staff PIN
 
-Without an API key, **anything on the network can change the station**:
-onboard spools, edit tables, recalibrate, replace the log, reset WiFi.
+**Every change needs the staff PIN**: Restock, the Stock List, products,
+audits, Erase Tag, Backup → Restore, calibration and settings. **Weighing a
+spool and reading every page stay open**, so members can still weigh.
 
-To require a key for changes, set an **API key** on **Administration**
-(*Advanced → API key*). Reading stays open. The web app asks for the key the
-first time you save something.
+When a change needs it, the page shows a small **Staff PIN** box (there is no
+username). After the right PIN, that browser doesn't ask again until
+**30 minutes** pass with no page loaded; during an audit the Inventory page
+reloads with each weigh, so it doesn't run out. On a shared computer, close
+the browser when you're done.
 
-Scripts pass it as a header or as the password:
+**Setting or changing it:** **Administration → Advanced → Staff PIN**, type it,
+**Save PIN**. Blank clears it, and then anyone on the network can make changes.
+
+Scripts pass it as a header or as the password (any username):
 
 ```bash
-curl -X POST -H "X-API-Key: YOURKEY" http://weighstation.local/api/cal-zero
-curl -X POST -u :YOURKEY http://weighstation.local/api/cal-zero
+curl -X POST -H "X-API-Key: YOURPIN" http://weighstation.local/api/cal-zero
+curl -X POST -u :YOURPIN http://weighstation.local/api/cal-zero
 ```
 
-**Lost the key?** Connect USB, open a serial monitor at 115200 baud, and
+**Lost the PIN?** Connect USB, open a serial monitor at 115200 baud, and
 type `APIKEY none`. That's the only way back, so keep the USB port reachable.
-`APIKEY` on its own shows the current key.
+`APIKEY` on its own shows the current one.
 
-**The key is not encryption.** It travels in the clear, so anyone watching
+**The PIN is not encryption.** It travels in the clear, so anyone watching
 lab traffic could capture it. Keep the station off guest networks.
-
----
 
 ## Troubleshooting
 
@@ -437,7 +442,7 @@ lab traffic could capture it. Keep the station off guest networks.
 
 The tag was left half-written.
 
-1. Open **Administration → Erase Tag**, press **Start erase mode**, and place the spool.
+1. Open **Administration → Erase Tag**, press **Start erase mode** (staff PIN), and place the spool.
 2. Press **Stop erase mode**.
 3. Place the spool again. It registers as new.
 
@@ -456,5 +461,8 @@ The tag was left half-written.
 
 ### Display is blank
 
+- **White screen while plugged into a computer?** Firmware older than
+  8 Nov 2026 hangs at start-up on a computer's USB until a serial monitor
+  opens. Power it from its normal supply, or update the firmware.
 - Check the display's SPI wiring: CS (GPIO 15), DC (GPIO 16), RST (GPIO 17), MOSI and SCK.
 - Check the backlight (`LED` pin) has 3.3 V.

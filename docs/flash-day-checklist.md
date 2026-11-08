@@ -65,8 +65,16 @@ carries data.
 
 ## If it goes wrong
 
-Flashing never touches the station's data (the log, Stock List and picklists
-live in a separate part of its memory), so a bad flash is fixed by flashing again.
+Flashing should never touch the station's data (the log, Stock List and picklists
+live in a separate part of its memory). **On 8 Nov 2026 it did anyway:** after a
+flash at the space the log came back empty (cause not found). So the before-flash
+backup is not optional, and check the counts straight after.
+
+- **White screen after flashing:** the station is still on the PC's USB. Firmware
+  older than 8 Nov 2026 hangs at start-up there; unplug it and power it from its
+  own supply. Newer firmware starts normally either way.
+- **Asked for a PIN:** changes (Restore, the catalogue, the reconcile) need the
+  staff PIN since 8 Nov 2026. The page asks in its own box.
 
 - **The flasher can't connect / no port:** another cable (some only charge) or
   port. The station keeps its old firmware until a flash completes.

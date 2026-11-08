@@ -26,7 +26,7 @@
    empty spool of the same type on the scale and press **Capture tare**.
 7. **Cost** (optional): type what the reel cost. Blank keeps the current
    price; `0` clears it.
-8. Press **Save & write tag.** First check **"Barcode … will be recorded
+8. Press **Save & write tag** (asks for the staff PIN). First check **"Barcode … will be recorded
    for …"** above it: right only if you scanned *this* box, else press
    **clear**. If Save asks about a barcode, the scan and the pick may not match.
 
