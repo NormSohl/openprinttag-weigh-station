@@ -179,7 +179,7 @@ FRAM. See `sd-local-ecosystem.md`.
 
 ## Backlog — post-bringup
 
-Ordered by likely value. B1 is done; B2 is what is left.
+Ordered by likely value. B1 is done; B2 and B3 are what is left.
 
 ### ~~B1~~ — Per-spool usage history / analytics view — **BUILT**
 The append-only event log **already records** the raw data: every weigh
@@ -216,3 +216,73 @@ Gaps + defaults: no diameter (default 1.75); `spool_weight` is empty, so
 nominal-full defaults to 1000 g (adjustable); no GTIN (ASIN used instead).
 Needs a real `/my/spools` export sample to lock the parser to the export
 schema (which may be flatter than the public API dump).
+
+### B3 — Remote access to the web app — **on hold** (2026-11-10)
+View (and, with the staff PIN, edit) the station's web app from outside the
+makerspace. Files: `deploy/remote-access/` — a tunnel script, a container
+for it, the nginx site, and a step-by-step README. Built and tested 2026-10-01
+with a stand-in station; never deployed. Put on hold by the owner until it is
+decided where the tunnel runs.
+
+**How it works.** The data stays on the station; nothing is hosted elsewhere.
+```
+browser ──HTTPS + login──► Sohl server (nginx) ◄──SSH tunnel── small machine at the space ──LAN──► station
+```
+- The makerspace network only allows connections *out*, so something on it
+  dials out to the Sohl server and holds that connection open (`autossh`).
+  Requests from outside come back along it and are passed to the station's
+  LAN address. It stores nothing.
+- nginx on the Sohl server adds HTTPS and a login in front of every page.
+  Edits still ask for the staff PIN, in the station's own box, exactly as in
+  the lab. nginx strips its own login before forwarding, so the station never
+  sees it.
+- Never a port forward to the station itself: it has no HTTPS and its reads
+  are open by design.
+
+**Why not on the station itself.** Considered and rejected: a permanent
+SSH/TLS client needs RAM the station does not have spare (≈512 KB shared with
+weighing, NFC, display and the web server, which already runs short of
+connections); it is new firmware rather than a configured tool, with new ways
+to freeze or reboot the scale; the station only updates over USB in the
+cabinet; and the tunnel login would live in its flash rather than somewhere it
+can be revoked without a visit.
+
+**Open decision: where the tunnel runs.** Either works with the same script:
+1. *The makerspace Docker server* — the container in `deploy/remote-access/`
+   (Alpine + autossh, a few MB, 32 MB memory cap, no open ports, no
+   privileges, one outgoing SSH connection). Needs the server's owner to run
+   it, which means asking. A short note for them is easy to write: what it
+   does, the three setup commands, and that `docker compose down` removes it.
+2. *A Raspberry Pi Zero 2 W of our own* (~$15–20 plus power), on the same
+   Wi-Fi as the station, possibly inside the cabinet. No one to ask; we
+   control it. `tunnel.sh` runs as a systemd service instead of a container —
+   the README needs a short Pi section for that. This is the better-tested
+   path: the 2026-10-01 test ran `tunnel.sh` directly, not in Docker.
+
+Leaning toward the Pi (no dependence on someone else's server).
+
+**To pick it back up:**
+- Decide 1 or 2 above.
+- Decide the public name on the Sohl server (e.g. `weighstation.<domain>`)
+  and who gets an nginx login (separate from the staff PIN).
+- Give the station a DHCP reservation: the tunnel reaches it by IP, since
+  `weighstation.local` (mDNS) does not resolve from a container.
+- Check that the makerspace Wi-Fi lets outgoing SSH (port 22) through. If not,
+  run the Sohl server's sshd on 443 as well and set `SOHL_SSH_PORT=443`.
+- Then follow `deploy/remote-access/README.md`: the Sohl server first (tunnel
+  user, `authorized_keys` line, sshd `Match` block, nginx site, certificate,
+  logins), then the tunnel machine.
+
+**Tested** (OpenSSH 9.6, autossh 1.4g, nginx 1.24): the tunnel serves pages
+and reconnects by itself after an sshd restart; the tunnel key cannot run
+commands, listen on any other port or address, or make local forwards; nginx
+redirects to HTTPS, answers 401 without the login on every path, and streams
+`/events` live. **Not tested:** building the Docker image, a real certbot
+certificate, the real station behind it, and the staff PIN through the proxy
+(it should just work: it is a same-origin cookie and a page-level box).
+
+**Two setup traps already written into the README:** `adduser --system`
+makes a locked account that sshd refuses (fix: `usermod -p '*'`); and the
+`authorized_keys` options alone still allow local forwards, so an sshd
+`Match` block with `AllowTcpForwarding remote` is required
+(`permitopen="none"` makes sshd reject the key outright).

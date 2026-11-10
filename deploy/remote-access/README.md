@@ -1,5 +1,9 @@
 # Remote access to the weigh station
 
+> **On hold (2026-11-10).** Built and tested with a stand-in station, never
+> deployed. Where to run the tunnel is undecided — see backlog item B3 in
+> `docs/design/implementation-plan.md`.
+
 View the station's web app from outside the makerspace, without opening any
 port on the makerspace network and without changing the firmware.
 
@@ -28,9 +32,11 @@ networking and no kernel modules, only outgoing SSH.
 
 1. **Give it a fixed address** — a DHCP reservation on the makerspace router.
    `weighstation.local` is mDNS and does not resolve from inside a container.
-2. **Set an API key** (Settings page, or `APIKEY <secret>` over serial). The
-   login on nginx guards everything, but the key makes writes need a second
-   secret, and scripts using the remote URL must send it as `X-API-Key`.
+2. **Keep the staff PIN set** (Administration → Advanced; `APIKEY <pin>` over
+   serial). Remote viewers log in to nginx to see anything at all; any change
+   then also asks for the staff PIN, in the station's own box, exactly as it
+   does in the lab. nginx does not pass its login on to the station. Scripts
+   using the remote URL send the PIN as `X-API-Key`.
 
 ## 1. On the public server (once)
 
