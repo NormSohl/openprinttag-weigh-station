@@ -1631,3 +1631,20 @@ def test_staff_pin(sim, browser):
     assert any(c["name"] == "ws_pin" and c["value"] == "4822" for c in ctx.cookies())
     assert not pg.js_errors if hasattr(pg, "js_errors") else True
     ctx.close()
+
+
+def test_big_pages_arrive_whole_in_chunks(sim, page):
+    """Pages are streamed in blocks (web_page.h), not built as one String.
+    2026-11-18: with the real store, Restock came out spliced on the station:
+    the list ran into raw script text and nothing could be tapped."""
+    _many_products(sim, 40)
+    sim.blank(gross=1100)
+    for path in ("/onboard", "/stock", "/", "/products", "/repair"):
+        body = sim.get(path)
+        assert body.rstrip().endswith("</html>"), path
+        assert body.count("<html") == 1 and body.count("</html>") == 1, path
+    page.goto(sim.url("/onboard"))
+    assert page.locator("#stk-list .stk").first.evaluate("e => getComputedStyle(e).cursor") == "pointer"
+    page.locator("#stk-list .stk[data-prod]").first.click()
+    assert page.input_value("select#prod") != "0"
+    assert page.js_errors == []

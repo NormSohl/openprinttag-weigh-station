@@ -102,6 +102,16 @@ public:
     }
     AsyncWebServerResponse* beginResponse(LittleFSShim& fs, const char* path,
                                           const char* type, bool download = false);
+    // Chunked response: the filler is drained here, in small reads like the
+    // device's TCP window, into one body. Returning 0 ends it.
+    typedef std::function<size_t(uint8_t*, size_t, size_t)> AwsResponseFiller;
+    AsyncWebServerResponse* beginChunkedResponse(const char* type, AwsResponseFiller fill) {
+        std::string body;
+        uint8_t buf[1436];
+        for (size_t n; (n = fill(buf, sizeof(buf), body.size())) > 0; )
+            body.append((const char*)buf, n);
+        return new AsyncWebServerResponse(200, type, std::move(body));
+    }
     AsyncWebServerResponse* beginResponse(LittleFSShim& fs, const String& path,
                                           const char* type, bool download = false) {
         return beginResponse(fs, path.c_str(), type, download);

@@ -33,6 +33,8 @@ struct EspShim {
     // A fixed, plausible figure. The sim cannot say anything about the
     // ESP32's real heap -- that is what the bench is for.
     uint32_t getFreeHeap() { return 200000; }
+    uint32_t getMaxAllocHeap() { return 110000; }
+    uint32_t getFreePsram() { return 0; }
 };
 extern EspShim ESP;
 

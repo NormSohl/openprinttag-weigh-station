@@ -145,6 +145,8 @@ not `&amp;`; before 2026-11-07 they were HTML-escaped).
   "state": "present",
   "uptime_s": 84213,
   "heap_free": 142360,
+  "heap_max_block": 110580,
+  "psram_free": 0,
   "audit": "idle",
   "scale":   { "weight_g": 1243.5, "calibrated": true },
   "spool":   { "id": 42, "uuid": "e0040108660759df", "vendor": "eSun",

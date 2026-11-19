@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <string.h>
 #include <stdlib.h>   // strtoull
+#include <cmath>      // ceilf, fabsf (macOS pulled it in by accident; Linux did not)
 #include "config.h"
 #include "device_state.h"
 #include "opt_tag.h"
@@ -21,6 +22,8 @@
 #include "station_name.h"
 #include "last_onboard.h"
 #include "last_stock.h"
+#include "web_page.h"
+#include <memory>
 
 // ── Shared globals (defined in main.cpp) ──────────────────────────────────────
 extern volatile DeviceState gState;
@@ -1096,6 +1099,36 @@ static const char PIN_JS[] =
 
 static const char* FOOT = SCAN_SCRIPT_JS SORT_SCRIPT_JS PIN_SCRIPT_JS "</main></body></html>";
 
+// Sends a page built with Page (web_page.h) as a chunked response, block by
+// block, freeing each block once it has gone. A page that failed to build
+// whole is never sent: a spliced page shows raw script text and its controls
+// do nothing (2026-11-18). The browser gets a short page that reloads itself.
+static void sendPage(AsyncWebServerRequest* req, Page& p) {
+    if (p.failed()) {
+        Serial.printf("[web] %s: page built short (%u B, heap %u, largest %u); sent 503\n",
+                      req->url().c_str(), (unsigned)p.length(),
+                      (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        AsyncWebServerResponse* r = req->beginResponse(503, "text/html",
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<meta http-equiv='refresh' content='3'></head>"
+            "<body style='background:#111;color:#eee;font-family:sans-serif;padding:24px'>"
+            "<p>The station is busy and couldn't build this page. Trying again in a moment&hellip;</p>"
+            "</body></html>");
+        r->addHeader("Retry-After", "3");
+        req->send(r);
+        return;
+    }
+    // Moved into the response: the handler's Page goes out of scope when it
+    // returns, long before the last chunk is sent.
+    auto page = std::make_shared<Page>();
+    page->swap(p);
+    req->send(req->beginChunkedResponse("text/html",
+        [page](uint8_t* buf, size_t maxLen, size_t) -> size_t {
+            return page->read(buf, maxLen);
+        }));
+}
+
 // ── Current spool on the scale ────────────────────────────────────────────────
 // Returns the local spool id if a tag is presently weighed/registered, else -1.
 static int currentSpool() {
@@ -1161,7 +1194,7 @@ static String specStrip(const SpoolRecord& r) {
 
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
-    String p = head("Inventory", "/");
+    Page p = head("Inventory", "/");
 
     if (!gScaleCalibrated)
         p += "<div class='card' style='border-color:#a70'>"
@@ -1393,7 +1426,7 @@ static void handleRoot(AsyncWebServerRequest* req) {
          "});"
          "})();</script>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── JSON API: spools ──────────────────────────────────────────────────────────
@@ -1472,7 +1505,7 @@ static void handleApiAuditFound(AsyncWebServerRequest* req) {
 // show that, because two products with the same name roll up into one
 // inventory row and look correct.
 static void handleProducts(AsyncWebServerRequest* req) {
-    String p = head("Products", "/config");   // under Administration
+    Page p = head("Products", "/config");   // under Administration
     p += "<h3>Products</h3>"
          "<p class='muted'>What we stock, as opposed to the individual spools on "
          "the shelf. A spool inherits its vendor, filament, colour, tare and "
@@ -1536,7 +1569,7 @@ static void handleProducts(AsyncWebServerRequest* req) {
            + " spool(s) predate products and have none assigned. They keep working; "
              "re-onboarding one assigns it.</p>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── One product: edit, and propagate the edit to its spools ───────────────────
@@ -1581,7 +1614,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
             if (storeSpoolAt(i, r) && r.product == id) mine.push_back(r.spool);
     }
 
-    String p = head("Product", "/config");    // under Administration
+    Page p = head("Product", "/config");    // under Administration
     if (req->hasParam("merged"))
         p += "<p class='card'>Product #" + esc(req->getParam("merged")->value().c_str())
            + " was merged into this one. <a href='/repair#merged' style='color:#9c9'>Undo "
@@ -1666,7 +1699,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
     p += "<script>window.onScanCode=function(c){var g=document.getElementById('gtin');"
          "g.value=c;g.focus()}</script>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 static void handleApiProduct(AsyncWebServerRequest* req) {
@@ -1848,7 +1881,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
         return;
     }
 
-    String p = head("Spool", "/");
+    Page p = head("Spool", "/");
     // After an onboard with a scan (handleApiOnboard, step 1b): say whether
     // the barcode was learned, or that it disagrees with the product's own.
     // Nothing was overwritten in the second case; a person decides.
@@ -1974,7 +2007,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
          "if(e.data.split(',')[1]==='1')location.href='/onboard';"
          "});</script>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── Onboarding form ───────────────────────────────────────────────────────────
@@ -2065,7 +2098,7 @@ static const char NEW_PRODUCT_CHECKBOX[] =
 // catalog search's own picks do the opposite (CATALOG_SCRIPT's applyPick()),
 // so a catalog pick followed by a change of mind here doesn't silently
 // resubmit stale cat_* fields alongside freshly-typed ones.
-static void vendorPickerField(String& p, const char* defVendor) {
+static void vendorPickerField(Page& p, const char* defVendor) {
     p += "<label>Vendor</label><select name='vendor' onchange=\""
          "document.getElementById('cat-source').value='manual';"
          "document.getElementById('vendor-new-wrap').style.display="
@@ -2085,7 +2118,7 @@ static void vendorPickerField(String& p, const char* defVendor) {
 
 // askDia false: the page asks for a diameter itself (the Stock List), so the
 // new material takes that one instead of asking twice.
-static void materialPickerField(String& p, const char* defMaterial, bool askDia = true) {
+static void materialPickerField(Page& p, const char* defMaterial, bool askDia = true) {
     p += "<label>Material</label><select name='material' onchange=\""
          "document.getElementById('cat-source').value='manual';"
          "document.getElementById('material-new-wrap').style.display="
@@ -2119,7 +2152,7 @@ static void materialPickerField(String& p, const char* defMaterial, bool askDia 
          "</div>";
 }
 
-static void colorPickerField(String& p, const char* defColor) {
+static void colorPickerField(Page& p, const char* defColor) {
     p += "<label>Color</label><select name='color' onchange=\""
          "document.getElementById('cat-source').value='manual';"
          "document.getElementById('color-new-wrap').style.display="
@@ -2161,7 +2194,7 @@ static void colorPickerField(String& p, const char* defColor) {
 // carry the Stock List twice.
 //
 // Rendered only when the store has products (the caller's `np`).
-static void whatPickerField(String& p, uint32_t curId) {
+static void whatPickerField(Page& p, uint32_t curId) {
     p += "<div class='card' id='stk'>"
          "<label>What is this spool?</label>"
          "<input type='search' id='stk-q' placeholder='Search the Stock List and products&hellip;' "
@@ -2402,7 +2435,7 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 static constexpr float CAPTURE_TARE_MAX_G = 500.0f;
 
 static void handleOnboardForm(AsyncWebServerRequest* req) {
-    String p = head("Restock", "/onboard");
+    Page p = head("Restock", "/onboard");
     p += "<p class='card' id='scan-msg' hidden></p>";
     int cur = currentSpool();
 
@@ -2413,7 +2446,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
         p += onboardWatchScript(-1);
             p += ONBOARD_SCAN_SCRIPT;
         p += FOOT;
-        req->send(200, "text/html", p);
+        sendPage(req, p);
         return;
     }
 
@@ -2763,7 +2796,7 @@ static void handleOnboardForm(AsyncWebServerRequest* req) {
     p += ONBOARD_SCAN_SCRIPT;
     p += onboardWatchScript(cur);
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── POST /api/tare — one load-cell reading ────────────────────────────────────
@@ -3219,7 +3252,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
 // once they've decided. The device screen shows "ERASE MODE" in red on Idle
 // the instant this mode is toggled on, so it's obvious from across the room.
 static void handleEraseForm(AsyncWebServerRequest* req) {
-    String p = head("Erase Tag", "/config");   // under Administration
+    Page p = head("Erase Tag", "/config");   // under Administration
 
     if (!gEraseModeActive) {
         p += "<div class='card'><p>Erase mode is off.</p>"
@@ -3234,7 +3267,7 @@ static void handleEraseForm(AsyncWebServerRequest* req) {
              "font-size:14px;border-radius:4px;border:0;cursor:pointer'>"
              "Start erase mode</button></form></div>";
         p += FOOT;
-        req->send(200, "text/html", p);
+        sendPage(req, p);
         return;
     }
 
@@ -3277,7 +3310,7 @@ static void handleEraseForm(AsyncWebServerRequest* req) {
          "})();</script>";
 
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── POST /api/erase/start, /api/erase/stop — toggle bulk erase mode ──────────
@@ -3413,7 +3446,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         return;
     }
 
-    String p = head("Reorder", "/reorder");
+    Page p = head("Reorder", "/reorder");
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>This page compares our "
          "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
@@ -3460,7 +3493,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
              "Link them on <a href='/repair' style='color:#9c9'>Administration &rarr; "
              "Repair</a>.</p>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── Stock items: per-row add/edit/remove for what /reorder tracks ─────────────
@@ -3510,7 +3543,7 @@ static const char ITEM_PICK_SCRIPT[] =
 // comma-separated; handleApiStockUpdate() replaces the row's with it. The list
 // to add from is built in the browser from "Item is...", the form's own list
 // of every product, so the page doesn't carry the products twice.
-static void stockSubsField(String& p, const CfgStock& s) {
+static void stockSubsField(Page& p, const CfgStock& s) {
     const std::vector<uint32_t> subs = stockSubs(s);
     String ids, rows;
     ProductRecord q;
@@ -3564,7 +3597,7 @@ static const char STOCK_SUBS_SCRIPT[] =
 "if(own)own.addEventListener('change',sync);sync();"
 "})()</script>";
 
-static void stockFormFields(String& p, const CfgStock& s) {
+static void stockFormFields(Page& p, const CfgStock& s) {
     // "Pick an existing product" vs. type it in — same reasoning as Onboard's
     // "another spool of X": a stock row's vendor/material/color is free text
     // independent of whatever a real product ended up named, so a retype is a
@@ -3891,7 +3924,7 @@ static int countFor_(const std::vector<std::pair<uint32_t, int>>& v, uint32_t id
 // all of them into every row made /repair ~200 KB with the default Stock List
 // (48 unlinked rows x 70 products) -- the whole page is one String in RAM on
 // a device with ~200 KB free.
-static void productOptions_(String& p, uint32_t selected, const std::vector<uint32_t>& first) {
+static void productOptions_(Page& p, uint32_t selected, const std::vector<uint32_t>& first) {
     ProductRecord q;
     for (uint32_t id : first)
         if (storeGetProduct(id, q))
@@ -3903,7 +3936,7 @@ static void productOptions_(String& p, uint32_t selected, const std::vector<uint
 // Every live product once, as [id, label] pairs for REPAIR_SCRIPT. The
 // labels are already HTML-escaped (productLabel_()), so the script sets them
 // as HTML; esc() also escapes the double quotes that would end a JSON string.
-static void repairProductList_(String& p) {
+static void repairProductList_(Page& p) {
     p += "<script>var REPAIR_PRODUCTS=[";
     ProductRecord q;
     for (size_t i = 0, n = storeProductCount(); i < n; i++) {
@@ -3923,7 +3956,7 @@ static const char REPAIR_SCRIPT[] =
 "})})()</script>";
 
 static void handleRepairPage(AsyncWebServerRequest* req) {
-    String p = head("Repair", "/config");   // under Administration, not a tab of its own
+    Page p = head("Repair", "/config");   // under Administration, not a tab of its own
     p += "<h3>Repair</h3><p class='muted'>Fixes for the two ways the Stock List and the "
          "shelf stop agreeing: Stock List items with no product, and one filament "
          "recorded as two products. Nothing here changes anything until you choose and "
@@ -4072,7 +4105,7 @@ static void handleRepairPage(AsyncWebServerRequest* req) {
     repairProductList_(p);
     p += REPAIR_SCRIPT;
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // The side-by-side a merge is decided on: every field of both, the spools
@@ -4085,11 +4118,11 @@ static void handleRepairMerge(AsyncWebServerRequest* req) {
         req->send(404, "text/plain", "unknown product");
         return;
     }
-    String p = head("Merge", "/config");
+    Page p = head("Merge", "/config");
     if (a.id == b.id) {
         p += "<p class='card'>That is the same product twice.</p>"
              "<p><a href='/repair' style='color:#9c9'>&larr; Repair</a></p>" + String(FOOT);
-        req->send(200, "text/html", p);
+        sendPage(req, p);
         return;
     }
 
@@ -4173,7 +4206,7 @@ static void handleRepairMerge(AsyncWebServerRequest* req) {
     p += "<div><button type='submit'>Merge</button> <a href='/repair' style='margin-left:14px;"
          "color:#8f8'>Cancel</a></div></form>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 static void handleApiRepairMerge(AsyncWebServerRequest* req) {
@@ -4305,7 +4338,7 @@ static void fillPopularityQuery(const CfgStock& s, PopularityQuery& q) {
 }
 
 static void handleStockPage(AsyncWebServerRequest* req) {
-    String p = head("Stock List", "/config");   // under Administration
+    Page p = head("Stock List", "/config");   // under Administration
     p += "<p id='stock-warning' style='color:#f44;font-weight:bold'>This table is managed "
          "by the team lead. Don't make changes without discussing them with the team "
          "first: all ordering logic depends on it.</p>";
@@ -4443,7 +4476,7 @@ static void handleStockPage(AsyncWebServerRequest* req) {
          "Administration &rarr; Raw tables</a>. Export or import all five Config tables "
          "together on the <a href='/backup' style='color:#8f8'>Backup</a> page.</p>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // Tare is never unknown: a Stock List row that may create a product (a catalog
@@ -4859,7 +4892,7 @@ static void handleStockCsv(AsyncWebServerRequest* req) {
 }
 
 // ── Config catalog editor (raw-JSON round-trip per table) ─────────────────────
-static void configTableForm(String& p, const char* label, const char* which) {
+static void configTableForm(Page& p, const char* label, const char* which) {
     p += "<div class='card'><label style='margin-top:0'>" + String(label) + "</label>";
     p += "<form method='POST' action='/api/config'>";
     p += "<input type='hidden' name='which' value='" + String(which) + "'>";
@@ -4896,7 +4929,7 @@ struct CatalogueInfo { bool present = false; size_t bytes = 0; String date; long
 static CatalogueInfo catalogueInfo();
 
 static void handleConfig(AsyncWebServerRequest* req) {
-    String p = head("Administration", "/config");
+    Page p = head("Administration", "/config");
     p += ADMIN_STYLE;
     // On direct user request: this page and the tools it leads to are for
     // trained staff, and the station is deliberately open (no API key).
@@ -5063,7 +5096,7 @@ static void handleConfig(AsyncWebServerRequest* req) {
     p += "</div>";
 
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── /config/tables — the raw-JSON catalog editors ─────────────────────────────
@@ -5071,7 +5104,7 @@ static void handleConfig(AsyncWebServerRequest* req) {
 // Stock List changes belong on /stock; the picklists have no friendlier
 // editor yet. Registered BEFORE /config: plain-string routes match by prefix.
 static void handleConfigTables(AsyncWebServerRequest* req) {
-    String p = head("Raw tables", "/config");
+    Page p = head("Raw tables", "/config");
     p += "<p><a href='/config' style='color:#8f8'>&larr; Administration</a></p>";
     p += "<h3>Raw tables</h3>";
     p += "<p id='admin-warning' style='color:#f44;font-weight:bold'>For trained staff only. "
@@ -5086,7 +5119,7 @@ static void handleConfigTables(AsyncWebServerRequest* req) {
     configTableForm(p, "Colours",        "colors");
     configTableForm(p, "Stock items",    "stock-items");
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // Set or clear the shared secret. Guarded by the CURRENT key, so the first one
@@ -5212,7 +5245,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
     }
     LittleFS.remove(CONFIG_IMPORT_STAGING);
     if (cfgImportAll(body)) {
-        String p = head("Restore", "/config");
+        Page p = head("Restore", "/config");
         p += "<div class='card'><p>Config catalog restored &mdash; "
              + String((unsigned)cfgVendorCount())   + " vendors, "
              + String((unsigned)cfgMaterialCount()) + " materials, "
@@ -5221,7 +5254,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
              + String((unsigned)cfgStockCount())    + " stock items.</p>"
              "<a href='/config'><button type='button'>Back to Administration</button></a></div>";
         p += FOOT;
-        req->send(200, "text/html", p);
+        sendPage(req, p);
     } else {
         req->send(400, "text/plain",
                    "Import failed: expected a JSON object with vendors/materials/"
@@ -5317,12 +5350,12 @@ static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
         req->send(200, "application/json", "{\"count\":" + String(ci.count) + ",\"date\":\"" + jsonStr(ci.date.c_str()) + "\"}");
         return;
     }
-    String p = head("eSUN catalogue", "/config");
+    Page p = head("eSUN catalogue", "/config");
     p += "<div class='card'><p>eSUN US catalogue loaded: <b>" + String(ci.count) + " items</b> from "
          + esc(ci.date.c_str()) + ". Restock and the Stock List search it first.</p>"
          "<a href='/config'><button type='button'>Back to Administration</button></a></div>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── Backup / restore (host download + upload; SD snapshots are hardware-gated) ─
@@ -5354,6 +5387,10 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
     j += "\",\"state\":\"";   j += deviceStateName(st);
     j += "\",\"uptime_s\":";  j += String((unsigned)(millis() / 1000));
     j += ",\"heap_free\":";   j += String((unsigned)ESP.getFreeHeap());
+    // Largest single block: what a big allocation can actually get. Free
+    // heap alone hid the 2026-11-18 failure (188 KB free, pages spliced).
+    j += ",\"heap_max_block\":"; j += String((unsigned)ESP.getMaxAllocHeap());
+    j += ",\"psram_free\":";     j += String((unsigned)ESP.getFreePsram());
     {   // so a script (the reconcile kit) can refuse to edit products mid-audit
         const AuditPhase ap = storeAuditPhase();
         j += ",\"audit\":\"";
@@ -5412,7 +5449,7 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
 }
 
 static void handleUsagePage(AsyncWebServerRequest* req) {
-    String p = head("Usage", "/usage");
+    Page p = head("Usage", "/usage");
     p += "<h3>Filament consumed</h3>";
     p += "<p class='muted'>This is the lab's permanent consumption record "
          "&mdash; how much of each material has actually gone through the "
@@ -5423,7 +5460,7 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
         p += "<div class='card muted'>No consumption recorded yet. A spool has to "
              "be weighed at least twice before there is a delta to attribute.</div>";
         p += FOOT;
-        req->send(200, "text/html", p);
+        sendPage(req, p);
         return;
     }
 
@@ -5543,7 +5580,7 @@ static void handleUsagePage(AsyncWebServerRequest* req) {
     p += "</table>";
     p += "<p><a href='/usage.csv'><button type='button'>Download CSV</button></a></p>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 static void handleUsageCsv(AsyncWebServerRequest* req) {
@@ -5582,7 +5619,7 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
 }
 
 static void handleBackupPage(AsyncWebServerRequest* req) {
-    String p = head("Backup", "/config");   // under Administration
+    Page p = head("Backup", "/config");   // under Administration
 
     // One click, two files -- NOT one combined file. The event log and the
     // config catalog stay independent artifacts (see the Config catalog card
@@ -5659,7 +5696,7 @@ static void handleBackupPage(AsyncWebServerRequest* req) {
          "setInterval(s,5000);s();"
          "</script>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── Storage health ────────────────────────────────────────────────────────────
@@ -5718,13 +5755,13 @@ static void handleImportDone(AsyncWebServerRequest* req) {
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
-        String p = head("Restore", "/config");
+        Page p = head("Restore", "/config");
         p += "<div class='card'><p>Restore complete &mdash; "
              + String((unsigned)storeSpoolCount()) + " spools, "
              + String((unsigned)storeLogLineCount()) + " log entries.</p>"
              "<a href='/'><button type='button'>Back to inventory</button></a></div>";
         p += FOOT;
-        req->send(200, "text/html", p);
+        sendPage(req, p);
     } else {
         req->send(400, "text/plain", "Import failed: no valid records in the uploaded file");
     }
@@ -5756,7 +5793,7 @@ static void handleApiCal(AsyncWebServerRequest* req) {
 }
 
 static void handleCalibratePage(AsyncWebServerRequest* req) {
-    String p = head("Calibrate", "/config");
+    Page p = head("Calibrate", "/config");
     p += "<h3>Scale calibration</h3>";
     p += "<div class='card'><div class='muted'>Live weight</div>"
          "<div class='big' id='w'>&mdash;</div>"
@@ -5782,7 +5819,7 @@ static void handleCalibratePage(AsyncWebServerRequest* req) {
          "setInterval(r,1000);r();"
          "</script>";
     p += FOOT;
-    req->send(200, "text/html", p);
+    sendPage(req, p);
 }
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
