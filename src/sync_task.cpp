@@ -942,6 +942,16 @@ void syncTask(void* param) {
             }
             if (lifted) { sphase = SyncPhase::Idle; continue; }
 
+            // A tag with no spool under it (TAG_ONLY_MAX_G): show it, weigh
+            // nothing. The record keeps its last real weigh.
+            if (weight < TAG_ONLY_MAX_G) {
+                Serial.printf("[sync] #%d: %.1f g on the scale, tag only; not weighed\n",
+                              sSpoolId, weight);
+                ctrlPost(CtrlEvent::Weighed);
+                sphase = SyncPhase::Holding;
+                continue;
+            }
+
             // The store's tare, not the tag's, whenever the record has one. Tare
             // is per spool and the record is where a person sets it; the tag
             // only catches up at the reconcile AFTER this weigh. Reading the tag

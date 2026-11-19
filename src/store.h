@@ -140,6 +140,10 @@ struct StoreEvent {
     uint32_t merged_into    = 0;
 };
 
+// A Weigh of a tag alone on the scale (gross under TAG_ONLY_MAX_G, config.h):
+// a spare-tag check. Replay and every consumption figure ignore it.
+bool storeWeighIsTagOnly(const StoreEvent& e);
+
 // ── Current-state record (derived) ────────────────────────────────────────────
 struct SpoolRecord {
     uint32_t spool = 0;

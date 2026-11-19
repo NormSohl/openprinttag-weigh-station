@@ -1648,3 +1648,36 @@ def test_big_pages_arrive_whole_in_chunks(sim, page):
     page.locator("#stk-list .stk[data-prod]").first.click()
     assert page.input_value("select#prod") != "0"
     assert page.js_errors == []
+
+
+def _usage_total_g(sim):
+    import re
+    t = re.sub(r"<[^>]+>", " ", sim.get("/usage"))
+    return float(re.search(r"Total\s+([\d.]+)\s*kg", t).group(1)) * 1000
+
+
+def test_a_tag_alone_on_the_scale_is_not_a_weigh(sim):
+    """2026-11-18: checking a spare tag logged a 0 g weigh, and Usage booked the
+    spool's whole remaining weight as used. Under TAG_ONLY_MAX_G (50 g) the
+    tag is read, nothing is logged, and old such weighs drop out on replay."""
+    _catalog_onboard(sim, "", gross=1220)
+    spool = sim.get_json("/api/spools")[-1]["spool"]
+    sim.place(spool, gross=1020); sim.remove()          # 200 g genuinely used
+    before = sim.get("/export").count("\n")
+    sim.place(spool, gross=3); sim.remove()             # just the tag
+    assert sim.get("/export").count("\n") == before
+    assert abs(_usage_total_g(sim) - 200) < 15
+    rec = [s for s in sim.get_json("/api/spools") if s["spool"] == spool][0]
+    assert abs(rec["remaining_g"] - 800) < 1
+
+    # A tag-only weigh already in an old log: restored, it counts for nothing.
+    import json
+    lines = sim.get("/export").splitlines()
+    w = json.loads([l for l in lines if '"weigh"' in l][-1])
+    w.update(ts="2099-01-01T00:00:00Z", gross_g=0.0, remaining_g=0.0, used_g=1000.0)
+    w.pop("crc", None)
+    lines.append(json.dumps(w, separators=(",", ":")))
+    sim.upload("/import", ("\n".join(lines) + "\n").encode(), filename="l.ndjson")
+    assert abs(_usage_total_g(sim) - 200) < 15
+    rec = [s for s in sim.get_json("/api/spools") if s["spool"] == spool][0]
+    assert abs(rec["remaining_g"] - 800) < 1

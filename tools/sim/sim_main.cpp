@@ -15,6 +15,7 @@
 #include <random>
 #include <thread>
 #include "device_state.h"
+#include "config.h"
 #include "opt_tag.h"
 #include "store.h"
 #include "config_store.h"
@@ -78,6 +79,10 @@ static void setState(DeviceState s) {
 // The weigh: store tare when the record has one, else the tag's -- exactly
 // syncTask's rule -- and one Weigh event.
 static void weigh(const SpoolRecord& rec, float gross) {
+    if (gross < TAG_ONLY_MAX_G) {   // syncTask: a tag alone is read, not weighed
+        Serial.printf("[sim] #%u: %.1f g, tag only; not weighed\n", (unsigned)rec.spool, gross);
+        return;
+    }
     float tare = rec.empty_g > 0.0f ? rec.empty_g : gTagMain.empty_container_weight;
     float remaining = tare > 0.0f ? gross - tare : gross;
     if (remaining < 0.0f) remaining = 0.0f;

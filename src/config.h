@@ -173,6 +173,13 @@
 // it, would otherwise be booked permanently (usage counts the drop to the next
 // weigh as filament used).
 #define WEIGH_SETTLE_BAND_G     3.0f
+// Under this, nothing but a tag is on the scale: someone checking what a spare
+// tag holds. The tag is read and shown, but there is NO weigh: no event, no
+// Aux write. Found live 2026-11-18: each such check logged a 0 g weigh, Usage
+// booked the spool's whole remaining weight as consumed (3.0 kg from three
+// checks; Usage never counts a rise back), and consumed_weight on the tag said
+// empty until the next real weigh. The lightest empty spool is ~150 g.
+#define TAG_ONLY_MAX_G         50.0f
 #define WEIGH_SETTLE_STEP_MS     250
 #define WEIGH_SETTLE_MAX_MS     3000
 // Calibration factor for NAU7802 → grams conversion (raw counts per gram).

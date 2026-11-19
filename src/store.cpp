@@ -69,6 +69,10 @@ struct Lock {
 };
 
 // ── Event-name mapping ────────────────────────────────────────────────────────
+bool storeWeighIsTagOnly(const StoreEvent& e) {
+    return e.ev == StoreEv::Weigh && e.gross_g < TAG_ONLY_MAX_G;
+}
+
 const char* storeEvName(StoreEv ev) {
     switch (ev) {
         case StoreEv::Onboard:     return "onboard";
@@ -461,6 +465,13 @@ static void applyInto_(std::vector<SpoolRecord>& spools,
         byUuid[e.uuid] = (size_t)idx;    // vector indices are stable (append-only)
     }
     SpoolRecord& r = spools[idx];
+
+    // A weigh of a tag with no spool under it (gross < TAG_ONLY_MAX_G) is
+    // someone checking a spare tag, not a reading of this spool: it changes
+    // nothing, and above all books no consumption. syncTask stopped logging
+    // these on 2026-11-18; skipping them here also takes the ones already in
+    // the log back out of Usage on the next replay (3.0 kg at Seattle Makers).
+    if (storeWeighIsTagOnly(e)) return;
 
     // Consumption = drop in remaining weight since this spool's previous
     // reading, and the record still HOLDS that previous reading until the
@@ -1595,6 +1606,7 @@ void storeMaterialPopularity(const PopularityQuery* queries, PopularityResult* r
         // it must move the group total and count as consumption the same way,
         // or a spool's absence at audit time would silently vanish from both
         // "is this still in stock" and "how popular is it".
+        if (storeWeighIsTagOnly(e)) continue;   // a spare-tag check, not a reading (applyInto_)
         if (e.ev == StoreEv::Weigh || e.ev == StoreEv::Checkpoint || e.ev == StoreEv::Retire) {
             SpoolState& sp = spools[e.spool];
             if (!sp.has) { sp.has = true; sp.key = spoolKey(e.product, e.vendor, e.material); }

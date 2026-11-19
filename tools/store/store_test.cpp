@@ -254,7 +254,9 @@ static void rawEvent(StoreEv kind, const char* uuid, uint32_t spool, const char*
     strlcpy(e.vendor, vendor, sizeof(e.vendor));
     strlcpy(e.material, material, sizeof(e.material));
     e.remaining_g = remaining;
-    e.gross_g = remaining;
+    // An empty spool still weighs its tare: a 0 g reading would be a tag alone
+    // on the scale (TAG_ONLY_MAX_G), which replay ignores.
+    e.gross_g = remaining > 0 ? remaining : 200;
     storeAppendEvent(e);
 }
 static uint32_t rawOnboard(const char* uuid, const char* ts, const char* vendor, const char* material) {
@@ -431,7 +433,7 @@ static void substitutesTest() {
         strlcpy(e.material, p.material, sizeof(e.material));
         e.product = p.id;
         e.remaining_g = remaining;
-        e.gross_g = remaining;
+        e.gross_g = remaining + 200;   // an empty spool still weighs its tare
         storeAppendEvent(e);
     };
     const char* U1 = "eeee0000000000000000000000000001";
