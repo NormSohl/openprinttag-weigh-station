@@ -1194,7 +1194,7 @@ static String specStrip(const SpoolRecord& r) {
 
 // ── Dashboard: material roll-up + current spool ───────────────────────────────
 static void handleRoot(AsyncWebServerRequest* req) {
-    Page p = head("Inventory", "/");
+    Page p(head("Inventory", "/"));
 
     if (!gScaleCalibrated)
         p += "<div class='card' style='border-color:#a70'>"
@@ -1505,7 +1505,7 @@ static void handleApiAuditFound(AsyncWebServerRequest* req) {
 // show that, because two products with the same name roll up into one
 // inventory row and look correct.
 static void handleProducts(AsyncWebServerRequest* req) {
-    Page p = head("Products", "/config");   // under Administration
+    Page p(head("Products", "/config"));   // under Administration
     p += "<h3>Products</h3>"
          "<p class='muted'>What we stock, as opposed to the individual spools on "
          "the shelf. A spool inherits its vendor, filament, colour, tare and "
@@ -1614,7 +1614,7 @@ static void handleProductDetail(AsyncWebServerRequest* req) {
             if (storeSpoolAt(i, r) && r.product == id) mine.push_back(r.spool);
     }
 
-    Page p = head("Product", "/config");    // under Administration
+    Page p(head("Product", "/config"));    // under Administration
     if (req->hasParam("merged"))
         p += "<p class='card'>Product #" + esc(req->getParam("merged")->value().c_str())
            + " was merged into this one. <a href='/repair#merged' style='color:#9c9'>Undo "
@@ -1881,7 +1881,7 @@ static void handleSpoolDetail(AsyncWebServerRequest* req) {
         return;
     }
 
-    Page p = head("Spool", "/");
+    Page p(head("Spool", "/"));
     // After an onboard with a scan (handleApiOnboard, step 1b): say whether
     // the barcode was learned, or that it disagrees with the product's own.
     // Nothing was overwritten in the second case; a person decides.
@@ -2435,7 +2435,7 @@ static const char ONBOARD_SCAN_SCRIPT[] =
 static constexpr float CAPTURE_TARE_MAX_G = 500.0f;
 
 static void handleOnboardForm(AsyncWebServerRequest* req) {
-    Page p = head("Restock", "/onboard");
+    Page p(head("Restock", "/onboard"));
     p += "<p class='card' id='scan-msg' hidden></p>";
     int cur = currentSpool();
 
@@ -3252,7 +3252,7 @@ static void handleApiOnboard(AsyncWebServerRequest* req) {
 // once they've decided. The device screen shows "ERASE MODE" in red on Idle
 // the instant this mode is toggled on, so it's obvious from across the room.
 static void handleEraseForm(AsyncWebServerRequest* req) {
-    Page p = head("Erase Tag", "/config");   // under Administration
+    Page p(head("Erase Tag", "/config"));   // under Administration
 
     if (!gEraseModeActive) {
         p += "<div class='card'><p>Erase mode is off.</p>"
@@ -3446,7 +3446,7 @@ static void handleReorder(AsyncWebServerRequest* req) {
         return;
     }
 
-    Page p = head("Reorder", "/reorder");
+    Page p(head("Reorder", "/reorder"));
     p += "<h3>Reorder list</h3>";
     p += "<p class='muted'>This page compares our "
          "<a href='/stock' style='color:#8f8'>Stock List</a> (what we want to be "
@@ -3956,7 +3956,7 @@ static const char REPAIR_SCRIPT[] =
 "})})()</script>";
 
 static void handleRepairPage(AsyncWebServerRequest* req) {
-    Page p = head("Repair", "/config");   // under Administration, not a tab of its own
+    Page p(head("Repair", "/config"));   // under Administration, not a tab of its own
     p += "<h3>Repair</h3><p class='muted'>Fixes for the two ways the Stock List and the "
          "shelf stop agreeing: Stock List items with no product, and one filament "
          "recorded as two products. Nothing here changes anything until you choose and "
@@ -4118,7 +4118,7 @@ static void handleRepairMerge(AsyncWebServerRequest* req) {
         req->send(404, "text/plain", "unknown product");
         return;
     }
-    Page p = head("Merge", "/config");
+    Page p(head("Merge", "/config"));
     if (a.id == b.id) {
         p += "<p class='card'>That is the same product twice.</p>"
              "<p><a href='/repair' style='color:#9c9'>&larr; Repair</a></p>" + String(FOOT);
@@ -4338,7 +4338,7 @@ static void fillPopularityQuery(const CfgStock& s, PopularityQuery& q) {
 }
 
 static void handleStockPage(AsyncWebServerRequest* req) {
-    Page p = head("Stock List", "/config");   // under Administration
+    Page p(head("Stock List", "/config"));   // under Administration
     p += "<p id='stock-warning' style='color:#f44;font-weight:bold'>This table is managed "
          "by the team lead. Don't make changes without discussing them with the team "
          "first: all ordering logic depends on it.</p>";
@@ -4929,7 +4929,7 @@ struct CatalogueInfo { bool present = false; size_t bytes = 0; String date; long
 static CatalogueInfo catalogueInfo();
 
 static void handleConfig(AsyncWebServerRequest* req) {
-    Page p = head("Administration", "/config");
+    Page p(head("Administration", "/config"));
     p += ADMIN_STYLE;
     // On direct user request: this page and the tools it leads to are for
     // trained staff, and the station is deliberately open (no API key).
@@ -5104,7 +5104,7 @@ static void handleConfig(AsyncWebServerRequest* req) {
 // Stock List changes belong on /stock; the picklists have no friendlier
 // editor yet. Registered BEFORE /config: plain-string routes match by prefix.
 static void handleConfigTables(AsyncWebServerRequest* req) {
-    Page p = head("Raw tables", "/config");
+    Page p(head("Raw tables", "/config"));
     p += "<p><a href='/config' style='color:#8f8'>&larr; Administration</a></p>";
     p += "<h3>Raw tables</h3>";
     p += "<p id='admin-warning' style='color:#f44;font-weight:bold'>For trained staff only. "
@@ -5245,7 +5245,7 @@ static void handleConfigImportDone(AsyncWebServerRequest* req) {
     }
     LittleFS.remove(CONFIG_IMPORT_STAGING);
     if (cfgImportAll(body)) {
-        Page p = head("Restore", "/config");
+        Page p(head("Restore", "/config"));
         p += "<div class='card'><p>Config catalog restored &mdash; "
              + String((unsigned)cfgVendorCount())   + " vendors, "
              + String((unsigned)cfgMaterialCount()) + " materials, "
@@ -5350,7 +5350,7 @@ static void handleCatalogueImportDone(AsyncWebServerRequest* req) {
         req->send(200, "application/json", "{\"count\":" + String(ci.count) + ",\"date\":\"" + jsonStr(ci.date.c_str()) + "\"}");
         return;
     }
-    Page p = head("eSUN catalogue", "/config");
+    Page p(head("eSUN catalogue", "/config"));
     p += "<div class='card'><p>eSUN US catalogue loaded: <b>" + String(ci.count) + " items</b> from "
          + esc(ci.date.c_str()) + ". Restock and the Stock List search it first.</p>"
          "<a href='/config'><button type='button'>Back to Administration</button></a></div>";
@@ -5449,7 +5449,7 @@ static void handleApiStatus(AsyncWebServerRequest* req) {
 }
 
 static void handleUsagePage(AsyncWebServerRequest* req) {
-    Page p = head("Usage", "/usage");
+    Page p(head("Usage", "/usage"));
     p += "<h3>Filament consumed</h3>";
     p += "<p class='muted'>This is the lab's permanent consumption record "
          "&mdash; how much of each material has actually gone through the "
@@ -5619,7 +5619,7 @@ static void handleApiUsage(AsyncWebServerRequest* req) {
 }
 
 static void handleBackupPage(AsyncWebServerRequest* req) {
-    Page p = head("Backup", "/config");   // under Administration
+    Page p(head("Backup", "/config"));   // under Administration
 
     // One click, two files -- NOT one combined file. The event log and the
     // config catalog stay independent artifacts (see the Config catalog card
@@ -5755,7 +5755,7 @@ static void handleImportDone(AsyncWebServerRequest* req) {
     bool ok = storeImportLogFile(IMPORT_STAGING);
     LittleFS.remove(IMPORT_STAGING);   // no-op if promotion already consumed it
     if (ok) {
-        Page p = head("Restore", "/config");
+        Page p(head("Restore", "/config"));
         p += "<div class='card'><p>Restore complete &mdash; "
              + String((unsigned)storeSpoolCount()) + " spools, "
              + String((unsigned)storeLogLineCount()) + " log entries.</p>"
@@ -5793,7 +5793,7 @@ static void handleApiCal(AsyncWebServerRequest* req) {
 }
 
 static void handleCalibratePage(AsyncWebServerRequest* req) {
-    Page p = head("Calibrate", "/config");
+    Page p(head("Calibrate", "/config"));
     p += "<h3>Scale calibration</h3>";
     p += "<div class='card'><div class='muted'>Live weight</div>"
          "<div class='big' id='w'>&mdash;</div>"
