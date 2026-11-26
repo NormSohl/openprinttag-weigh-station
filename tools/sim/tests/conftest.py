@@ -118,7 +118,8 @@ def sim():
 def browser():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=os.environ.get("HEADED") is None)
+        b = p.chromium.launch(headless=os.environ.get("HEADED") is None,
+                              executable_path=os.environ.get("PW_CHROMIUM") or None)
         yield b
         b.close()
 
